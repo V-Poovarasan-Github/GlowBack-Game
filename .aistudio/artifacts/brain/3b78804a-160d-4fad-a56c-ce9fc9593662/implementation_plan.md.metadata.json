@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for the Simon Says sequence memory game built in Jetpack Compose, incorporating persistent high scores, hybrid sequence speed modes, and native ToneGenerator audio plus haptic feedback.",
+  "updatedAt":  "2026-10-29T16:01:06.609219176Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

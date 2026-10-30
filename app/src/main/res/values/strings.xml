@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Simon Says</string>
+    <string name="status_idle">Press Start to Play</string>
+    <string name="status_watching">Watch Carefully!</string>
+    <string name="status_playing">Your Turn!</string>
+    <string name="status_game_over">Game Over!</string>
+    <string name="label_current_score">CURRENT SCORE</string>
+    <string name="label_best_score">BEST HIGH SCORE</string>
+    <string name="btn_start_game">Start Game</string>
+    <string name="btn_play_again">Play Again</string>
+    <string name="btn_restart_round">Restart Game</string>
+    <string name="mode_classic">Classic (400ms)</string>
+    <string name="mode_progressive">Progressive Speed</string>
+    <string name="cd_toggle_audio">Toggle sound and haptic feedback</string>
+</resources>

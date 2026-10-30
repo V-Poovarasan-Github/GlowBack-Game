@@ -1,0 +1,6 @@
+{
+  "name": "Simon Says",
+  "description": "A neon sequence memory game with audio-haptic feedback, hybrid speed progression, and persistent high scores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
