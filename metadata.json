@@ -1,6 +1,6 @@
 {
-  "name": "Simon Says",
-  "description": "A neon sequence memory game with audio-haptic feedback, hybrid speed progression, and persistent high scores.",
+  "name": "Glowback",
+  "description": "A vibrant neon sequence memory game with audio-haptic feedback, progressive speeds, local multiplayer, and async friend challenges.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

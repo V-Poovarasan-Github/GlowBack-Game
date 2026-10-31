@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Simon Says</string>
+    <string name="app_name">Glowback</string>
     <string name="status_idle">Press Start to Play</string>
     <string name="status_watching">Watch Carefully!</string>
     <string name="status_playing">Your Turn!</string>
