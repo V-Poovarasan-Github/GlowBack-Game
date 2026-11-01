@@ -17,7 +17,7 @@ GlowBack is a polished, 100% offline, multiplayer memory game with a viral async
 
 ## 📥 How to Install (APK)
 
-1. Go to the **[Releases](https://github.com/V-Poovarsan-Github/GlowBack-Game/releases)** section of this repository.
+1. Go to the **[Releases](https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0)** section of this repository.
 2. Download the latest `app-release.apk` file.
 3. On your Android device, allow "Install from Unknown Sources" when prompted.
 4. Tap the downloaded file to install and start playing!
