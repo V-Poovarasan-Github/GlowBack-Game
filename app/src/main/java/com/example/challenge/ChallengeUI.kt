@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -19,12 +20,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -113,104 +117,40 @@ fun InGameChallengeBanner(
 }
 
 /**
- * Horizontal rail on the Idle screen displaying active challenges.
+ * Horizontal rail on the Idle screen displaying active challenges ONLY when non-empty.
+ * Resets scroll position cleanly to 0 when refreshed or returning to Home.
  */
 @Composable
 fun ActiveChallengesRail(
     challenges: List<ChallengeItem>,
     onPlayChallenge: (ChallengeItem) -> Unit,
     onDeleteChallenge: (String) -> Unit,
-    onOpenEnterModal: () -> Unit,
+    onOpenEnterModal: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "ASYNC CHALLENGES",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-                if (challenges.isNotEmpty()) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                            .padding(horizontal = 6.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "${challenges.size}",
-                            color = Color(0xFF00E5FF),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
+    if (challenges.isEmpty()) return
 
-            Text(
-                text = "+ Enter Code",
-                color = Color(0xFF00E5FF),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { onOpenEnterModal() }
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                    .testTag("enter_challenge_code_pill")
+    val listState = rememberLazyListState()
+
+    androidx.compose.runtime.LaunchedEffect(challenges.size) {
+        listState.scrollToItem(0)
+    }
+
+    LazyRow(
+        state = listState,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("active_challenges_rail"),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp)
+    ) {
+        items(challenges, key = { it.code }) { item ->
+            ChallengeCard(
+                item = item,
+                onPlay = { onPlayChallenge(item) },
+                onDelete = { onDeleteChallenge(item.code) }
             )
-        }
-
-        if (challenges.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF0F172A))
-                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
-                    .clickable { onOpenEnterModal() }
-                    .padding(vertical = 12.dp, horizontal = 16.dp)
-                    .testTag("empty_challenges_card"),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null,
-                        tint = Color(0xFF00E5FF),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Paste a friend's code (e.g. 2x2-12-8X2A) to compete",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        } else {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
-            ) {
-                items(challenges, key = { it.code }) { item ->
-                    ChallengeCard(
-                        item = item,
-                        onPlay = { onPlayChallenge(item) },
-                        onDelete = { onDeleteChallenge(item.code) }
-                    )
-                }
-            }
         }
     }
 }
@@ -312,7 +252,7 @@ fun ChallengeCard(
                 val triesText = when {
                     item.isWon -> "WON!"
                     item.attemptsLeft <= 0 -> "OUT OF TRIES"
-                    else -> "${item.attemptsLeft}/3 tries"
+                    else -> "${item.attemptsLeft}/${item.maxTries} tries"
                 }
                 val triesColor = when {
                     item.isWon -> Color(0xFF00E676)
@@ -367,9 +307,11 @@ fun EnterChallengeDialog(
     onDismiss: () -> Unit,
     onSubmit: (ChallengeItem) -> Unit
 ) {
+    val context = LocalContext.current
     var rawCode by remember { mutableStateOf("") }
     var rivalName by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showHelpBanner by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -396,36 +338,65 @@ fun EnterChallengeDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "JOIN ASYNC CHALLENGE",
+                        text = "Enter challenge code",
                         color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.testTag("enter_challenge_dialog_title")
                     )
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .testTag("close_challenge_dialog_button")
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = Color.White
+                        IconButton(
+                            onClick = { showHelpBanner = !showHelpBanner },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("challenge_help_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HelpOutline,
+                                contentDescription = "How challenge codes work",
+                                tint = if (showHelpBanner) Color(0xFF00E5FF) else Color(0xFF94A3B8)
+                            )
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("close_challenge_dialog_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                AnimatedVisibility(visible = showHelpBanner) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0F172A))
+                            .border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(10.dp))
+                            .padding(12.dp)
+                            .testTag("challenge_help_banner")
+                    ) {
+                        Text(
+                            text = "Ask a friend to share their challenge code from their Game Over screen, then paste it here!",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
-
-                Text(
-                    text = "Paste the code from your friend's share card (e.g. 2x2-12-8X2A):",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = rawCode,
@@ -433,7 +404,7 @@ fun EnterChallengeDialog(
                         rawCode = input.uppercase().filter { it.isLetterOrDigit() || it == '-' }
                         errorMessage = null
                     },
-                    label = { Text("Challenge Code (e.g. 2x2-12-8X2A)") },
+                    label = { Text("Challenge code") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color(0xFF00E5FF),
@@ -448,6 +419,16 @@ fun EnterChallengeDialog(
                         .testTag("challenge_code_input")
                 )
 
+                Text(
+                    text = "Example: 4x4-1-T3H-2GPGX-C or 2x2-5-T1E-8X2AB-D",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, start = 4.dp)
+                        .testTag("challenge_code_example_text")
+                )
+
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -458,7 +439,7 @@ fun EnterChallengeDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 OutlinedTextField(
                     value = rivalName,
@@ -485,7 +466,9 @@ fun EnterChallengeDialog(
                     onClick = {
                         val parsed = ChallengeSeed.parseChallengeCode(rawCode)
                         if (parsed == null) {
-                            errorMessage = "Invalid code. Must be format: 2x2-12-8X2A"
+                            errorMessage = "Invalid code. Must be format: 2x2-5-T3E-8X2AB-D"
+                        } else if (ChallengeStorage.isSelfChallenge(context, rawCode) || ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
+                            errorMessage = "You cannot play your own challenge code."
                         } else {
                             val finalRival = rivalName.trim().ifEmpty { "Anonymous" }
                             val item = ChallengeItem(
@@ -493,9 +476,11 @@ fun EnterChallengeDialog(
                                 rivalName = finalRival,
                                 gridSizeTag = parsed.gridTag,
                                 targetScore = parsed.targetScore,
-                                attemptsLeft = 3,
+                                maxTries = parsed.tries,
+                                attemptsLeft = parsed.tries,
                                 bestScore = 0,
-                                seed = parsed.seedInt
+                                seed = parsed.seedInt,
+                                difficulty = parsed.difficulty
                             )
                             onSubmit(item)
                         }
@@ -520,3 +505,145 @@ fun EnterChallengeDialog(
         }
     }
 }
+
+/**
+ * Small sheet/dialog shown when tapping "Share Challenge" on Solo Game Over:
+ * Segmented [1][3][5] under "How many tries does your friend get?" (default 3), then "Generate Card".
+ */
+@Composable
+fun ShareTriesSelectorDialog(
+    initialTries: Int = 3,
+    onDismiss: () -> Unit,
+    onGenerateCard: (Int) -> Unit
+) {
+    val options = listOf(1, 3, 5)
+    var selectedTries by remember { mutableStateOf(if (initialTries in options) initialTries else 3) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(22.dp))
+                    .testTag("tries_selector_sheet"),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "How many tries does your friend get?",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("tries_selector_title")
+                        )
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("close_tries_selector_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Segmented [1] [3] [5] capsule
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(23.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(23.dp))
+                            .padding(3.dp)
+                            .testTag("tries_segmented_row"),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        options.forEach { triesVal ->
+                            val isSelected = selectedTries == triesVal
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(
+                                        if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent
+                                    )
+                                    .then(
+                                        if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(20.dp))
+                                        else Modifier
+                                    )
+                                    .clickable { selectedTries = triesVal }
+                                    .testTag("tries_option_$triesVal"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$triesVal",
+                                    color = if (isSelected) Color(0xFF00E5FF) else Color(0xFFCBD5E1),
+                                    fontSize = 15.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = { onGenerateCard(selectedTries) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("generate_card_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00E5FF),
+                            contentColor = Color(0xFF090D16)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Generate Card",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

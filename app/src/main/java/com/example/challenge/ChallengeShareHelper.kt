@@ -31,6 +31,9 @@ object ChallengeShareHelper {
         gridSizeTag: String,
         score: Int,
         attempts: Int = 1,
+        tries: Int = 3,
+        paceName: String = "Classic",
+        difficulty: GameDifficulty = GameDifficulty.EASY,
         isReply: Boolean = false,
         rivalName: String? = null,
         won: Boolean = false
@@ -173,13 +176,13 @@ object ChallengeShareHelper {
 
         val subStatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#CBD5E1")
-            textSize = 32f
+            textSize = 30f
             textAlign = Paint.Align.CENTER
         }
         val subStatText = if (isReply && rivalName != null) {
             "Rival: $rivalName"
         } else {
-            "Attempts Taken: $attempts  •  Pace: Classic"
+            "Target: $score  •  Tries: $tries  •  ${difficulty.label}  •  $paceName"
         }
         canvas.drawText(subStatText, width / 2f, 760f, subStatPaint)
 
@@ -223,7 +226,7 @@ object ChallengeShareHelper {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("Open Glowback  ➔  Tap 'Enter Code'  ➔  Paste Code to Play", width / 2f, 1160f, footerPaint)
+        canvas.drawText("Open Glowback  ➔  Tap '+ Challenge'  ➔  Paste code to play", width / 2f, 1160f, footerPaint)
 
         val brandFootPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#475569")
@@ -244,13 +247,19 @@ object ChallengeShareHelper {
         code: String,
         gridSizeTag: String,
         score: Int,
-        attempts: Int = 1
+        attempts: Int = 1,
+        tries: Int = 3,
+        paceName: String = "Classic",
+        difficulty: GameDifficulty = GameDifficulty.EASY
     ) = withContext(Dispatchers.IO) {
         val bitmap = createChallengeBitmap(
             code = code,
             gridSizeTag = gridSizeTag,
             score = score,
             attempts = attempts,
+            tries = tries,
+            paceName = paceName,
+            difficulty = difficulty,
             isReply = false
         )
 
@@ -266,18 +275,21 @@ object ChallengeShareHelper {
             imageFile
         )
 
-        val shareCaption = "I scored $score on Glowback! Beat my sequence: $code"
+        val triesWord = if (tries == 1) "try" else "tries"
+        val shareCaption = "I scored $score on Glowback (${difficulty.label})! Beat my sequence in $tries $triesWord: $code"
 
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, contentUri)
             putExtra(Intent.EXTRA_TEXT, shareCaption)
+            putExtra(Intent.EXTRA_SUBJECT, "Glowback Challenge")
+            clipData = android.content.ClipData.newUri(context.contentResolver, "Glowback Challenge Card", contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
         withContext(Dispatchers.Main) {
             val chooser = Intent.createChooser(sendIntent, "Share Glowback Challenge").apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(chooser)
         }
@@ -324,12 +336,14 @@ object ChallengeShareHelper {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, contentUri)
             putExtra(Intent.EXTRA_TEXT, shareCaption)
+            putExtra(Intent.EXTRA_SUBJECT, "Glowback Result")
+            clipData = android.content.ClipData.newUri(context.contentResolver, "Glowback Result Card", contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
         withContext(Dispatchers.Main) {
             val chooser = Intent.createChooser(sendIntent, "Send Result to Rival").apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(chooser)
         }

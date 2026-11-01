@@ -1,22 +1,41 @@
 package com.example
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
+import java.util.concurrent.ConcurrentHashMap
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import com.example.notification.NotificationScheduler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
@@ -28,9 +47,14 @@ import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeShareHelper
 import com.example.challenge.ChallengeStorage
 import com.example.challenge.EnterChallengeDialog
+import com.example.challenge.GameDifficulty
 import com.example.challenge.InGameChallengeBanner
+import com.example.challenge.RunStateStorage
+import com.example.challenge.SerializedRunState
+import com.example.challenge.ShareTriesSelectorDialog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -219,6 +243,12 @@ class GlowAudioSynthesizer {
                 }.coerceIn(0.0, 1.0)
                 val raw = if (oddHarmonics) {
                     sin(i * w) * 0.60 + sin(i * w * 3.0) * 0.25 + sin(i * w * 5.0) * 0.15
+                } else if (freqHz < 300.0) {
+                    // Upper harmonics added to low frequencies (<300Hz e.g. 196Hz G3, 220Hz A3, 261Hz C4)
+                    // so fundamental pitch is clearly audible on mobile speakers via psychoacoustic harmonics
+                    sin(i * w) * 0.50 + sin(i * w * 2.0) * 0.30 + sin(i * w * 3.0) * 0.15 + sin(i * w * 4.0) * 0.05
+                } else if (freqHz < 500.0) {
+                    sin(i * w) * 0.75 + sin(i * w * 2.0) * 0.20 + sin(i * w * 3.0) * 0.05
                 } else {
                     sin(i * w) * 0.85 + sin(i * w * 2.0) * 0.15
                 }
@@ -245,7 +275,7 @@ class GlowAudioSynthesizer {
     }
 
     private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val activeTracks = ConcurrentLinkedQueue<AudioTrack>()
+    private val staticTrackPool = ConcurrentHashMap<ShortArray, AudioTrack>()
 
     val frequencyPcmBuffers: Map<Double, ShortArray> = (CLASSIC_2X2_PADS + GRID_16_PADS)
         .map { it.frequencyHz }.distinct().associateWith { synthesizeWavePcm(it, 240, 0.72) }
@@ -256,6 +286,42 @@ class GlowAudioSynthesizer {
 
     val errorBuzzPcm: ShortArray = synthesizeDescendingErrorBuzzPcm(420)
     val clearArpeggioPcm: ShortArray = synthesizeRisingArpeggioPcm()
+
+    init {
+        // Pre-allocate AudioTrack pool on background dispatcher (Dispatchers.Default) to prevent UI thread ANRs
+        audioScope.launch {
+            for (pcm in frequencyPcmBuffers.values) {
+                runCatching {
+                    staticTrackPool[pcm] = createStaticTrack(pcm)
+                }
+            }
+            runCatching { staticTrackPool[errorBuzzPcm] = createStaticTrack(errorBuzzPcm) }
+            runCatching { staticTrackPool[clearArpeggioPcm] = createStaticTrack(clearArpeggioPcm) }
+        }
+    }
+
+    private fun createStaticTrack(pcm: ShortArray): AudioTrack {
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .setLegacyStreamType(AudioManager.STREAM_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(pcm.size * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+        track.write(pcm, 0, pcm.size)
+        return track
+    }
 
     fun playPadSpecTone(pad: PadSpec, volume: Float = 0.85f) =
         frequencyPcmBuffers[pad.frequencyHz]?.let { playStaticPcmAsync(it, 240L, volume) } ?: Unit
@@ -270,37 +336,37 @@ class GlowAudioSynthesizer {
         val vol = volume.coerceIn(0f, 1f)
         if (vol <= 0f) return
         audioScope.launch {
-            var track: AudioTrack? = null
             try {
-                track = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-                    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setBufferSizeInBytes(pcmBuffer.size * 2)
-                    .setTransferMode(AudioTrack.MODE_STATIC)
-                    .build()
-                track.write(pcmBuffer, 0, pcmBuffer.size)
-                track.setVolume(vol)
-                activeTracks.add(track)
-                track.play()
-                delay(durationMs + 40L)
-            } catch (_: Throwable) {
-            } finally {
-                if (track != null) {
-                    activeTracks.remove(track)
-                    runCatching { track.stop() }
-                    runCatching { track.release() }
+                var track = staticTrackPool[pcmBuffer]
+                if (track == null || track.state != AudioTrack.STATE_INITIALIZED) {
+                    track = createStaticTrack(pcmBuffer)
+                    staticTrackPool[pcmBuffer] = track
                 }
+                synchronized(track) {
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        track.stop()
+                    }
+                    track.flush()
+                    track.playbackHeadPosition = 0
+                    track.setVolume(vol)
+                    track.play()
+                }
+            } catch (_: Throwable) {
             }
         }
     }
 
     fun release() {
         audioScope.cancel()
-        while (true) {
-            val track = activeTracks.poll() ?: break
-            runCatching { track.stop() }
-            runCatching { track.release() }
+        for ((_, track) in staticTrackPool) {
+            runCatching {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.stop()
+                }
+                track.release()
+            }
         }
+        staticTrackPool.clear()
     }
 }
 
@@ -308,9 +374,19 @@ typealias SimonAudioSynthesizer = GlowAudioSynthesizer
 
 internal const val PREFS_NAME = "glowback_prefs"
 internal const val KEY_BEST_SCORE = "best_high_score"
-internal const val KEY_HAS_SEEN_EXPLAINER = "has_seen_explainer"
-internal const val KEY_SHAPES_ENABLED = "colorblind_shapes_enabled"
+internal const val KEY_INSTRUMENT_INVITE_DISMISSED = "glowback_instrument_invite_dismissed_v1"
+internal const val KEY_CHALLENGE_NUDGE_SEEN = "glowback_challenge_nudge_v1"
 internal const val KEY_AUDIO_VOLUME = "audio_volume"
+internal const val KEY_VIBRATE_ENABLED = "vibrate_enabled"
+internal const val KEY_FEEDBACK_MODE = "feedback_mode"
+internal const val KEY_DIFFICULTY_MODE = "difficulty_mode"
+
+enum class FeedbackMode {
+    SOUND,
+    VIBRATE,
+    MUTE
+}
+internal const val KEY_LAUNCH_COUNT = "glowback_launch_count"
 internal const val KEY_GRID_SIZE = "selected_grid_size"
 internal const val KEY_PACE_MODE = "selected_pace_mode"
 internal const val KEY_GAME_MODE = "selected_game_mode"
@@ -390,22 +466,46 @@ private val SimonDarkColorScheme = GlowDarkColorScheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val launchCount = prefs.getInt(KEY_LAUNCH_COUNT, 0) + 1
+        prefs.edit().putInt(KEY_LAUNCH_COUNT, launchCount).apply()
+
+        NotificationScheduler.createNotificationChannel(this)
+
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = GlowDarkColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    GlowbackGameScreen()
+                    GlowbackGameScreen(launchCount = launchCount)
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // 1. Time-delta tracking: save current timestamp as last_opened_timestamp
+        prefs.edit().putLong(NotificationScheduler.KEY_LAST_OPENED_TIMESTAMP, System.currentTimeMillis()).apply()
+
+        // 2. Permission sync: if OS revoked permission, toggle OFF daily notifications & cancel WorkManager
+        val isSystemAllowed = NotificationManagerCompat.from(this).areNotificationsEnabled()
+        val isAppEnabled = prefs.getBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true)
+
+        if (!isSystemAllowed && isAppEnabled) {
+            prefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+            NotificationScheduler.cancelReminder(this)
+        } else if (isSystemAllowed && isAppEnabled) {
+            NotificationScheduler.scheduleDailyReminder(this)
         }
     }
 }
 
 @Composable
-fun SimonSaysGameScreen(modifier: Modifier = Modifier) = GlowbackGameScreen(modifier)
+fun SimonSaysGameScreen(modifier: Modifier = Modifier) = GlowbackGameScreen(modifier = modifier, launchCount = 4)
 
 @Composable
-fun GlowbackGameScreen(modifier: Modifier = Modifier) {
+fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val haptic = LocalHapticFeedback.current
@@ -424,16 +524,155 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
         val name = sharedPrefs.getString(KEY_PACE_MODE, PaceMode.CLASSIC.name)
         mutableStateOf(PaceMode.entries.find { it.name == name } ?: PaceMode.CLASSIC)
     }
-    var feedbackEnabled by remember { mutableStateOf(true) }
     var audioVolume by remember { mutableFloatStateOf(sharedPrefs.getFloat(KEY_AUDIO_VOLUME, 0.85f).coerceIn(0f, 1f)) }
-    var showColorblindShapes by remember { mutableStateOf(sharedPrefs.getBoolean(KEY_SHAPES_ENABLED, true)) }
-    var hasSeenExplainer by remember { mutableStateOf(sharedPrefs.getBoolean(KEY_HAS_SEEN_EXPLAINER, false)) }
-    var showSettingsSheet by remember { mutableStateOf(false) }
+    var feedbackMode by remember {
+        val saved = sharedPrefs.getString(KEY_FEEDBACK_MODE, null)
+        val initial = if (saved != null) {
+            try { FeedbackMode.valueOf(saved) } catch (_: Exception) { FeedbackMode.SOUND }
+        } else {
+            val isMuted = !sharedPrefs.getBoolean("feedback_enabled", true)
+            val isVib = sharedPrefs.getBoolean(KEY_VIBRATE_ENABLED, false)
+            if (isMuted) {
+                if (isVib) FeedbackMode.VIBRATE else FeedbackMode.MUTE
+            } else {
+                FeedbackMode.SOUND
+            }
+        }
+        mutableStateOf(initial)
+    }
+    val feedbackEnabled = feedbackMode == FeedbackMode.SOUND
+    val isVibrateEnabled = feedbackMode == FeedbackMode.VIBRATE
+    var difficultyMode by remember {
+        val raw = sharedPrefs.getString(KEY_DIFFICULTY_MODE, GameDifficulty.EASY.name)
+        mutableStateOf(try { GameDifficulty.valueOf(raw ?: "EASY") } catch (_: Exception) { GameDifficulty.EASY })
+    }
+    var showOnboardingPopup by remember { mutableStateOf(launchCount <= 3) }
 
-    // Async Challenge State
+    val vibrator = remember(context) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+            vm?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        }
+    }
+    fun triggerPadTapVibration() {
+        if (!isVibrateEnabled) return
+        try {
+            if (vibrator?.hasVibrator() == true) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(20L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(20L)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun cycleFeedbackMode() {
+        val nextMode = when (feedbackMode) {
+            FeedbackMode.SOUND -> FeedbackMode.VIBRATE
+            FeedbackMode.VIBRATE -> FeedbackMode.MUTE
+            FeedbackMode.MUTE -> FeedbackMode.SOUND
+        }
+        feedbackMode = nextMode
+        sharedPrefs.edit()
+            .putString(KEY_FEEDBACK_MODE, nextMode.name)
+            .putBoolean(KEY_VIBRATE_ENABLED, nextMode == FeedbackMode.VIBRATE)
+            .putBoolean("feedback_enabled", nextMode == FeedbackMode.SOUND)
+            .apply()
+
+        if (nextMode == FeedbackMode.VIBRATE && vibrator?.hasVibrator() == true) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(20L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(20L)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    var hasDismissedInstrumentInvite by remember {
+        mutableStateOf(sharedPrefs.getBoolean(KEY_INSTRUMENT_INVITE_DISMISSED, false))
+    }
+    var hasSeenChallengeNudge by remember {
+        mutableStateOf(sharedPrefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
+    }
+    var showChallengeNudge by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+    var activeRunState by remember { mutableStateOf(RunStateStorage.loadRunState(context)) }
+    var showDiscardConfirmDialog by remember { mutableStateOf(false) }
+
+    var dailyNotificationsEnabled by remember {
+        mutableStateOf(sharedPrefs.getBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true))
+    }
+    var showNotificationCustomDialog by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val isSystemAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                if (!isSystemAllowed) {
+                    dailyNotificationsEnabled = false
+                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+                    NotificationScheduler.cancelReminder(context)
+                } else {
+                    dailyNotificationsEnabled = sharedPrefs.getBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            dailyNotificationsEnabled = true
+            sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+            NotificationScheduler.scheduleDailyReminder(context)
+            Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
+        } else {
+            dailyNotificationsEnabled = false
+            sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+            NotificationScheduler.cancelReminder(context)
+        }
+    }
+
+    var trophyTapCount by remember { mutableIntStateOf(0) }
+    var lastTrophyTapTime by remember { mutableLongStateOf(0L) }
+
+    fun handleTrophyClick() {
+        val now = System.currentTimeMillis()
+        if (now - lastTrophyTapTime < 1500L) {
+            trophyTapCount++
+        } else {
+            trophyTapCount = 1
+        }
+        lastTrophyTapTime = now
+
+        if (trophyTapCount >= 5) {
+            trophyTapCount = 0
+            NotificationScheduler.triggerInstantTest(context, delaySeconds = 5)
+            Toast.makeText(context, "Test reminder scheduled in 5 seconds!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Async Challenge & Deterministic Solo Seed State
     var activeChallenge by remember { mutableStateOf<ChallengeItem?>(null) }
     var challengeRng by remember { mutableStateOf<java.util.Random?>(null) }
+    var currentRunSeed by remember { mutableIntStateOf(ChallengeSeed.generateRandomSeed()) }
+    var soloRng by remember { mutableStateOf<java.util.Random?>(null) }
     var showEnterChallengeDialog by remember { mutableStateOf(false) }
+    var showTriesSelectorDialog by remember { mutableStateOf(false) }
+    var selectedShareTries by remember { mutableIntStateOf(3) }
     var savedChallenges by remember { mutableStateOf(ChallengeStorage.loadChallenges(context)) }
     var challengeAttemptsLeft by remember { mutableIntStateOf(3) }
     var isChallengeWon by remember { mutableStateOf(false) }
@@ -480,32 +719,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
 
     val effectiveVolume = if (feedbackEnabled) audioVolume else 0f
 
-    fun dismissExplainer() {
-        if (!hasSeenExplainer) {
-            hasSeenExplainer = true
-            sharedPrefs.edit().putBoolean(KEY_HAS_SEEN_EXPLAINER, true).apply()
-        }
-    }
-
-    fun toggleColorblindShapes() {
-        showColorblindShapes = !showColorblindShapes
-        sharedPrefs.edit().putBoolean(KEY_SHAPES_ENABLED, showColorblindShapes).apply()
-    }
-
-    fun updateVolume(newVolume: Float) {
-        val clamped = newVolume.coerceIn(0f, 1f)
-        audioVolume = clamped
-        sharedPrefs.edit().putFloat(KEY_AUDIO_VOLUME, clamped).apply()
-        if (clamped > 0f && !feedbackEnabled) feedbackEnabled = true
-    }
-
-    fun updateBestScoreIfNeeded(newScore: Int) {
-        if (newScore > bestScore) {
-            bestScore = newScore
-            writeBestScore(sharedPrefs, gridSize, paceMode, newScore)
-        }
-    }
-
     fun resetRunState() {
         tapFlashJob?.cancel()
         ghostReplayJob?.cancel()
@@ -526,6 +739,125 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
         isHandoffVisible = false
         isRedemptionTurnActive = false
         eliminatedBannerText = null
+        showChallengeNudge = false
+    }
+
+    fun saveActiveRun() {
+        if (gameState != GameState.WATCHING && gameState != GameState.PLAYING) return
+        val currentAlive = if (players.isNotEmpty()) players.map { it.isAlive } else listOf(true)
+        val currentRounds = if (players.isNotEmpty()) players.map { it.roundsSurvived } else listOf(currentScore)
+        val state = SerializedRunState(
+            modeName = gameMode.name,
+            gridDimension = gridSize.dimension,
+            paceSuffix = paceMode.keySuffix,
+            sequencePadIds = sequence.map { it.id },
+            round = sequence.size,
+            activePlayerIndex = activePlayerIndex,
+            alivePlayers = currentAlive,
+            roundsSurvived = currentRounds,
+            activeChallengeCode = activeChallenge?.code,
+            challengeTriesLeft = if (activeChallenge != null) challengeAttemptsLeft else null,
+            challengeBestScore = activeChallenge?.bestScore,
+            soloRunSeed = if (gameMode == GameMode.SOLO) currentRunSeed else null,
+            difficultyMode = difficultyMode.name
+        )
+        RunStateStorage.saveRunState(context, state)
+        activeRunState = state
+    }
+
+    fun discardActiveRun() {
+        RunStateStorage.clearRunState(context)
+        activeRunState = null
+    }
+
+    fun resumeActiveRun(state: SerializedRunState) {
+        resetRunState()
+        val restoredMode = GameMode.entries.find { it.name == state.modeName } ?: GameMode.SOLO
+        val restoredGrid = when (state.gridDimension) {
+            3 -> GridSize.THREE_BY_THREE
+            4 -> GridSize.FOUR_BY_FOUR
+            else -> GridSize.TWO_BY_TWO
+        }
+        val restoredPace = when (state.paceSuffix) {
+            "progressive" -> PaceMode.PROGRESSIVE
+            else -> PaceMode.CLASSIC
+        }
+
+        gameMode = restoredMode
+        gridSize = restoredGrid
+        paceMode = restoredPace
+        difficultyMode = try { GameDifficulty.valueOf(state.difficultyMode) } catch (_: Exception) { GameDifficulty.EASY }
+        val padPool = padsForGridSize(restoredGrid)
+
+        sequence.clear()
+        for (padId in state.sequencePadIds) {
+            val pad = padPool.find { it.id == padId } ?: padPool.first()
+            sequence.add(pad)
+        }
+
+        if (restoredMode == GameMode.SOLO) {
+            if (!state.activeChallengeCode.isNullOrBlank()) {
+                val found = savedChallenges.find { it.code.equals(state.activeChallengeCode, ignoreCase = true) }
+                    ?: ChallengeSeed.parseChallengeCode(state.activeChallengeCode)?.let {
+                        ChallengeItem(it.fullCode, "Rival", it.gridTag, it.targetScore, it.tries, state.challengeTriesLeft ?: it.tries, state.challengeBestScore ?: 0, it.seedInt, it.difficulty)
+                    }
+                activeChallenge = found
+                challengeAttemptsLeft = state.challengeTriesLeft ?: found?.attemptsLeft ?: 3
+                if (found != null) {
+                    difficultyMode = found.difficulty
+                }
+                val restoredSeed = found?.seed ?: state.soloRunSeed ?: ChallengeSeed.generateRandomSeed()
+                currentRunSeed = restoredSeed
+                challengeRng = java.util.Random(restoredSeed.toLong()).apply {
+                    repeat(sequence.size) { nextInt(padPool.size) }
+                }
+                soloRng = challengeRng
+            } else {
+                activeChallenge = null
+                challengeRng = null
+                val restoredSeed = state.soloRunSeed ?: ChallengeSeed.generateRandomSeed()
+                currentRunSeed = restoredSeed
+                soloRng = java.util.Random(restoredSeed.toLong()).apply {
+                    repeat(sequence.size) { nextInt(padPool.size) }
+                }
+            }
+            currentScore = (sequence.size - 1).coerceAtLeast(0)
+            isHandoffVisible = false
+        } else {
+            activeChallenge = null
+            challengeRng = null
+            soloRng = null
+            players.clear()
+            for (i in 0 until restoredMode.playerCount) {
+                val isAlive = state.alivePlayers.getOrElse(i) { true }
+                val rounds = state.roundsSurvived.getOrElse(i) { 0 }
+                players.add(PlayerSlot(i, "P${i + 1}", PLAYER_COLORS[i], isAlive = isAlive, roundsSurvived = rounds))
+            }
+            activePlayerIndex = state.activePlayerIndex.coerceIn(0, players.lastIndex)
+            isHandoffVisible = true
+        }
+
+        wasPausedMidRound = true
+        resumedBannerNote = "Round replayed - you were away."
+        gameState = GameState.WATCHING
+        roundTrigger++
+    }
+
+    fun updateVolume(newVolume: Float) {
+        val clamped = newVolume.coerceIn(0f, 1f)
+        audioVolume = clamped
+        sharedPrefs.edit().putFloat(KEY_AUDIO_VOLUME, clamped).apply()
+        if (clamped > 0f && feedbackMode != FeedbackMode.SOUND) {
+            feedbackMode = FeedbackMode.SOUND
+            sharedPrefs.edit().putString(KEY_FEEDBACK_MODE, FeedbackMode.SOUND.name).apply()
+        }
+    }
+
+    fun updateBestScoreIfNeeded(newScore: Int) {
+        if (newScore > bestScore) {
+            bestScore = newScore
+            writeBestScore(sharedPrefs, gridSize, paceMode, newScore)
+        }
     }
 
     fun resetToIdleForConfigChange(newGridSize: GridSize, newPaceMode: PaceMode) {
@@ -564,6 +896,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> if (currentGameState == GameState.WATCHING || currentGameState == GameState.PLAYING) {
+                    saveActiveRun()
                     wasPausedMidRound = true
                     isLifecyclePaused = true
                     tapFlashJob?.cancel()
@@ -599,11 +932,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
     }
 
     fun concludeMatch() {
+        discardActiveRun()
         isMatchComplete = true
         gameState = GameState.GAME_OVER
         isHandoffVisible = false
         isRedemptionTurnActive = false
         eliminatedBannerText = null
+        wrongShakePadId = null
+        activePadId = null
         val standings = computeStandings(players)
         matchStandings = standings
         standings.filter { it.isWinner }.forEach { incrementPlayerWin(sharedPrefs, it.player.index) }
@@ -620,15 +956,19 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
 
     fun onHandoffTapped() {
         if (!isHandoffVisible) return
+        wrongShakePadId = null
+        activePadId = null
         isHandoffVisible = false
         gameState = GameState.WATCHING
         roundTrigger++
+        saveActiveRun()
     }
 
     fun startChallenge(item: ChallengeItem) {
-        dismissExplainer()
+        discardActiveRun()
         resetRunState()
         activeChallenge = item
+        difficultyMode = item.difficulty
         challengeAttemptsLeft = item.attemptsLeft
         isChallengeWon = item.isWon
         isChallengeLost = item.attemptsLeft <= 0 && !item.isWon
@@ -643,15 +983,18 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
         paceMode = PaceMode.CLASSIC
 
         val rng = java.util.Random(item.seed.toLong())
+        currentRunSeed = item.seed
         challengeRng = rng
+        soloRng = rng
         val pads = padsForGridSize(targetGrid)
         sequence.add(pads[rng.nextInt(pads.size)])
         roundTrigger++
         gameState = GameState.WATCHING
+        saveActiveRun()
     }
 
-    fun startNewGame() {
-        dismissExplainer()
+    fun actuallyStartNewGame() {
+        discardActiveRun()
         resetRunState()
         isMatchComplete = false
         matchStandings = emptyList()
@@ -663,17 +1006,25 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                 else -> GridSize.TWO_BY_TWO
             }
             gridSize = targetGrid
+            currentRunSeed = challenge.seed
             val rng = java.util.Random(challenge.seed.toLong())
             challengeRng = rng
+            soloRng = rng
             val pads = padsForGridSize(targetGrid)
             sequence.add(pads[rng.nextInt(pads.size)])
             roundTrigger++
             gameState = GameState.WATCHING
         } else if (gameMode == GameMode.SOLO) {
-            sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+            val newSeed = ChallengeSeed.generateRandomSeed()
+            currentRunSeed = newSeed
+            selectedShareTries = 3
+            val rng = java.util.Random(newSeed.toLong())
+            soloRng = rng
+            sequence.add(activePadPool[rng.nextInt(activePadPool.size)])
             roundTrigger++
             gameState = GameState.WATCHING
         } else {
+            soloRng = null
             players.clear()
             players.addAll(List(gameMode.playerCount) { i -> PlayerSlot(i, "P${i + 1}", PLAYER_COLORS[i], isAlive = true, roundsSurvived = 0) })
             activePlayerIndex = 0
@@ -681,6 +1032,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
             sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
             isHandoffVisible = true
             gameState = GameState.WATCHING
+        }
+        saveActiveRun()
+    }
+
+    fun startNewGame() {
+        if (activeRunState != null && activeRunState!!.modeName != GameMode.SOLO.name) {
+            showDiscardConfirmDialog = true
+        } else {
+            actuallyStartNewGame()
         }
     }
 
@@ -699,7 +1059,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                 activePadId = pad.id
                 if (feedbackEnabled && effectiveVolume > 0f) {
                     audioSynth.playPadSpecTone(pad, effectiveVolume)
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 }
                 delay(flashDurationMs)
                 activePadId = null
@@ -713,13 +1072,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible) {
         if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible) {
             activePadId = null
+            wrongShakePadId = null
             delay(450L)
             for (pad in sequence) {
                 if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible) return@LaunchedEffect
                 activePadId = pad.id
                 if (feedbackEnabled && effectiveVolume > 0f) {
                     audioSynth.playPadSpecTone(pad, effectiveVolume)
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 }
                 delay(flashDurationMs)
                 activePadId = null
@@ -733,6 +1092,24 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
     }
 
     fun onPadTapped(tappedPad: PadSpec) {
+        if (gameState == GameState.IDLE) {
+            if (isLifecyclePaused || isHandoffVisible) return
+            if (!hasDismissedInstrumentInvite) {
+                hasDismissedInstrumentInvite = true
+                sharedPrefs.edit().putBoolean(KEY_INSTRUMENT_INVITE_DISMISSED, true).apply()
+            }
+            tapFlashJob?.cancel()
+            activePadId = tappedPad.id
+            if (feedbackEnabled && effectiveVolume > 0f) {
+                audioSynth.playPadSpecTone(tappedPad, effectiveVolume)
+            }
+            triggerPadTapVibration()
+            tapFlashJob = coroutineScope.launch {
+                delay(240L)
+                if (gameState == GameState.IDLE) activePadId = null
+            }
+            return
+        }
         if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible) return
         resumedBannerNote = null
         val expectedPad = sequence.getOrNull(playerStepIndex) ?: return
@@ -743,8 +1120,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
             activePadId = tappedPad.id
             if (feedbackEnabled && effectiveVolume > 0f) {
                 audioSynth.playPadSpecTone(tappedPad, effectiveVolume)
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             }
+            triggerPadTapVibration()
             val nextStep = playerStepIndex + 1
             playerStepIndex = nextStep
             if (nextStep >= sequence.size) {
@@ -760,7 +1137,19 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                             savedChallenges = ChallengeStorage.loadChallenges(context)
                         }
                         if (currentScore >= ch.targetScore) {
+                            // Immediate Victory: stop sequence coroutine and transition to victory game over
                             isChallengeWon = true
+                            tapFlashJob?.cancel()
+                            activePadId = null
+                            allPadsConfettiFlash = false
+                            isRoundClearCelebration = false
+                            clearedRoundNumber = completedRound
+                            if (feedbackEnabled && effectiveVolume > 0f) {
+                                audioSynth.playRoundClearArpeggio(effectiveVolume)
+                            }
+                            gameState = GameState.GAME_OVER
+                            discardActiveRun()
+                            return@onPadTapped
                         }
                     }
                     clearedRoundNumber = completedRound
@@ -771,21 +1160,39 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                         activePadId = null
                         if (feedbackEnabled && effectiveVolume > 0f) {
                             audioSynth.playRoundClearArpeggio(effectiveVolume)
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                         allPadsConfettiFlash = true
                         delay(260L)
                         allPadsConfettiFlash = false
                         delay(240L)
-                        val nextPad = if (activeChallenge != null) {
-                            val rng = challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).also { challengeRng = it }
-                            activePadPool[rng.nextInt(activePadPool.size)]
+                        if (difficultyMode == GameDifficulty.HARD) {
+                            sequence.clear()
+                            val newTargetLen = completedRound + 1
+                            val rng = if (activeChallenge != null) {
+                                challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).also { challengeRng = it }
+                            } else {
+                                soloRng ?: java.util.Random(currentRunSeed.toLong()).also { soloRng = it }
+                            }
+                            repeat(newTargetLen) {
+                                sequence.add(activePadPool[rng.nextInt(activePadPool.size)])
+                            }
                         } else {
-                            activePadPool[Random.nextInt(activePadPool.size)]
+                            val nextPad = if (activeChallenge != null) {
+                                val rng = challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).apply {
+                                    repeat(sequence.size) { nextInt(activePadPool.size) }
+                                }.also { challengeRng = it }
+                                activePadPool[rng.nextInt(activePadPool.size)]
+                            } else {
+                                val rng = soloRng ?: java.util.Random(currentRunSeed.toLong()).apply {
+                                    repeat(sequence.size) { nextInt(activePadPool.size) }
+                                }.also { soloRng = it }
+                                activePadPool[rng.nextInt(activePadPool.size)]
+                            }
+                            sequence.add(nextPad)
                         }
-                        sequence.add(nextPad)
                         isRoundClearCelebration = false
                         roundTrigger++
+                        saveActiveRun()
                     }
                 } else {
                     val activePlayer = players[activePlayerIndex]
@@ -798,7 +1205,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                         activePadId = null
                         if (feedbackEnabled && effectiveVolume > 0f) {
                             audioSynth.playRoundClearArpeggio(effectiveVolume)
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                         allPadsConfettiFlash = true
                         delay(260L)
@@ -809,14 +1215,23 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                         if (isRedemptionTurnActive) {
                             concludeMatch()
                         } else {
-                            sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
                             var nextIdx = (activePlayerIndex + 1) % players.size
                             while (!players[nextIdx].isAlive) {
                                 nextIdx = (nextIdx + 1) % players.size
                             }
                             activePlayerIndex = nextIdx
                             playerStepIndex = 0
+                            if (difficultyMode == GameDifficulty.HARD) {
+                                val targetLen = completedRound + 1
+                                sequence.clear()
+                                repeat(targetLen) {
+                                    sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                }
+                            } else {
+                                sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                            }
                             isHandoffVisible = true
+                            saveActiveRun()
                         }
                     }
                 }
@@ -836,16 +1251,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
             wrongShakePadId = tappedPad.id
             if (feedbackEnabled && effectiveVolume > 0f) {
                 audioSynth.playErrorBuzz(effectiveVolume)
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
-            tapFlashJob = coroutineScope.launch {
-                wrongPadShakeOffset.snapTo(0f)
-                for (target in listOf(-18f, 18f, -14f, 14f, -8f, 8f, 0f)) {
-                    wrongPadShakeOffset.animateTo(target, tween(45, easing = FastOutSlowInEasing))
-                }
-            }
-
+            triggerPadTapVibration()
             if (gameMode == GameMode.SOLO) {
+                tapFlashJob = coroutineScope.launch {
+                    wrongPadShakeOffset.snapTo(0f)
+                    for (target in listOf(-18f, 18f, -14f, 14f, -8f, 8f, 0f)) {
+                        wrongPadShakeOffset.animateTo(target, tween(45, easing = FastOutSlowInEasing))
+                    }
+                    wrongShakePadId = null
+                }
                 updateBestScoreIfNeeded(currentScore)
                 if (activeChallenge != null) {
                     val ch = activeChallenge!!
@@ -864,16 +1279,28 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                         isChallengeLost = true
                         isChallengeWon = false
                     }
+                    showChallengeNudge = false
+                } else if (!hasSeenChallengeNudge) {
+                    showChallengeNudge = true
+                    hasSeenChallengeNudge = true
+                    sharedPrefs.edit().putBoolean(KEY_CHALLENGE_NUDGE_SEEN, true).apply()
                 }
                 gameState = GameState.GAME_OVER
+                discardActiveRun()
             } else {
                 val eliminatedPlayer = players[activePlayerIndex]
                 players[activePlayerIndex] = eliminatedPlayer.copy(isAlive = false)
-                eliminatedBannerText = "P${eliminatedPlayer.index + 1} MISSED - OUT!"
+                eliminatedBannerText = "P${eliminatedPlayer.index + 1} missed the sequence"
 
                 tapFlashJob = coroutineScope.launch {
-                    delay(900L)
+                    wrongPadShakeOffset.snapTo(0f)
+                    for (target in listOf(-18f, 18f, -14f, 14f, -8f, 8f, 0f)) {
+                        wrongPadShakeOffset.animateTo(target, tween(45, easing = FastOutSlowInEasing))
+                    }
+                    wrongShakePadId = null
+                    delay(585L)
                     eliminatedBannerText = null
+                    wrongShakePadId = null
                     val alive = players.filter { it.isAlive }
                     when {
                         alive.isEmpty() -> concludeMatch()
@@ -886,6 +1313,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                                 isRedemptionTurnActive = true
                                 activePlayerIndex = survivor.index
                                 playerStepIndex = 0
+                                if (difficultyMode == GameDifficulty.HARD) {
+                                    val curLen = sequence.size
+                                    sequence.clear()
+                                    repeat(curLen) {
+                                        sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                    }
+                                }
                                 isHandoffVisible = true
                                 gameState = GameState.WATCHING
                             }
@@ -897,6 +1331,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                             }
                             activePlayerIndex = nextIdx
                             playerStepIndex = 0
+                            if (difficultyMode == GameDifficulty.HARD) {
+                                val curLen = sequence.size
+                                sequence.clear()
+                                repeat(curLen) {
+                                    sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                }
+                            }
                             isHandoffVisible = true
                             gameState = GameState.WATCHING
                         }
@@ -908,8 +1349,31 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
 
     val isLargeScreen = configuration.smallestScreenWidthDp > 500
     val maxContentWidth = if (isLargeScreen) 680.dp else 560.dp
-    val gridCapDp = if (isLargeScreen) 480.dp else 360.dp
-    val showConfigRow = gameState == GameState.IDLE || (gameState == GameState.GAME_OVER && gameMode == GameMode.SOLO)
+    val showConfigRow = gameState == GameState.IDLE
+
+    // PASS 2H Item 4: Back gesture routing
+    // GAME_OVER and MATCH_COMPLETE -> Home (IDLE); WATCHING/PLAYING -> pause dialog; IDLE -> system exit.
+    BackHandler(enabled = gameState != GameState.IDLE) {
+        when (gameState) {
+            GameState.WATCHING, GameState.PLAYING -> {
+                showSettingsSheet = true
+            }
+            GameState.GAME_OVER -> {
+                discardActiveRun()
+                activeChallenge = null
+                challengeRng = null
+                soloRng = null
+                isChallengeWon = false
+                isChallengeLost = false
+                isMatchComplete = false
+                matchStandings = emptyList()
+                resetRunState()
+                activeRunState = null
+                gameState = GameState.IDLE
+            }
+            GameState.IDLE -> Unit
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -923,165 +1387,341 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                 .padding(innerPadding)
         ) {
             Column(
-                modifier = Modifier.fillMaxSize().widthIn(max = maxContentWidth).align(Alignment.Center).padding(horizontal = 20.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = maxContentWidth)
+                    .align(Alignment.Center)
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     TopTitleRow(
-                        feedbackEnabled = feedbackEnabled && audioVolume > 0f,
-                        onToggleFeedback = { feedbackEnabled = !feedbackEnabled },
-                        onOpenSettings = { showSettingsSheet = true }
+                        feedbackMode = feedbackMode,
+                        isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
+                        showBestBadge = gameMode == GameMode.SOLO,
+                        bestScore = bestScore,
+                        onCycleFeedbackMode = ::cycleFeedbackMode,
+                        onOpenSettings = { showSettingsSheet = true },
+                        onTrophyClick = ::handleTrophyClick
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (activeChallenge != null && gameState != GameState.IDLE) {
-                        InGameChallengeBanner(
-                            rivalName = activeChallenge!!.rivalName,
-                            targetScore = activeChallenge!!.targetScore,
-                            triesLeft = challengeAttemptsLeft,
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        )
-                    }
-                    if (gameMode == GameMode.SOLO) {
-                        ScoreboardRow(currentScore = currentScore, bestScore = bestScore, gridSize = gridSize)
-                    } else {
-                        if (gameState == GameState.IDLE) {
-                            val wins = remember(playerWinsVersion, gameMode) {
-                                (0 until 4).map { readPlayerWins(sharedPrefs, it) }
-                            }
-                            MultiplayerWinsSummaryRow(gameMode = gameMode, wins = wins)
-                        } else {
-                            PlayerRail(
-                                players = players,
-                                activePlayerIndex = activePlayerIndex,
-                                isRedemptionTurnActive = isRedemptionTurnActive
+
+                    if (gameState != GameState.IDLE) {
+                        if (activeChallenge != null) {
+                            InGameChallengeBanner(
+                                rivalName = activeChallenge!!.rivalName,
+                                targetScore = activeChallenge!!.targetScore,
+                                triesLeft = challengeAttemptsLeft
                             )
                         }
+                        if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
+                            if (gameMode == GameMode.SOLO) {
+                                ScoreboardRow(
+                                    currentScore = currentScore,
+                                    bestScore = bestScore,
+                                    gridSize = gridSize
+                                )
+                            } else if (!isMatchComplete) {
+                                PlayerRail(
+                                    players = players,
+                                    activePlayerIndex = activePlayerIndex,
+                                    isRedemptionTurnActive = isRedemptionTurnActive
+                                )
+                            }
+                        }
                     }
+
                     AnimatedVisibility(
                         visible = showConfigRow,
                         enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                         exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             if (gameState == GameState.IDLE) {
-                                ModeSelectorRow(selectedMode = gameMode, enabled = !isReplayingLostRound) {
-                                    resetToIdleForMode(it)
-                                }
-                            }
-                            ConfigSummaryPillsRow(gridSize, paceMode, !isReplayingLostRound) { showSettingsSheet = true }
-                            if (gameState == GameState.IDLE && gameMode == GameMode.SOLO) {
-                                ActiveChallengesRail(
-                                    challenges = savedChallenges,
-                                    onPlayChallenge = ::startChallenge,
-                                    onDeleteChallenge = { code ->
-                                        ChallengeStorage.deleteChallenge(context, code)
-                                        savedChallenges = ChallengeStorage.loadChallenges(context)
-                                    },
-                                    onOpenEnterModal = { showEnterChallengeDialog = true }
+                                // ROW A: Single segmented capsule [SOLO|2P|3P|4P] with sliding highlight thumb
+                                SegmentedModeTrack(
+                                    selectedMode = gameMode,
+                                    enabled = !isReplayingLostRound,
+                                    onSelectMode = { resetToIdleForMode(it) }
                                 )
+
+                                // ROW B: Left = ONE Board pill ("3×3 · Classic"), Right = Context slot (+ Challenge pill OR borderless dot tally)
+                                val wins = remember(playerWinsVersion, gameMode) {
+                                    (0 until 4).map { readPlayerWins(sharedPrefs, it) }
+                                }
+                                BoardAndContextRow(
+                                    selectedMode = gameMode,
+                                    gridSize = gridSize,
+                                    paceMode = paceMode,
+                                    activeChallengesCount = savedChallenges.size,
+                                    wins = wins,
+                                    enabled = !isReplayingLostRound,
+                                    onOpenSettings = { showSettingsSheet = true },
+                                    onOpenEnterChallenge = { showEnterChallengeDialog = true }
+                                )
+
+                                // CHALLENGE RAIL: Only when non-empty in SOLO mode
+                                if (gameMode == GameMode.SOLO && savedChallenges.isNotEmpty()) {
+                                    ActiveChallengesRail(
+                                        challenges = savedChallenges,
+                                        onPlayChallenge = ::startChallenge,
+                                        onDeleteChallenge = { code ->
+                                            ChallengeStorage.deleteChallenge(context, code)
+                                            savedChallenges = ChallengeStorage.loadChallenges(context)
+                                        },
+                                        onOpenEnterModal = { showEnterChallengeDialog = true }
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
-                if (gameMode != GameMode.SOLO && isMatchComplete) {
-                    MatchCompleteCard(
-                        standings = matchStandings,
-                        sequenceSize = sequence.size,
-                        isReplaying = isReplayingLostRound,
-                        onRematch = ::startNewGame,
-                        onSetup = {
-                            resetRunState()
-                            isMatchComplete = false
-                            gameState = GameState.IDLE
-                        },
-                        onSoloMode = {
-                            resetToIdleForMode(GameMode.SOLO)
-                        },
-                        onWatchFinalRound = ::startWatchMyRoundReplay
-                    )
-                } else if (gameState == GameState.IDLE && !hasSeenExplainer) {
-                    FirstRunExplainerCard(onDismiss = ::dismissExplainer)
-                } else {
-                    StatusBanner(
-                        gameState = gameState,
-                        gameMode = gameMode,
-                        gridSize = gridSize,
-                        currentScore = currentScore,
-                        playerStepIndex = playerStepIndex,
-                        sequenceSize = sequence.size,
-                        flashDurationMs = flashDurationMs,
-                        isRoundClearCelebration = isRoundClearCelebration,
-                        clearedRoundNumber = clearedRoundNumber,
-                        resumedBannerNote = resumedBannerNote,
-                        failedStepNumber = failedStepNumber,
-                        failedExpectedPad = failedExpectedPad,
-                        failedTappedPad = failedTappedPad,
-                        isReplayingLostRound = isReplayingLostRound,
-                        ghostReplayStep = ghostReplayStep,
-                        activePlayer = if (gameMode != GameMode.SOLO && players.isNotEmpty()) players.getOrNull(activePlayerIndex) else null,
-                        isRedemptionTurn = isRedemptionTurnActive,
-                        eliminatedBannerText = eliminatedBannerText,
-                        activeChallenge = activeChallenge,
-                        challengeAttemptsLeft = challengeAttemptsLeft,
-                        isChallengeWon = isChallengeWon,
-                        isChallengeLost = isChallengeLost,
-                        onWatchMyRound = ::startWatchMyRoundReplay
-                    )
-                }
+                val isPodiumOverlayActive = gameMode != GameMode.SOLO && isMatchComplete
 
-                BoxWithConstraints(
-                    modifier = Modifier.weight(1f, fill = false).fillMaxWidth().padding(vertical = 6.dp).testTag("pad_grid_container"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val animatedGridSide by animateDpAsState(
-                        targetValue = minOf(maxWidth, maxHeight, gridCapDp),
-                        animationSpec = tween(200, easing = FastOutSlowInEasing),
-                        label = "animatedGridSide"
-                    )
-                    SimonPadGrid(
-                        modifier = Modifier.size(animatedGridSide),
-                        gridSize = gridSize,
-                        pads = activePadPool,
-                        activePadId = activePadId,
-                        allPadsConfettiFlash = allPadsConfettiFlash,
-                        wrongShakePadId = wrongShakePadId,
-                        wrongShakeOffsetPx = wrongPadShakeOffset.value,
-                        showColorblindShapes = showColorblindShapes,
-                        inputEnabled = gameState == GameState.PLAYING && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible,
-                        onPadClick = ::onPadTapped
-                    )
+                if (isPodiumOverlayActive && !isReplayingLostRound) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        MatchCompleteCard(
+                            standings = matchStandings,
+                            sequenceSize = sequence.size,
+                            isReplaying = isReplayingLostRound,
+                            onRematch = {
+                                discardActiveRun()
+                                startNewGame()
+                            },
+                            onHome = {
+                                discardActiveRun()
+                                resetRunState()
+                                activeChallenge = null
+                                challengeRng = null
+                                isChallengeWon = false
+                                isChallengeLost = false
+                                gameMode = GameMode.SOLO
+                                writeGameMode(sharedPrefs, GameMode.SOLO)
+                                isMatchComplete = false
+                                matchStandings = emptyList()
+                                players.clear()
+                                activeRunState = null
+                                gameState = GameState.IDLE
+                            },
+                            onWatchFinalRound = ::startWatchMyRoundReplay
+                        )
+                    }
+                } else {
+                    if (isPodiumOverlayActive) {
+                        MatchCompleteCard(
+                            standings = matchStandings,
+                            sequenceSize = sequence.size,
+                            isReplaying = isReplayingLostRound,
+                            onRematch = {
+                                discardActiveRun()
+                                startNewGame()
+                            },
+                            onHome = {
+                                discardActiveRun()
+                                resetRunState()
+                                activeChallenge = null
+                                challengeRng = null
+                                isChallengeWon = false
+                                isChallengeLost = false
+                                gameMode = GameMode.SOLO
+                                writeGameMode(sharedPrefs, GameMode.SOLO)
+                                isMatchComplete = false
+                                matchStandings = emptyList()
+                                players.clear()
+                                activeRunState = null
+                                gameState = GameState.IDLE
+                            },
+                            onWatchFinalRound = ::startWatchMyRoundReplay
+                        )
+                    } else if (gameState != GameState.IDLE) {
+                        StatusBanner(
+                            gameState = gameState,
+                            gameMode = gameMode,
+                            gridSize = gridSize,
+                            currentScore = currentScore,
+                            playerStepIndex = playerStepIndex,
+                            sequenceSize = sequence.size,
+                            flashDurationMs = flashDurationMs,
+                            isRoundClearCelebration = isRoundClearCelebration,
+                            clearedRoundNumber = clearedRoundNumber,
+                            resumedBannerNote = resumedBannerNote,
+                            failedStepNumber = failedStepNumber,
+                            failedExpectedPad = failedExpectedPad,
+                            failedTappedPad = failedTappedPad,
+                            isReplayingLostRound = isReplayingLostRound,
+                            ghostReplayStep = ghostReplayStep,
+                            activePlayer = if (gameMode != GameMode.SOLO && players.isNotEmpty()) players.getOrNull(activePlayerIndex) else null,
+                            isRedemptionTurn = isRedemptionTurnActive,
+                            eliminatedBannerText = eliminatedBannerText,
+                            activeChallenge = activeChallenge,
+                            challengeAttemptsLeft = challengeAttemptsLeft,
+                            isChallengeWon = isChallengeWon,
+                            isChallengeLost = isChallengeLost,
+                            onWatchMyRound = ::startWatchMyRoundReplay
+                        )
+                    }
+
+                    // HERO PAD GRID: Takes all remaining vertical weight
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .testTag("pad_grid_container"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Faint radial ambient glow behind the grid (alpha <= 6%, brand cyan/magenta)
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val stageRadius = size.minDimension * 0.72f
+                            if (stageRadius > 0f) {
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color(0xFF00E5FF).copy(alpha = 0.06f),
+                                            Color(0xFFD946EF).copy(alpha = 0.04f),
+                                            Color.Transparent
+                                        ),
+                                        center = center,
+                                        radius = stageRadius
+                                    ),
+                                    radius = stageRadius,
+                                    center = center
+                                )
+                            }
+                        }
+
+                        val perPadCap = if (gridSize == GridSize.TWO_BY_TWO) 180.dp else 150.dp
+                        val maxBoardCap = (perPadCap * gridSize.dimension) + (gridSize.spacingDp.dp * (gridSize.dimension - 1))
+                        val animatedGridSide by animateDpAsState(
+                            targetValue = minOf(maxWidth, maxHeight, maxBoardCap),
+                            animationSpec = tween(200, easing = FastOutSlowInEasing),
+                            label = "animatedGridSide"
+                        )
+                        val isInstrumentArmed = gameState == GameState.IDLE
+                        SimonPadGrid(
+                            modifier = Modifier.size(animatedGridSide),
+                            gridSize = gridSize,
+                            pads = activePadPool,
+                            activePadId = activePadId,
+                            allPadsConfettiFlash = allPadsConfettiFlash,
+                            wrongShakePadId = wrongShakePadId,
+                            wrongShakeOffsetPx = wrongPadShakeOffset.value,
+                            inputEnabled = (gameState == GameState.PLAYING || isInstrumentArmed) && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible,
+                            onPadClick = ::onPadTapped
+                        )
+
+                        // One-time Instrument Invitation chip at the hero's bottom edge
+                        if (gameState == GameState.IDLE && !hasDismissedInstrumentInvite) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = Color(0xFF0F172A).copy(alpha = 0.88f),
+                                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f)),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 2.dp)
+                                    .semantics(mergeDescendants = true) {}
+                                    .testTag("instrument_invite_chip")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MusicNote,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = "Tap pads to play their notes.",
+                                        color = Color(0xFFCBD5E1),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        // ONBOARDING POPUP: Displayed on Home screen for first 3 launches
+                        if (gameState == GameState.IDLE && showOnboardingPopup) {
+                            OnboardingPopupDialog(onDismiss = { showOnboardingPopup = false })
+                        }
+                    }
                 }
 
                 if (gameMode == GameMode.SOLO || !isMatchComplete) {
+                    val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode) {
+                        val gridTag = when (gridSize) {
+                            GridSize.TWO_BY_TWO -> "2x2"
+                            GridSize.THREE_BY_THREE -> "3x3"
+                            GridSize.FOUR_BY_FOUR -> "4x4"
+                        }
+                        val scoreToShare = currentScore.coerceAtLeast(1)
+                        val code = ChallengeSeed.formatChallengeCode(
+                            gridTag = gridTag,
+                            targetScore = scoreToShare,
+                            tries = selectedShareTries,
+                            difficulty = difficultyMode,
+                            seed = currentRunSeed
+                        )
+                        ChallengeStorage.recordCreatedCode(context, code)
+                        code
+                    }
                     BottomActionSection(
                         gameState = gameState,
                         gameMode = gameMode,
+                        gridSize = gridSize,
+                        activeRunState = if (gameState == GameState.IDLE) activeRunState else null,
                         activeChallenge = activeChallenge,
                         challengeAttemptsLeft = challengeAttemptsLeft,
                         isChallengeWon = isChallengeWon,
                         isChallengeLost = isChallengeLost,
+                        showChallengeNudge = showChallengeNudge,
+                        onResumeSavedRun = {
+                            if (activeRunState != null) {
+                                resumeActiveRun(activeRunState!!)
+                            }
+                        },
                         onStartOrRetry = ::startNewGame,
                         onShareChallenge = {
-                            val gridTag = when (gridSize) {
-                                GridSize.TWO_BY_TWO -> "2x2"
-                                GridSize.THREE_BY_THREE -> "3x3"
-                                GridSize.FOUR_BY_FOUR -> "4x4"
-                            }
-                            val seed = ChallengeSeed.generateRandomSeed()
-                            val scoreToShare = currentScore.coerceAtLeast(1)
-                            val code = ChallengeSeed.formatChallengeCode(gridTag, scoreToShare, seed)
-                            coroutineScope.launch {
-                                ChallengeShareHelper.shareChallenge(
-                                    context = context,
-                                    code = code,
-                                    gridSizeTag = gridTag,
-                                    score = scoreToShare,
-                                    attempts = 1
-                                )
-                            }
+                            showChallengeNudge = false
+                            showTriesSelectorDialog = true
+                        },
+                        onCopyCode = {
+                            showChallengeNudge = false
+                            ChallengeStorage.recordCreatedCode(context, generatedCode)
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("Glowback Challenge Code", generatedCode)
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, "Challenge code copied: $generatedCode", Toast.LENGTH_SHORT).show()
+                        },
+                        onReturnHome = {
+                            discardActiveRun()
+                            activeChallenge = null
+                            challengeRng = null
+                            soloRng = null
+                            isChallengeWon = false
+                            isChallengeLost = false
+                            isMatchComplete = false
+                            matchStandings = emptyList()
+                            resetRunState()
+                            activeRunState = null
+                            gameState = GameState.IDLE
                         },
                         onReplyToRival = {
                             if (activeChallenge != null) {
@@ -1102,11 +1742,49 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
                         onExitChallenge = {
                             activeChallenge = null
                             challengeRng = null
+                            soloRng = null
                             resetRunState()
                             gameState = GameState.IDLE
                         }
                     )
                 }
+            }
+
+            if (showTriesSelectorDialog) {
+                ShareTriesSelectorDialog(
+                    initialTries = selectedShareTries,
+                    onDismiss = { showTriesSelectorDialog = false },
+                    onGenerateCard = { chosenTries ->
+                        selectedShareTries = chosenTries
+                        showTriesSelectorDialog = false
+                        val gridTag = when (gridSize) {
+                            GridSize.TWO_BY_TWO -> "2x2"
+                            GridSize.THREE_BY_THREE -> "3x3"
+                            GridSize.FOUR_BY_FOUR -> "4x4"
+                        }
+                        val scoreToShare = currentScore.coerceAtLeast(1)
+                        val code = ChallengeSeed.formatChallengeCode(
+                            gridTag = gridTag,
+                            targetScore = scoreToShare,
+                            tries = chosenTries,
+                            difficulty = difficultyMode,
+                            seed = currentRunSeed
+                        )
+                        ChallengeStorage.recordCreatedCode(context, code)
+                        coroutineScope.launch {
+                            ChallengeShareHelper.shareChallenge(
+                                context = context,
+                                code = code,
+                                gridSizeTag = gridTag,
+                                score = scoreToShare,
+                                attempts = 1,
+                                tries = chosenTries,
+                                paceName = paceMode.shortLabel,
+                                difficulty = difficultyMode
+                            )
+                        }
+                    }
+                )
             }
 
             if (showEnterChallengeDialog) {
@@ -1138,21 +1816,149 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier) {
             if (showSettingsSheet) {
                 SettingsSheetDialog(
                     currentGridSize = gridSize,
+                    currentDifficulty = difficultyMode,
                     currentPaceMode = paceMode,
-                    feedbackEnabled = feedbackEnabled,
-                    volume = audioVolume,
-                    shapesEnabled = showColorblindShapes,
                     isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
                     onSelectGridSize = { if (it != gridSize) resetToIdleForConfigChange(it, paceMode) },
+                    onSelectDifficulty = { diff ->
+                        difficultyMode = diff
+                        sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, diff.name).apply()
+                    },
                     onSelectPaceMode = { if (it != paceMode) resetToIdleForConfigChange(gridSize, it) },
-                    onToggleSound = { feedbackEnabled = it },
-                    onVolumeChange = ::updateVolume,
-                    onToggleShapes = ::toggleColorblindShapes,
                     onResetMultiplayerWins = {
                         resetMultiplayerWins(sharedPrefs)
                         playerWinsVersion++
                     },
+                    dailyNotificationsEnabled = dailyNotificationsEnabled,
+                    onToggleDailyNotifications = { wantEnabled ->
+                        if (wantEnabled) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                val hasPerm = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasPerm) {
+                                    dailyNotificationsEnabled = true
+                                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+                                    NotificationScheduler.scheduleDailyReminder(context)
+                                    Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    showNotificationCustomDialog = true
+                                }
+                            } else {
+                                val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                                if (allowed) {
+                                    dailyNotificationsEnabled = true
+                                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+                                    NotificationScheduler.scheduleDailyReminder(context)
+                                    Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    showNotificationCustomDialog = true
+                                }
+                            }
+                        } else {
+                            dailyNotificationsEnabled = false
+                            sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+                            NotificationScheduler.cancelReminder(context)
+                            Toast.makeText(context, "Daily notifications turned off", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onResumeRun = { showSettingsSheet = false },
+                    onSaveAndExit = {
+                        saveActiveRun()
+                        resetRunState()
+                        gameState = GameState.IDLE
+                        showSettingsSheet = false
+                    },
+                    onQuitToHome = {
+                        discardActiveRun()
+                        activeChallenge = null
+                        challengeRng = null
+                        soloRng = null
+                        isChallengeWon = false
+                        isChallengeLost = false
+                        isMatchComplete = false
+                        matchStandings = emptyList()
+                        resetRunState()
+                        activeRunState = null
+                        gameState = GameState.IDLE
+                        showSettingsSheet = false
+                    },
+                    onRestartRun = {
+                        discardActiveRun()
+                        showSettingsSheet = false
+                        actuallyStartNewGame()
+                    },
                     onDismiss = { showSettingsSheet = false }
+                )
+            }
+
+            if (showNotificationCustomDialog) {
+                NotificationPermissionDialog(
+                    onAllow = {
+                        showNotificationCustomDialog = false
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                            if (allowed) {
+                                dailyNotificationsEnabled = true
+                                sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+                                NotificationScheduler.scheduleDailyReminder(context)
+                            } else {
+                                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                }
+                                context.startActivity(intent)
+                            }
+                        }
+                    },
+                    onDismiss = {
+                        showNotificationCustomDialog = false
+                        dailyNotificationsEnabled = false
+                        sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+                    }
+                )
+            }
+
+            if (showDiscardConfirmDialog && activeRunState != null) {
+                val modeLabel = when (activeRunState!!.modeName) {
+                    "TWO_PLAYERS" -> "2P"
+                    "THREE_PLAYERS" -> "3P"
+                    "FOUR_PLAYERS" -> "4P"
+                    else -> activeRunState!!.modeName
+                }
+                AlertDialog(
+                    onDismissRequest = { showDiscardConfirmDialog = false },
+                    title = { Text(text = "Abandon Active Match?", color = Color.White, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Text(
+                            text = "You have an unfinished $modeLabel match (Round ${activeRunState!!.round}). Starting a new match will discard this progress.",
+                            color = Color(0xFFCBD5E1)
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showDiscardConfirmDialog = false
+                                actuallyStartNewGame()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                            modifier = Modifier.testTag("confirm_discard_button")
+                        ) {
+                            Text("Discard & Start New", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        OutlinedButton(
+                            onClick = { showDiscardConfirmDialog = false },
+                            modifier = Modifier.testTag("cancel_discard_button")
+                        ) {
+                            Text("Keep Match", color = Color(0xFF38BDF8))
+                        }
+                    },
+                    containerColor = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(18.dp)
                 )
             }
         }
@@ -1171,9 +1977,13 @@ private fun HeaderIconBtn(icon: ImageVector, contentDesc: String, tint: Color, b
 
 @Composable
 private fun TopTitleRow(
-    feedbackEnabled: Boolean,
-    onToggleFeedback: () -> Unit,
-    onOpenSettings: () -> Unit
+    feedbackMode: FeedbackMode,
+    isMidRun: Boolean = false,
+    showBestBadge: Boolean = true,
+    bestScore: Int = 0,
+    onCycleFeedbackMode: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onTrophyClick: () -> Unit = {}
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1184,19 +1994,65 @@ private fun TopTitleRow(
             Text(text = "GLOWBACK", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (showBestBadge) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .testTag("best_score_chip")
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                onTrophyClick()
+                            }
+                        }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.EmojiEvents,
+                        contentDescription = "Best Score",
+                        tint = Color(0xFFFBBF24),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = bestScore.toString(),
+                        color = Color(0xFFFBBF24),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.testTag("best_score_text")
+                    )
+                }
+            }
+            val (modeIcon, modeDesc, modeTint) = when (feedbackMode) {
+                FeedbackMode.SOUND -> Triple(
+                    Icons.AutoMirrored.Filled.VolumeUp,
+                    "Sound ON. Tap for Vibrate.",
+                    Color(0xFF38BDF8)
+                )
+                FeedbackMode.VIBRATE -> Triple(
+                    Icons.Default.Vibration,
+                    "Vibrate ON. Tap to Mute.",
+                    Color(0xFF38BDF8)
+                )
+                FeedbackMode.MUTE -> Triple(
+                    Icons.AutoMirrored.Filled.VolumeOff,
+                    "Muted. Tap to Unmute.",
+                    Color(0xFF94A3B8)
+                )
+            }
             HeaderIconBtn(
-                icon = if (feedbackEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                contentDesc = if (feedbackEnabled) "Mute sound and haptics" else "Unmute sound and haptics",
-                tint = if (feedbackEnabled) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                borderColor = Color(0xFF334155),
+                icon = modeIcon,
+                contentDesc = modeDesc,
+                tint = modeTint,
+                borderColor = if (feedbackMode == FeedbackMode.MUTE) Color(0xFF334155) else Color(0xFF38BDF8).copy(alpha = 0.5f),
                 tag = "audio_toggle_button",
-                onClick = onToggleFeedback
+                onClick = onCycleFeedbackMode
             )
             HeaderIconBtn(
-                icon = Icons.Default.Settings,
-                contentDesc = "Open Settings",
-                tint = Color(0xFFCBD5E1),
-                borderColor = Color(0xFF334155),
+                icon = if (isMidRun) Icons.Default.Pause else Icons.Default.Settings,
+                contentDesc = if (isMidRun) "Pause Game" else "Open Settings",
+                tint = if (isMidRun) Color(0xFFFBBF24) else Color(0xFFCBD5E1),
+                borderColor = if (isMidRun) Color(0xFFFBBF24).copy(alpha = 0.5f) else Color(0xFF334155),
                 tag = "settings_button",
                 onClick = onOpenSettings
             )
@@ -1228,64 +2084,69 @@ private fun RowScope.ScoreCard(title: String, value: Int, icon: ImageVector, acc
 private fun ScoreboardRow(currentScore: Int, bestScore: Int, gridSize: GridSize) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ScoreCard("CURRENT SCORE", currentScore, Icons.Default.Bolt, Color(0xFF38BDF8), Color(0xFFF8FAFC), "current_score_text")
-        ScoreCard("BEST (${gridSize.label})", bestScore, Icons.Default.EmojiEvents, Color(0xFFFBBF24), Color(0xFFFBBF24), "best_score_text")
+        ScoreCard("BEST (${gridSize.label})", bestScore, Icons.Default.EmojiEvents, Color(0xFFFBBF24), Color(0xFFFBBF24), "scoreboard_best_score_text")
     }
 }
 
 @Composable
-private fun ConfigSummaryPillsRow(gridSize: GridSize, paceMode: PaceMode, enabled: Boolean, onOpenSettings: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-        listOf(
-            Triple("Grid ${gridSize.label}", Icons.Default.GridView, "config_pill_grid"),
-            Triple("Pace ${paceMode.shortLabel}", Icons.Default.Speed, "config_pill_pace")
-        ).forEach { (label, icon, tag) ->
-            Surface(
-                onClick = onOpenSettings,
-                enabled = enabled,
-                shape = RoundedCornerShape(14.dp),
-                color = Color(0xFF1E293B),
-                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f)),
-                modifier = Modifier.heightIn(min = 44.dp).testTag(tag)
-            ) {
-                Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(imageVector = icon, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                    Text(text = label, color = Color(0xFFF8FAFC), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModeSelectorRow(
+private fun SegmentedModeTrack(
     selectedMode: GameMode,
     enabled: Boolean,
     onSelectMode: (GameMode) -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    val modes = GameMode.entries
+    val selectedIndex = modes.indexOf(selectedMode).coerceAtLeast(0)
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xFF1E293B))
+            .border(1.dp, Color(0xFF334155), RoundedCornerShape(22.dp))
+            .padding(3.dp)
+            .testTag("segmented_mode_track")
     ) {
-        Text(
-            text = "MODE",
-            color = Color(0xFF94A3B8),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(end = 2.dp)
+        val segmentWidth = maxWidth / modes.size
+        val thumbOffset by animateDpAsState(
+            targetValue = segmentWidth * selectedIndex,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "modeThumbOffset"
         )
-        GameMode.entries.forEach { mode ->
-            val isSelected = mode == selectedMode
-            Surface(
-                onClick = { onSelectMode(mode) },
-                enabled = enabled,
-                shape = RoundedCornerShape(12.dp),
-                color = if (isSelected) Color(0xFF0284C7).copy(alpha = 0.35f) else Color(0xFF1E293B),
-                border = BorderStroke(1.dp, if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155)),
-                modifier = Modifier.weight(1f).height(38.dp).testTag(mode.tagId)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
+
+        // Sliding highlight thumb
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset)
+                .width(segmentWidth)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(19.dp))
+                .background(Color(0xFF0284C7).copy(alpha = 0.42f))
+                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(19.dp))
+        )
+
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            modes.forEach { mode ->
+                val isSelected = mode == selectedMode
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(19.dp))
+                        .clickable(
+                            enabled = enabled,
+                            role = Role.Tab,
+                            onClick = { onSelectMode(mode) }
+                        )
+                        .testTag(mode.tagId),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
                         text = mode.label,
                         color = if (isSelected) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
@@ -1299,31 +2160,265 @@ private fun ModeSelectorRow(
 }
 
 @Composable
-private fun MultiplayerWinsSummaryRow(
-    gameMode: GameMode,
+private fun BoardAndContextRow(
+    selectedMode: GameMode,
+    gridSize: GridSize,
+    paceMode: PaceMode,
+    activeChallengesCount: Int,
     wins: List<Int>,
-    modifier: Modifier = Modifier
+    enabled: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenEnterChallenge: () -> Unit
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth().testTag("wins_summary_bar"),
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF1E293B),
-        border = BorderStroke(1.dp, Color(0xFF334155))
-    ) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // Guard for 4P + Progressive at <= 360dp screen width (<= 320dp content width):
+        // Fallback 1: drop trophy icon from tally; Fallback 2: abbreviate "Progressive" to "Prog."
+        val isMulti4P = selectedMode == GameMode.FOUR_PLAYERS
+        val isProgressive = paceMode == PaceMode.PROGRESSIVE
+        val hasMultiDigitWins = wins.take(selectedMode.playerCount).any { it >= 10 }
+        val dropTrophy = isMulti4P && (maxWidth < 312.dp || (isProgressive && maxWidth <= 324.dp) || hasMultiDigitWins)
+        val abbreviatePace = isMulti4P && isProgressive && (maxWidth < 300.dp || (hasMultiDigitWins && maxWidth <= 324.dp))
+        val displayPaceLabel = if (abbreviatePace) "Prog." else paceMode.shortLabel
+
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            for (i in 0 until gameMode.playerCount) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(PLAYER_COLORS[i]))
-                    Text(text = "P${i + 1}:", color = Color(0xFF94A3B8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text(text = "${wins.getOrElse(i) { 0 }}W", color = Color(0xFFF8FAFC), fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+            // Left: ONE Board pill ("3×3 · Classic") opening Settings
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF1E293B),
+                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
+                modifier = Modifier.height(40.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
+                            .padding(start = 12.dp, end = 4.dp)
+                            .testTag("config_pill_grid"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GridView,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = gridSize.label,
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                    Text(
+                        text = "·",
+                        color = Color(0xFF64748B),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
+                            .padding(start = 4.dp, end = 12.dp)
+                            .testTag("config_pill_pace"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = displayPaceLabel,
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
-                if (i < gameMode.playerCount - 1) {
-                    Text(text = "•", color = Color(0xFF475569), fontSize = 12.sp)
+            }
+
+            // Right: Contextual slot
+            if (selectedMode == GameMode.SOLO) {
+                val pillLabel = if (activeChallengesCount > 0) {
+                    "Challenge · $activeChallengesCount"
+                } else {
+                    "+ Challenge"
                 }
+                Surface(
+                    onClick = onOpenEnterChallenge,
+                    enabled = enabled,
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF1E293B),
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .height(40.dp)
+                        .testTag("enter_challenge_code_pill")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = pillLabel,
+                            color = Color(0xFF00E5FF),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            } else {
+                // Multiplayer: Borderless color-dot tally ([trophy] *0 *0 *0 *0) in 14sp, never wraps at 360dp
+                MultiplayerWinsDotTally(
+                    gameMode = selectedMode,
+                    wins = wins,
+                    showTrophy = !dropTrophy
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MultiplayerWinsDotTally(
+    gameMode: GameMode,
+    wins: List<Int>,
+    showTrophy: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .testTag("wins_summary_bar"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (showTrophy) {
+            Icon(
+                imageVector = Icons.Default.EmojiEvents,
+                contentDescription = "Multiplayer Wins",
+                tint = Color(0xFFFBBF24),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        for (i in 0 until gameMode.playerCount) {
+            Row(
+                modifier = Modifier.widthIn(min = 26.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(PLAYER_COLORS[i])
+                )
+                Text(
+                    text = "${wins.getOrElse(i) { 0 }}",
+                    color = Color(0xFFF8FAFC),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueRunPill(
+    state: SerializedRunState,
+    onResume: () -> Unit
+) {
+    val modeLabel = when (state.modeName) {
+        "SOLO" -> "Solo"
+        "TWO_PLAYERS" -> "2P"
+        "THREE_PLAYERS" -> "3P"
+        "FOUR_PLAYERS" -> "4P"
+        else -> state.modeName
+    }
+    val detail = if (state.modeName == "SOLO") {
+        "Round ${state.round}"
+    } else {
+        "P${state.activePlayerIndex + 1} Turn • Round ${state.round}"
+    }
+    val dotColor = if (state.modeName == "SOLO") {
+        Color(0xFF38BDF8)
+    } else {
+        PLAYER_COLORS.getOrElse(state.activePlayerIndex) { Color(0xFF38BDF8) }
+    }
+    val pillAccent = Color(0xFF38BDF8)
+
+    Surface(
+        onClick = onResume,
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF1E293B),
+        border = BorderStroke(1.dp, pillAccent.copy(alpha = 0.45f)),
+        shadowElevation = 4.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 46.dp)
+            .testTag("continue_run_button")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                )
+                Text(
+                    text = "Continue $modeLabel",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "($detail)",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Resume",
+                    color = pillAccent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = pillAccent,
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }
@@ -1338,7 +2433,7 @@ private fun PlayerRail(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         players.forEach { p ->
@@ -1348,26 +2443,30 @@ private fun PlayerRail(
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .widthIn(min = 56.dp)
+                    .heightIn(min = 52.dp)
+                    .alpha(if (p.isAlive) 1f else 0.40f)
                     .testTag(tag),
                 shape = RoundedCornerShape(14.dp),
                 color = when {
-                    !p.isAlive -> Color(0xFF1E293B).copy(alpha = 0.45f)
+                    !p.isAlive -> Color(0xFF0F172A)
                     isActive -> p.color.copy(alpha = 0.25f)
                     else -> Color(0xFF1E293B)
                 },
                 border = BorderStroke(
-                    width = if (isActive) 2.dp else 1.dp,
+                    width = if (isActive && p.isAlive) 2.dp else 1.dp,
                     color = when {
                         !p.isAlive -> Color(0xFF334155)
                         isRedemption -> Color(0xFFF59E0B)
                         isActive -> p.color
-                        else -> p.color.copy(alpha = 0.45f)
+                        else -> Color(0xFF334155)
                     }
                 )
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -1379,30 +2478,34 @@ private fun PlayerRail(
                             modifier = Modifier
                                 .size(7.dp)
                                 .clip(CircleShape)
-                                .background(if (p.isAlive) p.color else Color(0xFFEF4444))
+                                .background(if (p.isAlive) p.color else Color(0xFF64748B))
                         )
                         Text(
                             text = "P${p.index + 1}",
-                            color = if (p.isAlive) Color(0xFFF8FAFC) else Color(0xFF64748B),
+                            color = if (p.isAlive) Color(0xFFF8FAFC) else Color(0xFF94A3B8),
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.ExtraBold
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1
                         )
                     }
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = when {
                             !p.isAlive -> "OUT"
                             isRedemption -> "MATCH"
-                            else -> "${p.roundsSurvived} R"
+                            else -> "${p.roundsSurvived} rd"
                         },
                         color = when {
-                            !p.isAlive -> Color(0xFFEF4444)
+                            !p.isAlive -> Color(0xFF94A3B8)
                             isRedemption -> Color(0xFFFBBF24)
                             isActive -> p.color
                             else -> Color(0xFFCBD5E1)
                         },
                         fontSize = 11.sp,
+                        lineHeight = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        maxLines = 1
                     )
                 }
             }
@@ -1616,8 +2719,7 @@ private fun MatchCompleteCard(
     sequenceSize: Int,
     isReplaying: Boolean,
     onRematch: () -> Unit,
-    onSetup: () -> Unit,
-    onSoloMode: () -> Unit,
+    onHome: () -> Unit,
     onWatchFinalRound: () -> Unit
 ) {
     val winners = standings.filter { it.isWinner }
@@ -1686,10 +2788,10 @@ private fun MatchCompleteCard(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            // Primary buttons: [REMATCH] [SETUP]
+            // Primary buttons: [REMATCH] [HOME]
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
                     onClick = onRematch,
@@ -1704,60 +2806,49 @@ private fun MatchCompleteCard(
                         .testTag("rematch_button")
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(text = "Rematch", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 }
 
-                OutlinedButton(
-                    onClick = onSetup,
+                Button(
+                    onClick = onHome,
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1E293B),
+                        contentColor = Color(0xFFE2E8F0)
+                    ),
+                    border = BorderStroke(1.dp, Color(0xFF334155)),
                     modifier = Modifier
                         .weight(1f)
                         .height(44.dp)
-                        .testTag("setup_button")
+                        .testTag("solo_mode_button")
                 ) {
-                    Icon(imageVector = Icons.Default.Tune, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "Setup", color = Color(0xFF38BDF8), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Icon(imageVector = Icons.Default.Home, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Home", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            // Lower Action Row: [SOLO MODE] and [WATCH FINAL ROUND]
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // Lower Action Row: [FINAL ROUND]
+            OutlinedButton(
+                onClick = onWatchFinalRound,
+                enabled = !isReplaying,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, if (isReplaying) Color(0xFF475569) else Color(0xFFF59E0B)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp)
+                    .testTag("watch_final_round_button")
             ) {
-                TextButton(
-                    onClick = onSoloMode,
-                    modifier = Modifier.testTag("solo_mode_button")
-                ) {
-                    Text(
-                        text = "← Solo Mode",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onWatchFinalRound,
-                    enabled = !isReplaying,
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, if (isReplaying) Color(0xFF475569) else Color(0xFFF59E0B)),
-                    modifier = Modifier.height(36.dp).testTag("watch_final_round_button")
-                ) {
-                    val c = if (isReplaying) Color(0xFF64748B) else Color(0xFFFBBF24)
-                    Icon(imageVector = Icons.Default.Visibility, contentDescription = null, tint = c, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (isReplaying) "Replaying" else "Final Round",
-                        color = c,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                val c = if (isReplaying) Color(0xFF64748B) else Color(0xFFFBBF24)
+                Icon(imageVector = Icons.Default.Visibility, contentDescription = null, tint = c, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isReplaying) "Replaying..." else "Final Round",
+                    color = c,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -1770,103 +2861,56 @@ private fun VictoryPodium(
 ) {
     if (standings.isEmpty()) return
 
-    val isTie = standings.filter { it.isWinner }.size > 1
+    val isTie = standings.count { it.isWinner } > 1
+    // Ordered strictly by rank left to right (1st -> 2nd -> 3rd -> 4th)
+    val orderedStandings = standings.sortedWith(compareBy<PlayerStanding> { it.rank }.thenBy { it.player.index })
+    val totalPlayers = orderedStandings.size
 
-    val podiumItems = when {
-        standings.size == 2 && !isTie -> listOf(standings[1], standings[0])
-        standings.size >= 3 && !isTie -> listOf(standings[1], standings[0], standings[2])
-        standings.size >= 3 && isTie -> listOf(standings[0], standings[1], standings[2])
-        else -> standings.take(3)
-    }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
+            .testTag("victory_podium_row"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Bottom
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            podiumItems.forEach { standing ->
-                val isChampion = standing.isWinner
-                val accentColor = when (standing.rank) {
-                    1 -> Color(0xFFF59E0B) // Gold
-                    2 -> Color(0xFF94A3B8) // Silver
-                    3 -> Color(0xFFD97706) // Bronze
-                    else -> Color(0xFF64748B)
-                }
-                val pedestalHeight = when (standing.rank) {
-                    1 -> 80.dp
-                    2 -> 56.dp
-                    3 -> 40.dp
-                    else -> 32.dp
-                }
-                val medalIcon = when (standing.rank) {
-                    1 -> if (isTie) "🤝" else "👑"
-                    2 -> "🥈"
-                    3 -> "🥉"
-                    else -> "${standing.rank}"
-                }
-
-                PodiumColumn(
-                    standing = standing,
-                    pedestalHeight = pedestalHeight,
-                    accentColor = accentColor,
-                    medalLabel = medalIcon,
-                    pedestalNumber = "${standing.rank}",
-                    isChampion = isChampion,
-                    glowAlpha = glowAlpha,
-                    modifier = Modifier.weight(1f)
-                )
+        orderedStandings.forEachIndexed { idx, standing ->
+            val isChampion = standing.isWinner
+            val rankTieCount = orderedStandings.count { it.rank == standing.rank }
+            val accentColor = when (standing.rank) {
+                1 -> Color(0xFFF59E0B) // Gold
+                2 -> Color(0xFF94A3B8) // Silver
+                3 -> Color(0xFFD97706) // Bronze
+                else -> Color(0xFF64748B)
             }
-        }
+            // Step heights strictly keyed on rank (1st > 2nd > 3rd > 4th: 84 / 62 / 44 / 30)
+            // Tied players share the exact same rank AND the exact same pedestal height!
+            val pedestalHeight = when (standing.rank) {
+                1 -> 84.dp
+                2 -> 62.dp
+                3 -> 44.dp
+                else -> 30.dp
+            }
+            val medalIcon = when (standing.rank) {
+                1 -> if (rankTieCount > 1) "🤝" else "👑"
+                2 -> "🥈"
+                3 -> "🥉"
+                else -> "${standing.rank}th"
+            }
 
-        // 4th-place runner-up row if 4 players participated
-        val runnerUps = standings.drop(3)
-        if (runnerUps.isNotEmpty()) {
-            Column(
+            PodiumColumn(
+                standing = standing,
+                totalPlayers = totalPlayers,
+                pedestalHeight = pedestalHeight,
+                accentColor = accentColor,
+                medalLabel = medalIcon,
+                pedestalNumber = "${standing.rank}",
+                isChampion = isChampion,
+                glowAlpha = glowAlpha,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                runnerUps.forEach { s ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF0F172A).copy(alpha = 0.6f))
-                            .border(BorderStroke(1.dp, Color(0xFF334155)), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(s.player.color))
-                            Text(
-                                text = "${s.rank}th • Player ${s.player.index + 1}",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        Text(
-                            text = "${s.player.roundsSurvived} Rounds",
-                            color = Color(0xFF64748B),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            }
+                    .weight(1f)
+                    .testTag("podium_col_rank_${idx + 1}")
+            )
         }
     }
 }
@@ -1874,6 +2918,7 @@ private fun VictoryPodium(
 @Composable
 private fun PodiumColumn(
     standing: PlayerStanding,
+    totalPlayers: Int,
     pedestalHeight: Dp,
     accentColor: Color,
     medalLabel: String,
@@ -1882,113 +2927,171 @@ private fun PodiumColumn(
     glowAlpha: Float,
     modifier: Modifier = Modifier
 ) {
+    // 2P uses full "Player N"; 3P/4P uses slot labels "P1"-"P4" so columns never wrap at ~80dp
+    val displayName = if (totalPlayers <= 2) {
+        "Player ${standing.player.index + 1}"
+    } else {
+        "P${standing.player.index + 1}"
+    }
+    val rds = standing.player.roundsSurvived
+    val roundsText = if (rds == 1) "1 round" else "$rds rounds"
+
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Bottom
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Champion Badge or Medal Icon
-        if (isChampion) {
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = Color(0xFFF59E0B),
-                contentColor = Color(0xFF0F172A)
-            ) {
-                Text(
-                    text = "CHAMPION",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 0.5.sp,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-        } else {
-            Text(text = medalLabel, fontSize = 14.sp)
-        }
-
-        // Circular Player Avatar
-        Box(
-            modifier = Modifier
-                .size(if (isChampion) 36.dp else 30.dp)
-                .clip(CircleShape)
-                .background(standing.player.color)
-                .border(2.dp, accentColor, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "P${standing.player.index + 1}",
-                color = Color(0xFF090D16),
-                fontSize = if (isChampion) 14.sp else 12.sp,
-                fontWeight = FontWeight.Black
-            )
-        }
-
-        Spacer(modifier = Modifier.height(2.dp))
-
-        Text(
-            text = "Player ${standing.player.index + 1}",
-            color = if (isChampion) Color.White else Color(0xFFCBD5E1),
-            fontSize = if (isChampion) 12.sp else 11.sp,
-            fontWeight = if (isChampion) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 1
-        )
-
-        Text(
-            text = "${standing.player.roundsSurvived} R",
-            color = accentColor,
-            fontSize = if (isChampion) 13.sp else 11.sp,
-            fontWeight = FontWeight.ExtraBold,
-            fontFamily = FontFamily.Monospace
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Pedestal Box
+        // Shared Baseline Row 1: Badge / Medal (uniform 22.dp slot)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(pedestalHeight)
-                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            accentColor.copy(alpha = if (isChampion) 0.35f else 0.20f),
-                            Color(0xFF0F172A)
-                        )
+                .height(22.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isChampion) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFFF59E0B),
+                    contentColor = Color(0xFF0F172A)
+                ) {
+                    Text(
+                        text = if (totalPlayers >= 4) "CHAMP" else "CHAMPION",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.4.sp,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                     )
+                }
+            } else {
+                Text(
+                    text = medalLabel,
+                    color = accentColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
-                .border(
-                    BorderStroke(1.5.dp, accentColor),
-                    RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-                ),
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Shared Baseline Row 2: Avatar (uniform 36.dp slot & 34.dp circle across all columns)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .alpha(if (isChampion) 1f else 0.45f),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (isChampion) standing.player.color else Color(0xFF334155))
+                    .border(if (isChampion) 2.5.dp else 1.dp, if (isChampion) accentColor else Color(0xFF475569), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "P${standing.player.index + 1}",
+                    color = if (isChampion) Color(0xFF090D16) else Color(0xFFCBD5E1),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Shared Baseline Row 3: Name (uniform 18.dp slot)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(18.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = pedestalNumber,
-                color = accentColor,
-                fontSize = if (isChampion) 22.sp else 17.sp,
-                fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Monospace
+                text = displayName,
+                color = if (isChampion) Color.White else Color(0xFFCBD5E1),
+                fontSize = 12.sp,
+                fontWeight = if (isChampion) FontWeight.ExtraBold else FontWeight.SemiBold,
+                maxLines = 1
             )
+        }
+
+        // Shared Baseline Row 4: Stats in full words ("2 rounds", uniform 18.dp slot)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = roundsText,
+                color = accentColor,
+                fontSize = if (totalPlayers >= 4) 10.sp else 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Shared Bottom-Aligned Pedestal Well (84.dp tall, bottom-aligned step block)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(84.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(pedestalHeight)
+                    .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                accentColor.copy(alpha = if (isChampion) 0.35f + glowAlpha * 0.25f else 0.22f),
+                                Color(0xFF0F172A)
+                            )
+                        )
+                    )
+                    .border(
+                        BorderStroke(if (isChampion) 2.dp else 1.5.dp, accentColor),
+                        RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = pedestalNumber,
+                    color = accentColor,
+                    fontSize = if (isChampion) 20.sp else 16.sp,
+                    fontWeight = FontWeight.Black,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsSheetDialog(
     currentGridSize: GridSize,
+    currentDifficulty: GameDifficulty,
     currentPaceMode: PaceMode,
-    feedbackEnabled: Boolean,
-    volume: Float,
-    shapesEnabled: Boolean,
     isMidRun: Boolean,
     onSelectGridSize: (GridSize) -> Unit,
+    onSelectDifficulty: (GameDifficulty) -> Unit,
     onSelectPaceMode: (PaceMode) -> Unit,
-    onToggleSound: (Boolean) -> Unit,
-    onVolumeChange: (Float) -> Unit,
-    onToggleShapes: () -> Unit,
     onResetMultiplayerWins: () -> Unit,
+    dailyNotificationsEnabled: Boolean = false,
+    onToggleDailyNotifications: (Boolean) -> Unit = {},
+    onResumeRun: () -> Unit = {},
+    onSaveAndExit: () -> Unit = {},
+    onQuitToHome: () -> Unit = {},
+    onRestartRun: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val chipColors = FilterChipDefaults.filterChipColors(
@@ -1997,255 +3100,482 @@ private fun SettingsSheetDialog(
         selectedContainerColor = Color(0xFF0284C7).copy(alpha = 0.32f),
         selectedLabelColor = Color(0xFF38BDF8)
     )
+    val scrollState = rememberScrollState()
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).widthIn(max = 460.dp).testTag("settings_sheet_card"),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .widthIn(max = 460.dp)
+                .testTag("settings_sheet_card"),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
             border = BorderStroke(1.5.dp, Color(0xFF334155))
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "Settings", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(text = if (isMidRun) "Game Paused" else "Settings", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                     IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_close_button")) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close Settings", tint = Color(0xFF94A3B8))
+                        Icon(imageVector = Icons.Default.Close, contentDescription = if (isMidRun) "Close Pause Menu" else "Close Settings", tint = Color(0xFF94A3B8))
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(text = "Grid size", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GridSize.entries.forEach { opt ->
-                            val sel = opt == currentGridSize
-                            FilterChip(
-                                selected = sel,
-                                onClick = { onSelectGridSize(opt) },
-                                label = {
-                                    Text(
-                                        opt.label,
-                                        fontSize = 14.sp,
-                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                },
-                                colors = chipColors,
-                                border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
-                                modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(opt.testTagId)
-                            )
-                        }
-                    }
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(text = "Pace", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PaceMode.entries.forEach { mode ->
-                            val sel = mode == currentPaceMode
-                            val tag = if (mode == PaceMode.CLASSIC) "pace_mode_classic" else "pace_mode_progressive"
-                            FilterChip(
-                                selected = sel,
-                                onClick = { onSelectPaceMode(mode) },
-                                label = {
-                                    Text(
-                                        mode.shortLabel,
-                                        fontSize = 14.sp,
-                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                },
-                                colors = chipColors,
-                                border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
-                                modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(tag)
-                            )
-                        }
-                    }
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
+
+                if (isMidRun) {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text(text = "Colorblind shape glyphs", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                text = if (currentGridSize == GridSize.TWO_BY_TWO) "Show distinct geometric shapes on 2×2 pads" else "Always active on 3×3 and 4×4 boards",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 12.sp
+                        Button(
+                            onClick = onResumeRun,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("pause_resume_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF10B981),
+                                contentColor = Color(0xFF090D16)
+                            )
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Resume", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                        }
+
+                        Button(
+                            onClick = onSaveAndExit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("pause_save_exit_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0F172A),
+                                contentColor = Color(0xFF38BDF8)
+                            ),
+                            border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
+                        ) {
+                            Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Save & Exit", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        Button(
+                            onClick = onQuitToHome,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("pause_quit_home_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0F172A),
+                                contentColor = Color(0xFFEF4444)
+                            ),
+                            border = BorderStroke(1.5.dp, Color(0xFFEF4444))
+                        ) {
+                            Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Quit to Home", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        Button(
+                            onClick = onRestartRun,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("pause_restart_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0F172A),
+                                contentColor = Color(0xFFFBBF24)
+                            ),
+                            border = BorderStroke(1.5.dp, Color(0xFFF59E0B).copy(alpha = 0.8f))
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Restart", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+                } else {
+                    // Full Settings Sheet strictly for the IDLE home screen
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(text = "Daily Notifications", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text(text = "Brain teasers & streak reminders to keep your memory sharp", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                            }
+                            Switch(
+                                checked = dailyNotificationsEnabled,
+                                onCheckedChange = onToggleDailyNotifications,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF0F172A),
+                                    checkedTrackColor = Color(0xFF38BDF8),
+                                    uncheckedThumbColor = Color(0xFF94A3B8),
+                                    uncheckedTrackColor = Color(0xFF334155)
+                                ),
+                                modifier = Modifier.testTag("daily_notifications_switch")
                             )
                         }
-                        Switch(
-                            checked = if (currentGridSize == GridSize.TWO_BY_TWO) shapesEnabled else true,
-                            onCheckedChange = { if (currentGridSize == GridSize.TWO_BY_TWO) onToggleShapes() },
-                            enabled = currentGridSize == GridSize.TWO_BY_TWO,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF38BDF8),
-                                checkedTrackColor = Color(0xFF0284C7).copy(alpha = 0.4f),
-                                uncheckedThumbColor = Color(0xFF94A3B8),
-                                uncheckedTrackColor = Color(0xFF334155),
-                                disabledCheckedThumbColor = Color(0xFF38BDF8).copy(alpha = 0.6f),
-                                disabledCheckedTrackColor = Color(0xFF0284C7).copy(alpha = 0.25f)
-                            ),
-                            modifier = Modifier.testTag("shape_toggle_button")
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(text = "Grid size", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GridSize.entries.forEach { opt ->
+                                val sel = opt == currentGridSize
+                                FilterChip(
+                                    selected = sel,
+                                    onClick = { onSelectGridSize(opt) },
+                                    label = {
+                                        Text(
+                                            opt.label,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    },
+                                    colors = chipColors,
+                                    border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(opt.testTagId)
+                                )
+                            }
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(text = "Difficulty", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GameDifficulty.entries.forEach { diff ->
+                                val sel = diff == currentDifficulty
+                                val tag = if (diff == GameDifficulty.EASY) "difficulty_easy" else "difficulty_hard"
+                                FilterChip(
+                                    selected = sel,
+                                    onClick = { onSelectDifficulty(diff) },
+                                    label = {
+                                        Text(
+                                            diff.label,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    },
+                                    colors = chipColors,
+                                    border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(tag)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (currentDifficulty == GameDifficulty.EASY) "Cumulative sequence across rounds & players" else "Fresh unique sequence every round & turn",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(text = "Pace", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PaceMode.entries.forEach { mode ->
+                                val sel = mode == currentPaceMode
+                                val tag = if (mode == PaceMode.CLASSIC) "pace_mode_classic" else "pace_mode_progressive"
+                                FilterChip(
+                                    selected = sel,
+                                    onClick = { onSelectPaceMode(mode) },
+                                    label = {
+                                        Text(
+                                            mode.shortLabel,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    },
+                                    colors = chipColors,
+                                    border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(tag)
+                                )
+                            }
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(text = "Multiplayer records", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text(text = "Reset all saved Pass & Play wins (P1-P4)", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onResetMultiplayerWins,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("reset_wins_button")
+                            ) {
+                                Text(text = "Reset Wins", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "Changing grid size, difficulty, or pace updates your active board.",
+                        color = Color(0xFF94A3B8), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_done_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color(0xFF0F172A))
+                    ) {
+                        Text(text = "Done", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationPermissionDialog(
+    onAllow: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 400.dp)
+                .testTag("notification_permission_dialog"),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.5.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.NotificationsActive,
+                        contentDescription = "Notifications",
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Text(
+                    text = "Stay in the Flow",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "Get a daily brain teaser and challenge reminders. Allow notifications?",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Button(
+                    onClick = onAllow,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("notification_permission_allow_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF38BDF8),
+                        contentColor = Color(0xFF0F172A)
+                    )
+                ) {
+                    Text("Allow", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .testTag("notification_permission_dismiss_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFF475569)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFF94A3B8)
+                    )
+                ) {
+                    Text("Not Now", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPopupDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 400.dp)
+                .testTag("onboarding_dialog_card"),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.5.dp, Color(0xFF38BDF8).copy(alpha = 0.85f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF0284C7).copy(alpha = 0.25f),
+                    border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                    modifier = Modifier.size(54.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+
+                Text(
+                    text = "Welcome to Glowback!",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("onboarding_title_text")
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF0F172A))
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = "Sound & Volume", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF0F172A))
-                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(10.dp)),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                onClick = { onToggleSound(true) },
-                                shape = RoundedCornerShape(topStart = 9.dp, bottomStart = 9.dp),
-                                color = if (feedbackEnabled) Color(0xFF0284C7).copy(alpha = 0.35f) else Color.Transparent,
-                                modifier = Modifier
-                                    .width(62.dp)
-                                    .height(34.dp)
-                                    .testTag("sound_on_chip")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "On",
-                                        color = if (feedbackEnabled) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                            Surface(
-                                onClick = { onToggleSound(false) },
-                                shape = RoundedCornerShape(topEnd = 9.dp, bottomEnd = 9.dp),
-                                color = if (!feedbackEnabled) Color(0xFF0284C7).copy(alpha = 0.35f) else Color.Transparent,
-                                modifier = Modifier
-                                    .width(62.dp)
-                                    .height(34.dp)
-                                    .testTag("sound_muted_chip")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "Muted",
-                                        color = if (!feedbackEnabled) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        val displayVol = if (feedbackEnabled) volume else 0f
-                        Icon(
-                            imageVector = if (feedbackEnabled && displayVol > 0f) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                            contentDescription = null,
-                            tint = if (feedbackEnabled && displayVol > 0f) Color(0xFF38BDF8) else Color(0xFF64748B),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Slider(
-                            value = displayVol,
-                            onValueChange = onVolumeChange,
-                            valueRange = 0f..1f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF38BDF8),
-                                activeTrackColor = Color(0xFF38BDF8),
-                                inactiveTrackColor = Color(0xFF334155)
-                            ),
-                            modifier = Modifier.weight(1f).testTag("volume_slider")
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFFBBF24).copy(alpha = 0.25f),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("1", color = Color(0xFFFBBF24), fontWeight = FontWeight.Black, fontSize = 14.sp)
+                            }
+                        }
                         Text(
-                            text = "${(displayVol * 100).roundToInt()}%",
+                            text = "Watch the glowing pads.",
                             color = Color(0xFFCBD5E1),
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF10B981).copy(alpha = 0.25f),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("2", color = Color(0xFF10B981), fontWeight = FontWeight.Black, fontSize = 14.sp)
+                            }
+                        }
+                        Text(
+                            text = "Repeat the sequence.",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF38BDF8).copy(alpha = 0.25f),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("3", color = Color(0xFF38BDF8), fontWeight = FontWeight.Black, fontSize = 14.sp)
+                            }
+                        }
+                        Text(
+                            text = "Survive!",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold
                         )
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(text = "Multiplayer records", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text(text = "Reset all saved Pass & Play wins (P1-P4)", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = onResetMultiplayerWins,
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.testTag("reset_wins_button")
-                        ) {
-                            Text(text = "Reset Wins", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Text(
-                    text = if (isMidRun) "Changing grid size or pace resets the current run and returns to READY."
-                    else "Changing grid size or pace updates your active board and best score slot.",
-                    color = Color(0xFF94A3B8), fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
-                )
+
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_done_button"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("onboarding_got_it_button"),
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color(0xFF0F172A))
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF38BDF8),
+                        contentColor = Color(0xFF0F172A)
+                    )
                 ) {
-                    Text(text = "Done", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Got it", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun FirstRunExplainerCard(onDismiss: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onDismiss).testTag("first_run_explainer_card"),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.95f)),
-        border = BorderStroke(1.5.dp, Color(0xFF38BDF8).copy(alpha = 0.75f))
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                ExplainerStepItem(Icons.Default.Visibility, "WATCH", Color(0xFFFBBF24))
-                Text(text = "→", color = Color(0xFF64748B), fontSize = 16.sp, fontWeight = FontWeight.Black)
-                ExplainerStepItem(Icons.Default.TouchApp, "REPEAT", Color(0xFF10B981))
-                Text(text = "→", color = Color(0xFF64748B), fontSize = 16.sp, fontWeight = FontWeight.Black)
-                ExplainerStepItem(Icons.Default.Favorite, "SURVIVE", Color(0xFF38BDF8))
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Each pad plays a musical note • Tap card to dismiss",
-                color = Color(0xFF94A3B8), fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center, modifier = Modifier.testTag("status_header_text")
-            )
-        }
-    }
-}
-
-@Composable
-private fun ExplainerStepItem(icon: ImageVector, label: String, tint: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-        Text(text = label, color = Color(0xFFF8FAFC), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
     }
 }
 
@@ -2336,38 +3666,38 @@ private fun StatusBanner(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.92f)),
         border = BorderStroke(1.5.dp, bannerAccentColor.copy(alpha = 0.65f))
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             AnimatedContent(
                 targetState = statusTitle,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) },
                 label = "statusHeaderTransition"
             ) { title ->
                 Text(
-                    text = title, color = bannerAccentColor, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold,
+                    text = title, color = bannerAccentColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center, modifier = if (title == statusTitle) Modifier.testTag("status_header_text") else Modifier
                 )
             }
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = statusSubtitle, color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                text = statusSubtitle, color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center, modifier = Modifier.testTag("status_subtitle_text")
             )
             if (gameState == GameState.GAME_OVER && sequenceSize > 0) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "Final Score: $currentScore", color = Color(0xFF94A3B8), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "Final Score: $currentScore", color = Color(0xFF94A3B8), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     OutlinedButton(
                         onClick = onWatchMyRound,
                         enabled = !isReplayingLostRound,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, if (isReplayingLostRound) Color(0xFF475569) else Color(0xFF38BDF8)),
-                        modifier = Modifier.heightIn(min = 44.dp).testTag("watch_my_round_button")
+                        modifier = Modifier.heightIn(min = 38.dp).testTag("watch_my_round_button")
                     ) {
                         val c = if (isReplayingLostRound) Color(0xFF64748B) else Color(0xFF38BDF8)
-                        Icon(imageVector = Icons.Default.Replay, contentDescription = null, tint = c, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = if (isReplayingLostRound) "Replaying..." else "Watch My Round", color = c, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Icon(imageVector = Icons.Default.Replay, contentDescription = null, tint = c, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(text = if (isReplayingLostRound) "Replaying..." else "Watch My Round", color = c, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             } else if (sequenceSize > 0 && (gameState == GameState.PLAYING || gameState == GameState.WATCHING)) {
@@ -2406,7 +3736,6 @@ private fun GlowPadGrid(
     allPadsConfettiFlash: Boolean,
     wrongShakePadId: Int?,
     wrongShakeOffsetPx: Float,
-    showColorblindShapes: Boolean,
     inputEnabled: Boolean,
     onPadClick: (PadSpec) -> Unit
 ) {
@@ -2425,7 +3754,7 @@ private fun GlowPadGrid(
                         isActive = allPadsConfettiFlash || activePadId == pad.id,
                         isWrongShake = wrongShakePadId == pad.id,
                         shakeOffsetPx = if (wrongShakePadId == pad.id) wrongShakeOffsetPx else 0f,
-                        showShapeGlyph = if (gridSize == GridSize.TWO_BY_TWO) showColorblindShapes else true,
+                        showShapeGlyph = true,
                         inputEnabled = inputEnabled,
                         onClick = { onPadClick(pad) },
                         modifier = Modifier.weight(1f).fillMaxSize()
@@ -2445,10 +3774,9 @@ private fun SimonPadGrid(
     allPadsConfettiFlash: Boolean,
     wrongShakePadId: Int?,
     wrongShakeOffsetPx: Float,
-    showColorblindShapes: Boolean,
     inputEnabled: Boolean,
     onPadClick: (PadSpec) -> Unit
-) = GlowPadGrid(modifier, gridSize, pads, activePadId, allPadsConfettiFlash, wrongShakePadId, wrongShakeOffsetPx, showColorblindShapes, inputEnabled, onPadClick)
+) = GlowPadGrid(modifier, gridSize, pads, activePadId, allPadsConfettiFlash, wrongShakePadId, wrongShakeOffsetPx, inputEnabled, onPadClick)
 
 @Composable
 private fun GlowPadButton(
@@ -2470,17 +3798,19 @@ private fun GlowPadButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
         label = "${pad.testTagId}_scale"
     )
+    val targetContainerColor = if (isFlashing) pad.brightColor else pad.dimColor
     val containerColor by animateColorAsState(
-        targetValue = if (isFlashing) pad.brightColor else pad.dimColor,
+        targetValue = targetContainerColor,
         animationSpec = tween(85, easing = FastOutSlowInEasing),
         label = "${pad.testTagId}_color"
     )
+    val targetBorderColor = when {
+        isWrongShake -> Color(0xFFEF4444)
+        isFlashing -> Color.White
+        else -> pad.brightColor.copy(alpha = 0.30f)
+    }
     val borderColor by animateColorAsState(
-        targetValue = when {
-            isWrongShake -> Color(0xFFEF4444)
-            isFlashing -> Color.White
-            else -> pad.brightColor.copy(alpha = 0.45f)
-        },
+        targetValue = targetBorderColor,
         animationSpec = tween(85),
         label = "${pad.testTagId}_border"
     )
@@ -2509,9 +3839,9 @@ private fun GlowPadButton(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val centerOffset = Offset(size.width / 2f, size.height / 2f)
-            val maxRadius = size.minDimension * 0.65f
+            val maxRadius = size.minDimension * 0.68f
             val glowColors = if (isFlashing) listOf(Color.White.copy(alpha = 0.58f), pad.glowColor.copy(alpha = 0.45f), Color.Transparent)
-            else listOf(pad.brightColor.copy(alpha = 0.18f), Color.Transparent)
+            else listOf(pad.brightColor.copy(alpha = 0.12f), Color.Transparent)
             drawCircle(brush = Brush.radialGradient(glowColors, center = centerOffset, radius = maxRadius), radius = maxRadius, center = centerOffset)
             if (showShapeGlyph) {
                 val glyphRadius = size.minDimension * 0.28f
@@ -2618,28 +3948,39 @@ private fun DrawScope.drawPadGlyph(glyph: PadGlyph, center: Offset, radius: Floa
 private fun BottomActionSection(
     gameState: GameState,
     gameMode: GameMode = GameMode.SOLO,
+    gridSize: GridSize = GridSize.TWO_BY_TWO,
+    activeRunState: SerializedRunState? = null,
     activeChallenge: ChallengeItem? = null,
     challengeAttemptsLeft: Int = 3,
     isChallengeWon: Boolean = false,
     isChallengeLost: Boolean = false,
+    showChallengeNudge: Boolean = false,
     onStartOrRetry: () -> Unit,
+    onResumeSavedRun: () -> Unit = {},
     onShareChallenge: () -> Unit = {},
+    onCopyCode: () -> Unit = {},
+    onReturnHome: () -> Unit = {},
     onReplyToRival: () -> Unit = {},
     onExitChallenge: () -> Unit = {}
 ) {
+    if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
+        // Bottom slot remains empty during play; restart lives in pause dialog
+        return
+    }
+
     val isMulti = gameMode != GameMode.SOLO
 
     if (activeChallenge != null && gameState == GameState.GAME_OVER) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (challengeAttemptsLeft > 0 && !isChallengeWon) {
                 Button(
                     onClick = onStartOrRetry,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(46.dp)
                         .testTag("challenge_retry_button"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF), contentColor = Color.Black)
@@ -2653,7 +3994,7 @@ private fun BottomActionSection(
                     onClick = onReplyToRival,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(46.dp)
                         .testTag("challenge_reply_button"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Color.Black)
@@ -2667,7 +4008,7 @@ private fun BottomActionSection(
                     onClick = onReplyToRival,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(46.dp)
                         .testTag("challenge_reply_button"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color.Black)
@@ -2687,7 +4028,7 @@ private fun BottomActionSection(
                         onClick = onReplyToRival,
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp)
+                            .height(40.dp)
                             .testTag("challenge_reply_button"),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, Color(0xFF38BDF8))
@@ -2699,7 +4040,7 @@ private fun BottomActionSection(
                     onClick = onExitChallenge,
                     modifier = Modifier
                         .weight(1f)
-                        .height(42.dp)
+                        .height(40.dp)
                         .testTag("exit_challenge_button"),
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, Color(0xFF64748B))
@@ -2708,54 +4049,141 @@ private fun BottomActionSection(
                 }
             }
         }
+    } else if (gameState == GameState.GAME_OVER && gameMode == GameMode.SOLO) {
+        // PASS 2J Item 1: Solo Game Over 2x2 Grid with 12dp gaps
+        // Top-Left: "Play Again" (Primary Green) | Top-Right: "Home" (Dark Slate)
+        // Bottom-Left: "Share Challenge" (Dark Slate) | Bottom-Right: "Copy Challenge" (Dark Slate)
+        val gridButtonShape = RoundedCornerShape(14.dp)
+        val gridButtonHeight = 48.dp
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onStartOrRetry,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(gridButtonHeight)
+                        .testTag("start_game_button"),
+                    shape = gridButtonShape,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color(0xFF0F172A)
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Play Again", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                }
+
+                Button(
+                    onClick = onReturnHome,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(gridButtonHeight)
+                        .testTag("game_over_home_button"),
+                    shape = gridButtonShape,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1E293B),
+                        contentColor = Color(0xFFF8FAFC)
+                    ),
+                    border = BorderStroke(1.5.dp, Color(0xFF475569))
+                ) {
+                    Icon(imageVector = Icons.Default.Home, contentDescription = null, tint = Color(0xFFCBD5E1), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Home", color = Color(0xFFF8FAFC), fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onShareChallenge,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(gridButtonHeight)
+                        .testTag("share_challenge_button"),
+                    shape = gridButtonShape,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1E293B),
+                        contentColor = Color(0xFF00E5FF)
+                    ),
+                    border = BorderStroke(1.5.dp, Color(0xFF00E5FF))
+                ) {
+                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Share Challenge", color = Color(0xFF00E5FF), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+
+                Button(
+                    onClick = onCopyCode,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(gridButtonHeight)
+                        .testTag("copy_challenge_code_button"),
+                    shape = gridButtonShape,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1E293B),
+                        contentColor = Color(0xFF38BDF8)
+                    ),
+                    border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
+                ) {
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Copy Challenge", color = Color(0xFF38BDF8), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
+        }
     } else {
         val label = when (gameState) {
-            GameState.IDLE -> if (isMulti) "Start Match" else "Start Game"
+            GameState.IDLE -> if (isMulti) "START ${gameMode.label} MATCH" else "START SOLO · ${gridSize.label}"
             GameState.GAME_OVER -> if (isMulti) "Rematch" else "Play Again"
-            GameState.WATCHING, GameState.PLAYING -> if (isMulti) "Restart Match" else "Restart Game"
+            else -> if (isMulti) "START ${gameMode.label} MATCH" else "START SOLO · ${gridSize.label}"
         }
         val containerColor = when (gameState) {
             GameState.IDLE -> Color(0xFF10B981)
             GameState.GAME_OVER -> Color(0xFF38BDF8)
-            GameState.WATCHING, GameState.PLAYING -> Color(0xFF334155)
+            else -> Color(0xFF10B981)
         }
-        val contentColor = if (gameState == GameState.IDLE || gameState == GameState.GAME_OVER) Color(0xFF0F172A) else Color(0xFFF8FAFC)
+        val contentColor = Color(0xFF0F172A)
 
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (gameState == GameState.IDLE && activeRunState != null) {
+                ContinueRunPill(
+                    state = activeRunState,
+                    onResume = onResumeSavedRun
+                )
+            }
+
             Button(
                 onClick = onStartOrRetry,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(if (gameState == GameState.GAME_OVER) 48.dp else 52.dp)
                     .testTag("start_game_button"),
                 shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = contentColor),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp, pressedElevation = 2.dp)
             ) {
                 Icon(imageVector = if (gameState == GameState.IDLE) Icons.Default.PlayArrow else Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(text = label, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
-            }
-
-            if (gameState == GameState.GAME_OVER && gameMode == GameMode.SOLO) {
-                OutlinedButton(
-                    onClick = onShareChallenge,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .testTag("share_challenge_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.5.dp, Color(0xFF00E5FF)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
-                ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Share As Challenge", color = Color(0xFF00E5FF), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                }
+                Text(text = label, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.6.sp)
             }
         }
     }
