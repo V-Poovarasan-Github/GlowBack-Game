@@ -557,18 +557,49 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
         }
     }
-    fun triggerPadTapVibration() {
-        if (!isVibrateEnabled) return
+
+    val vibrationAudioAttrs = remember {
+        AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .build()
+    }
+
+    fun executeHapticFeedback() {
+        try {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        } catch (_: Exception) {}
+
         try {
             if (vibrator?.hasVibrator() == true) {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(20L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        vibrator.vibrate(
+                            android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK),
+                            vibrationAudioAttrs
+                        )
+                    } catch (_: Exception) {
+                        vibrator.vibrate(
+                            android.os.VibrationEffect.createOneShot(45L, android.os.VibrationEffect.DEFAULT_AMPLITUDE),
+                            vibrationAudioAttrs
+                        )
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(
+                        android.os.VibrationEffect.createOneShot(45L, android.os.VibrationEffect.DEFAULT_AMPLITUDE),
+                        vibrationAudioAttrs
+                    )
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator.vibrate(20L)
+                    vibrator.vibrate(45L)
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    fun triggerPadTapVibration() {
+        if (!isVibrateEnabled) return
+        executeHapticFeedback()
     }
 
     fun cycleFeedbackMode() {
@@ -584,15 +615,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             .putBoolean("feedback_enabled", nextMode == FeedbackMode.SOUND)
             .apply()
 
-        if (nextMode == FeedbackMode.VIBRATE && vibrator?.hasVibrator() == true) {
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(20L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(20L)
-                }
-            } catch (_: Exception) {}
+        if (nextMode == FeedbackMode.VIBRATE) {
+            executeHapticFeedback()
         }
     }
 
@@ -1828,6 +1852,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     onResetMultiplayerWins = {
                         resetMultiplayerWins(sharedPrefs)
                         playerWinsVersion++
+                        Toast.makeText(context, "Multiplayer records reset to 0", Toast.LENGTH_SHORT).show()
                     },
                     dailyNotificationsEnabled = dailyNotificationsEnabled,
                     onToggleDailyNotifications = { wantEnabled ->

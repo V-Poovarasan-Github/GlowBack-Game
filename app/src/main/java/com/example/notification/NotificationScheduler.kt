@@ -172,14 +172,27 @@ object NotificationScheduler {
         }
 
         val rawGrid = prefs.getString("selected_grid_size", "TWO_BY_TWO") ?: "TWO_BY_TWO"
-        val gridLabel = when (rawGrid) {
-            "TWO_BY_TWO" -> "2×2"
-            "THREE_BY_THREE" -> "3×3"
-            "FOUR_BY_FOUR" -> "4×4"
-            else -> "2×2"
+        val rawPace = prefs.getString("selected_pace_mode", "CLASSIC") ?: "CLASSIC"
+
+        val (gridLabel, gridPrefix) = when (rawGrid) {
+            "TWO_BY_TWO" -> "2×2" to "2x2"
+            "THREE_BY_THREE" -> "3×3" to "3x3"
+            "FOUR_BY_FOUR" -> "4×4" to "4x4"
+            else -> "2×2" to "2x2"
         }
 
-        val bestScore = prefs.getInt("best_high_score", 0)
+        val paceSuffix = when (rawPace) {
+            "PROGRESSIVE" -> "progressive"
+            else -> "classic"
+        }
+
+        val scoreKey = "best_${gridPrefix}_${paceSuffix}"
+        val bestScore = if (gridPrefix == "2x2" && paceSuffix == "classic") {
+            maxOf(prefs.getInt("best_high_score", 0), prefs.getInt(scoreKey, 0))
+        } else {
+            prefs.getInt(scoreKey, 0)
+        }
+
         val bodyText = NotificationContentProvider.getPhrase(context, deltaMillis, bestScore, gridLabel)
 
         val launchIntent = Intent(context, MainActivity::class.java).apply {

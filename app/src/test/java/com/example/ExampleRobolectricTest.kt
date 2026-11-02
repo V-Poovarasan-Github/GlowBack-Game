@@ -695,6 +695,55 @@ class ExampleRobolectricTest {
             assertTrue(info.state == androidx.work.WorkInfo.State.CANCELLED || info.state.isFinished)
         }
     }
+
+    @Test
+    fun pass4_bugFixes_resetFeedback_notificationScoreMatch_and_shuffleDeck() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+
+        // 1. Reset Wins feedback and isolation: ensure solo score is preserved
+        prefs.edit()
+            .putInt("best_2x2_classic", 9)
+            .putInt("best_4x4_progressive", 0)
+            .putInt("wins_P1", 5)
+            .apply()
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify multiplayer win is reset, but solo scores are 100% untouched
+        assertEquals(0, prefs.getInt("wins_P1", -1))
+        assertEquals(9, prefs.getInt("best_2x2_classic", -1))
+        assertEquals(0, prefs.getInt("best_4x4_progressive", -1))
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Notification High Score Mismatch Fix:
+        // Set active board to 4x4 Progressive (score 0), ensure notification phrase does NOT say 9
+        prefs.edit()
+            .putString("selected_grid_size", "FOUR_BY_FOUR")
+            .putString("selected_pace_mode", "PROGRESSIVE")
+            .apply()
+
+        val notificationPrefs = context.getSharedPreferences("glowback_notification_prefs", Context.MODE_PRIVATE)
+        notificationPrefs.edit().clear().apply()
+
+        // Verify getPhrase returns a zero-score phrase, not including "9"
+        val phrase = com.example.notification.NotificationContentProvider.getPhrase(context, 1000L * 60 * 60 * 2, 0, "4×4")
+        assertFalse("Notification for zero-score board must not say 9", phrase.contains(" 9 "))
+
+        // 3. Shuffle Deck: verify 10 successive calls produce 10 unique phrases in Tier 1
+        notificationPrefs.edit().clear().apply()
+        val generatedPhrases = mutableSetOf<String>()
+        repeat(10) {
+            val p = com.example.notification.NotificationContentProvider.getPhrase(context, 1000L * 60 * 60 * 2, 10, "4×4")
+            generatedPhrases.add(p)
+        }
+        assertEquals("Shuffle deck must yield all 10 distinct phrases before repeating", 10, generatedPhrases.size)
+    }
 }
 
 

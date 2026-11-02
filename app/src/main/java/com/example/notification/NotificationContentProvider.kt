@@ -147,7 +147,8 @@ object NotificationContentProvider {
      * - Tier 2: 24 to 48 hours
      * - Tier 3: 48+ hours
      *
-     * Anti-repetition: Ensures consecutive notifications in the same tier pick different phrases.
+     * Anti-repetition Shuffle Deck: Cycles through all phrases in a tier without
+     * repeating any phrase until all 10 have been delivered, then reshuffles.
      */
     fun getPhrase(
         context: Context,
@@ -156,23 +157,37 @@ object NotificationContentProvider {
         gridLabel: String
     ): String {
         val hours = deltaMillis / (1000L * 60 * 60)
-        val tierList = when {
-            hours < 24 -> TIER_1
-            hours < 48 -> TIER_2
-            else -> TIER_3
+        val (tierList, tierKey) = when {
+            hours < 24 -> TIER_1 to "t1"
+            hours < 48 -> TIER_2 to "t2"
+            else -> TIER_3 to "t3"
         }
 
         val prefs = context.getSharedPreferences(PREFS_NOTIFICATION, Context.MODE_PRIVATE)
-        val lastIdx = prefs.getInt(KEY_LAST_PHRASE_INDEX, -1)
+        val seenKey = "seen_indices_$tierKey"
+        val rawSeen = prefs.getString(seenKey, "") ?: ""
+        val seenIndices = rawSeen.split(",")
+            .mapNotNull { it.toIntOrNull() }
+            .filter { it in tierList.indices }
+            .toMutableSet()
 
-        val candidateIndices = tierList.indices.filter { it != lastIdx }
-        val selectedIdx = if (candidateIndices.isNotEmpty()) {
-            candidateIndices[Random.nextInt(candidateIndices.size)]
+        val available = tierList.indices.filter { it !in seenIndices }
+        val selectedIdx = if (available.isNotEmpty()) {
+            available[Random.nextInt(available.size)]
         } else {
-            Random.nextInt(tierList.size)
+            // All phrases in this tier have been seen! Clear deck and reshuffle.
+            seenIndices.clear()
+            val lastIdx = prefs.getInt(KEY_LAST_PHRASE_INDEX, -1)
+            val candidates = tierList.indices.filter { it != lastIdx }
+            if (candidates.isNotEmpty()) candidates[Random.nextInt(candidates.size)] else Random.nextInt(tierList.size)
         }
 
-        prefs.edit().putInt(KEY_LAST_PHRASE_INDEX, selectedIdx).apply()
+        seenIndices.add(selectedIdx)
+        prefs.edit()
+            .putString(seenKey, seenIndices.joinToString(","))
+            .putInt(KEY_LAST_PHRASE_INDEX, selectedIdx)
+            .apply()
+
         return tierList[selectedIdx].format(bestScore, gridLabel)
     }
 }
