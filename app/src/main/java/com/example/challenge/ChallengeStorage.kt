@@ -17,7 +17,7 @@ object ChallengeStorage {
     private const val KEY_MY_NAME = "glowback_player_name"
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
 
-    private const val AWAITING_TTL_MS = 7 * 24 * 60 * 60 * 1000L // 7 days
+    const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours)
 
     // ==========================================
     // PLAYER NAME ("My Name")
@@ -317,7 +317,7 @@ object ChallengeStorage {
     }
 
     // ==========================================
-    // AWAITING CHALLENGES (Outbound with 7-day TTL)
+    // AWAITING CHALLENGES (Outbound with 3-day TTL)
     // ==========================================
 
     fun loadAwaitingChallenges(context: Context): List<AwaitingChallenge> {
@@ -332,7 +332,7 @@ object ChallengeStorage {
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val createdAt = obj.optLong("createdAt", now)
-                // 7-day TTL expiration check
+                // 3-day (72-hour) TTL expiration check
                 if (now - createdAt > AWAITING_TTL_MS) {
                     hadExpired = true
                     continue
@@ -404,6 +404,37 @@ object ChallengeStorage {
     fun findAwaitingByChain(context: Context, chainId: String): AwaitingChallenge? {
         if (chainId.isBlank()) return null
         return loadAwaitingChallenges(context).firstOrNull { it.chainId.equals(chainId, ignoreCase = true) }
+    }
+
+    /**
+     * INBOUND MERGE TUPLE:
+     * Matches awaiting cards using (chainId + gridTag) ONLY.
+     * targetScore is intentionally excluded because a reply code's targetScore is the responder's
+     * score, which differs from the original awaiting card's targetScore.
+     */
+    fun findAwaitingMatch(context: Context, chainId: String, gridTag: String): AwaitingChallenge? {
+        if (chainId.isBlank()) return null
+        return loadAwaitingChallenges(context).firstOrNull {
+            it.chainId.equals(chainId, ignoreCase = true) &&
+            it.gridSizeTag.equals(gridTag, ignoreCase = true)
+        }
+    }
+
+    /**
+     * INBOUND MERGE TUPLE:
+     * Deletes matching awaiting card by (chainId + gridTag) ONLY.
+     */
+    fun deleteAwaitingMatch(context: Context, chainId: String, gridTag: String): Boolean {
+        if (chainId.isBlank()) return false
+        val existing = loadAwaitingChallenges(context).toMutableList()
+        val removed = existing.removeAll {
+            it.chainId.equals(chainId, ignoreCase = true) &&
+            it.gridSizeTag.equals(gridTag, ignoreCase = true)
+        }
+        if (removed) {
+            persistAwaitingChallenges(context, existing)
+        }
+        return removed
     }
 
     // ==========================================

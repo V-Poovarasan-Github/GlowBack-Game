@@ -57,7 +57,8 @@ data class ParsedChallenge(
     val seedInt: Int,
     val checksum: Char? = null,
     val fullCode: String,
-    val isLegacy: Boolean = false
+    val isLegacy: Boolean = false,
+    val isRevenge: Boolean = false
 )
 
 /**

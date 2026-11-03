@@ -59,6 +59,7 @@ import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
 import com.example.challenge.ShareTriesSelectorDialog
+import com.example.challenge.flashDelayMs
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -154,18 +155,22 @@ enum class GridSize(
     val keyPrefix: String,
     val testTagId: String,
     val spacingDp: Int,
-    val cornerDp: Int
+    val cornerDp: Int,
+    val rowCount: Int = dimension,
+    val colCount: Int = dimension
 ) {
-    TWO_BY_TWO(2, 4, "2×2", "2x2", "grid_size_2x2", 16, 28),
-    THREE_BY_THREE(3, 9, "3×3", "3x3", "grid_size_3x3", 10, 20),
-    FOUR_BY_FOUR(4, 16, "4×4", "4x4", "grid_size_4x4", 8, 16)
+    TWO_BY_TWO(2, 4, "2×2", "2x2", "grid_size_2x2", 16, 28, 2, 2),
+    THREE_BY_THREE(3, 9, "3×3", "3x3", "grid_size_3x3", 10, 20, 3, 3),
+    FOUR_BY_FOUR(4, 16, "4×4", "4x4", "grid_size_4x4", 8, 16, 4, 4),
+    FIVE_BY_FOUR(5, 20, "5×4", "5x4", "grid_size_5x4", 6, 14, 5, 4)
 }
 
 enum class PadGlyph(val displayName: String) {
     TRIANGLE("Triangle"), CIRCLE("Circle"), SQUARE("Square"), DIAMOND("Diamond"),
     STAR("Star"), PLUS("Plus"), CROSS("Cross"), RING("Ring"),
     HEART("Heart"), BOLT("Bolt"), MOON("Moon"), HEXAGON("Hexagon"),
-    UP_ARROW("Up Arrow"), HOURGLASS("Hourglass"), CROWN("Crown"), SHIELD("Shield")
+    UP_ARROW("Up Arrow"), HOURGLASS("Hourglass"), CROWN("Crown"), SHIELD("Shield"),
+    PENTAGON("Pentagon"), TEARDROP("Teardrop"), OVAL("Oval"), FLAG("Flag")
 }
 
 enum class GlowColor(
@@ -197,32 +202,58 @@ data class PadSpec(
     val testTagId: String
 )
 
+object AudioFrequencies {
+    // 20 distinct, strictly ascending frequencies within 120 Hz - 1250 Hz (Diatonic C Major scale)
+    val CLASSIC_20_FREQUENCIES: List<Double> = listOf(
+        130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94, // Octave 3 (C3..B3)
+        261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, // Octave 4 (C4..B4)
+        523.25, 587.33, 659.25, 698.46, 783.99, 880.00          // Octave 5 (C5..A5)
+    )
+
+    // 20 distinct, strictly ascending pentatonic-derived frequencies within 120 Hz - 1250 Hz
+    val PENTATONIC_20_FREQUENCIES: List<Double> = listOf(
+        130.81, 146.83, 164.81, 196.00, 220.00, // C3, D3, E3, G3, A3
+        246.94, 261.63, 293.66, 329.63, 392.00, // B3, C4, D4, E4, G4
+        440.00, 493.88, 523.25, 587.33, 659.25, // A4, B4, C5, D5, E5
+        783.99, 880.00, 987.77, 1046.50, 1174.66 // G5, A5, B5, C6, D6
+    )
+}
+
 val CLASSIC_2X2_PADS: List<PadSpec> = GlowColor.entries.mapIndexed { idx, sc ->
     PadSpec(idx, sc.displayName, sc.glyph, sc.dimColor, sc.brightColor, sc.glowColor, sc.frequencyHz, sc.testTagId)
 }
 
-val GRID_16_PADS: List<PadSpec> = listOf(
-    // Row 1: Warm Reds / Corals
-    PadSpec(0, "Crimson", PadGlyph.TRIANGLE, Color(0xFF6B1220), Color(0xFFEF4444), Color(0xFFFCA5A5), 196.00, "pad_0"),
-    PadSpec(1, "Coral", PadGlyph.CIRCLE, Color(0xFF771D1D), Color(0xFFF87171), Color(0xFFFECACA), 220.00, "pad_1"),
-    PadSpec(2, "Rose", PadGlyph.SQUARE, Color(0xFF701A3E), Color(0xFFF43F5E), Color(0xFFFDA4AF), 261.63, "pad_2"),
-    PadSpec(3, "Vermilion", PadGlyph.DIAMOND, Color(0xFF7C2D12), Color(0xFFFB923C), Color(0xFFFED7AA), 293.66, "pad_3"),
-    // Row 2: Ambers / Golds
-    PadSpec(4, "Amber", PadGlyph.STAR, Color(0xFF78350F), Color(0xFFF59E0B), Color(0xFFFDE68A), 329.63, "pad_4"),
-    PadSpec(5, "Gold", PadGlyph.PLUS, Color(0xFF713F12), Color(0xFFEAB308), Color(0xFFFEF08A), 392.00, "pad_5"),
-    PadSpec(6, "Tangerine", PadGlyph.CROSS, Color(0xFF6C2E09), Color(0xFFFFB703), Color(0xFFFFE599), 440.00, "pad_6"),
-    PadSpec(7, "Honey", PadGlyph.RING, Color(0xFF5C4813), Color(0xFFFACC15), Color(0xFFFEF9C3), 523.25, "pad_7"),
-    // Row 3: Emeralds / Teals
-    PadSpec(8, "Emerald", PadGlyph.HEART, Color(0xFF064E3B), Color(0xFF10B981), Color(0xFF6EE7B7), 587.33, "pad_8"),
-    PadSpec(9, "Mint", PadGlyph.BOLT, Color(0xFF14532D), Color(0xFF22C55E), Color(0xFF86EFAC), 659.25, "pad_9"),
-    PadSpec(10, "Teal", PadGlyph.MOON, Color(0xFF134E4A), Color(0xFF14B8A6), Color(0xFF5EEAD4), 783.99, "pad_10"),
-    PadSpec(11, "Cyan", PadGlyph.HEXAGON, Color(0xFF164E63), Color(0xFF06B6D4), Color(0xFF67E8F9), 880.00, "pad_11"),
-    // Row 4: Blues / Violets
-    PadSpec(12, "Cobalt", PadGlyph.UP_ARROW, Color(0xFF1E3A8A), Color(0xFF3B82F6), Color(0xFF93C5FD), 1046.50, "pad_12"),
-    PadSpec(13, "Indigo", PadGlyph.HOURGLASS, Color(0xFF312E81), Color(0xFF6366F1), Color(0xFFA5B4FC), 1174.66, "pad_13"),
-    PadSpec(14, "Violet", PadGlyph.CROWN, Color(0xFF4C1D95), Color(0xFF8B5CF6), Color(0xFFC4B5FD), 1318.51, "pad_14"),
-    PadSpec(15, "Magenta", PadGlyph.SHIELD, Color(0xFF701A75), Color(0xFFD946EF), Color(0xFFF0ABFC), 1567.98, "pad_15")
+val GRID_20_PADS: List<PadSpec> = listOf(
+    // Row 1: Warm Reds / Corals (Pads 0-3)
+    PadSpec(0, "Crimson", PadGlyph.TRIANGLE, Color(0xFF6B1220), Color(0xFFEF4444), Color(0xFFFCA5A5), 130.81, "pad_0"),
+    PadSpec(1, "Coral", PadGlyph.CIRCLE, Color(0xFF771D1D), Color(0xFFF87171), Color(0xFFFECACA), 146.83, "pad_1"),
+    PadSpec(2, "Rose", PadGlyph.SQUARE, Color(0xFF701A3E), Color(0xFFF43F5E), Color(0xFFFDA4AF), 164.81, "pad_2"),
+    PadSpec(3, "Vermilion", PadGlyph.DIAMOND, Color(0xFF7C2D12), Color(0xFFFB923C), Color(0xFFFED7AA), 196.00, "pad_3"),
+    // Row 2: Ambers / Golds (Pads 4-7)
+    PadSpec(4, "Amber", PadGlyph.STAR, Color(0xFF78350F), Color(0xFFF59E0B), Color(0xFFFDE68A), 220.00, "pad_4"),
+    PadSpec(5, "Gold", PadGlyph.PLUS, Color(0xFF713F12), Color(0xFFEAB308), Color(0xFFFEF08A), 246.94, "pad_5"),
+    PadSpec(6, "Tangerine", PadGlyph.CROSS, Color(0xFF6C2E09), Color(0xFFFFB703), Color(0xFFFFE599), 261.63, "pad_6"),
+    PadSpec(7, "Honey", PadGlyph.RING, Color(0xFF5C4813), Color(0xFFFACC15), Color(0xFFFEF9C3), 293.66, "pad_7"),
+    // Row 3: Emeralds / Teals / Cyans (Pads 8-11)
+    PadSpec(8, "Emerald", PadGlyph.HEART, Color(0xFF064E3B), Color(0xFF10B981), Color(0xFF6EE7B7), 329.63, "pad_8"),
+    PadSpec(9, "Mint", PadGlyph.BOLT, Color(0xFF14532D), Color(0xFF22C55E), Color(0xFF86EFAC), 392.00, "pad_9"),
+    PadSpec(10, "Teal", PadGlyph.MOON, Color(0xFF134E4A), Color(0xFF14B8A6), Color(0xFF5EEAD4), 440.00, "pad_10"),
+    PadSpec(11, "Cyan", PadGlyph.HEXAGON, Color(0xFF164E63), Color(0xFF06B6D4), Color(0xFF67E8F9), 493.88, "pad_11"),
+    // Row 4: Blues / Violets (Pads 12-15)
+    PadSpec(12, "Sky Blue", PadGlyph.UP_ARROW, Color(0xFF0C4A6E), Color(0xFF38BDF8), Color(0xFFBAE6FD), 523.25, "pad_12"),
+    PadSpec(13, "Cobalt", PadGlyph.HOURGLASS, Color(0xFF1E3A8A), Color(0xFF3B82F6), Color(0xFF93C5FD), 587.33, "pad_13"),
+    PadSpec(14, "Indigo", PadGlyph.CROWN, Color(0xFF312E81), Color(0xFF6366F1), Color(0xFFA5B4FC), 659.25, "pad_14"),
+    PadSpec(15, "Violet", PadGlyph.SHIELD, Color(0xFF4C1D95), Color(0xFF8B5CF6), Color(0xFFC4B5FD), 783.99, "pad_15"),
+    // Row 5: Purples / Magentas / Pinks (Pads 16-19)
+    PadSpec(16, "Purple", PadGlyph.PENTAGON, Color(0xFF581C87), Color(0xFFA855F7), Color(0xFFE9D5FF), 880.00, "pad_16"),
+    PadSpec(17, "Magenta", PadGlyph.TEARDROP, Color(0xFF701A75), Color(0xFFD946EF), Color(0xFFF0ABFC), 987.77, "pad_17"),
+    PadSpec(18, "Fuchsia", PadGlyph.OVAL, Color(0xFF881337), Color(0xFFE11D48), Color(0xFFFECDD3), 1046.50, "pad_18"),
+    PadSpec(19, "Pink", PadGlyph.FLAG, Color(0xFF831843), Color(0xFFEC4899), Color(0xFFFBCFE8), 1174.66, "pad_19")
 )
+
+val GRID_16_PADS: List<PadSpec> = GRID_20_PADS.take(16).mapIndexed { idx, pad ->
+    pad.copy(id = idx, testTagId = "pad_$idx")
+}
 
 val GRID_9_PADS: List<PadSpec> = listOf(
     // Row 1: Warm Reds / Corals (Crimson Triangle, Coral Circle, Rose Square)
@@ -243,6 +274,7 @@ fun padsForGridSize(gridSize: GridSize): List<PadSpec> = when (gridSize) {
     GridSize.TWO_BY_TWO -> CLASSIC_2X2_PADS
     GridSize.THREE_BY_THREE -> GRID_9_PADS
     GridSize.FOUR_BY_FOUR -> GRID_16_PADS
+    GridSize.FIVE_BY_FOUR -> GRID_20_PADS
 }
 
 class GlowAudioSynthesizer {
@@ -297,8 +329,10 @@ class GlowAudioSynthesizer {
     private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val staticTrackPool = ConcurrentHashMap<ShortArray, AudioTrack>()
 
-    val frequencyPcmBuffers: Map<Double, ShortArray> = (CLASSIC_2X2_PADS + GRID_16_PADS)
-        .map { it.frequencyHz }.distinct().associateWith { synthesizeWavePcm(it, 240, 0.72) }
+    val frequencyPcmBuffers: Map<Double, ShortArray> = (CLASSIC_2X2_PADS + GRID_16_PADS + GRID_20_PADS)
+        .map { it.frequencyHz }
+        .distinct()
+        .associateWith { synthesizeWavePcm(it, 240, 0.72) }
 
     val padPcmBuffers: Map<GlowColor, ShortArray> = GlowColor.entries.associateWith {
         frequencyPcmBuffers[it.frequencyHz] ?: synthesizeWavePcm(it.frequencyHz, 240, 0.72)
@@ -420,6 +454,7 @@ internal fun incrementPlayerWin(prefs: SharedPreferences, playerIndex: Int) {
 internal fun resetMultiplayerWins(prefs: SharedPreferences) {
     val editor = prefs.edit()
     for (i in 0 until 4) editor.putInt(playerWinsKey(i), 0)
+    for (p in 2..4) editor.putInt("longest_survival_${p}p", 0)
     editor.apply()
 }
 
@@ -487,10 +522,6 @@ internal fun readMigratedBestScore(prefs: SharedPreferences, gridSize: GridSize,
 
 internal fun writeBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY, score: Int) {
     val editor = prefs.edit().putInt(bestScoreKeyFor(gridSize, paceMode, difficulty), score)
-    val baseKey = "best_${gridSize.keyPrefix}_${paceMode.keySuffix}"
-    if (score > prefs.getInt(baseKey, 0)) {
-        editor.putInt(baseKey, score)
-    }
     if (score > prefs.getInt(KEY_BEST_SCORE, 0)) {
         editor.putInt(KEY_BEST_SCORE, score)
     }
@@ -504,12 +535,8 @@ internal fun getAllBoardScores(prefs: SharedPreferences): List<BoardScoreOption>
         for (pace in PaceMode.entries) {
             for (diff in GameDifficulty.entries) {
                 val score = readMigratedBestScore(prefs, grid, pace, diff)
-                if (score > 0) {
-                    val gridTag = when (grid) {
-                        GridSize.TWO_BY_TWO -> "2x2"
-                        GridSize.THREE_BY_THREE -> "3x3"
-                        GridSize.FOUR_BY_FOUR -> "4x4"
-                    }
+                if (score >= 5) {
+                    val gridTag = grid.keyPrefix
                     list.add(BoardScoreOption(gridTag, pace.shortLabel, diff, score))
                 }
             }
@@ -709,6 +736,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                // Requirement 2: Delay rendering "Did you share it?" until returning from system share sheet
+                val pending = ChallengeStorage.getPendingShare(context)
+                if (pending != null && activeDialog == ActiveDialog.NONE) {
+                    awaitingChallengeForDialog = pending
+                    activeDialog = ActiveDialog.DID_YOU_SHARE
+                }
                 val isSystemAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
                 if (!isSystemAllowed) {
                     dailyNotificationsEnabled = false
@@ -760,9 +793,20 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var currentScore by remember { mutableIntStateOf(0) }
     var bestScore by remember(gridSize, paceMode, difficultyMode) { mutableIntStateOf(readMigratedBestScore(sharedPrefs, gridSize, paceMode, difficultyMode)) }
 
-    fun requestShareChallenge() {
+    fun requestShareChallenge(fromGameOver: Boolean = false) {
+        if (fromGameOver) {
+            if (currentScore < 5) {
+                Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
+                activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
+            } else {
+                activeDialog = ActiveDialog.TRIES_SELECTOR
+            }
+            return
+        }
         val boardScores = getAllBoardScores(sharedPrefs)
-        if (boardScores.isEmpty() && currentScore <= 0) {
+        val maxScore = boardScores.maxOfOrNull { it.score } ?: 0
+        if (maxScore < 5) {
+            Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
             activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
         } else {
             activeDialog = ActiveDialog.TRIES_SELECTOR
@@ -861,6 +905,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         val restoredGrid = when (state.gridDimension) {
             3 -> GridSize.THREE_BY_THREE
             4 -> GridSize.FOUR_BY_FOUR
+            5 -> GridSize.FIVE_BY_FOUR
             else -> GridSize.TWO_BY_TWO
         }
         val restoredPace = when (state.paceSuffix) {
@@ -1077,6 +1122,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         val targetGrid = when (item.gridSizeTag.lowercase()) {
             "3x3" -> GridSize.THREE_BY_THREE
             "4x4" -> GridSize.FOUR_BY_FOUR
+            "5x4" -> GridSize.FIVE_BY_FOUR
             else -> GridSize.TWO_BY_TWO
         }
         gridSize = targetGrid
@@ -1099,6 +1145,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         val targetGrid = when (rival.lastGrid.lowercase()) {
             "3x3" -> GridSize.THREE_BY_THREE
             "4x4" -> GridSize.FOUR_BY_FOUR
+            "5x4" -> GridSize.FIVE_BY_FOUR
             else -> GridSize.TWO_BY_TWO
         }
         gridSize = targetGrid
@@ -1144,6 +1191,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             val targetGrid = when (challenge.gridSizeTag.lowercase()) {
                 "3x3" -> GridSize.THREE_BY_THREE
                 "4x4" -> GridSize.FOUR_BY_FOUR
+                "5x4" -> GridSize.FIVE_BY_FOUR
                 else -> GridSize.TWO_BY_TWO
             }
             gridSize = targetGrid
@@ -1591,7 +1639,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     currentScreen = AppScreen.HOME
                 },
                 onShareCodeClicked = {
-                    requestShareChallenge()
+                    requestShareChallenge(fromGameOver = false)
                 },
                 onPasteCodeClicked = {
                     activeDialog = ActiveDialog.ENTER_CHALLENGE
@@ -1601,6 +1649,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     startChallenge(item)
                 },
                 sharedPrefs = sharedPrefs,
+                refreshTrigger = activeDialog,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
@@ -1662,7 +1711,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     }
 
                     AnimatedVisibility(
-                        visible = showConfigRow,
+                        visible = gameState != GameState.GAME_OVER,
                         enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                         exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                     ) {
@@ -1677,34 +1726,37 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     enabled = !isReplayingLostRound,
                                     onSelectMode = { resetToIdleForMode(it) }
                                 )
+                            }
 
-                                // ROW B: Left = ONE Board pill ("3×3 · Classic"), Right = Context slot (+ Challenge pill OR borderless dot tally)
-                                val wins = remember(playerWinsVersion, gameMode) {
-                                    (0 until 4).map { readPlayerWins(sharedPrefs, it) }
+                            // ROW B: Left = ONE Board pill ("2×2 · Classic"), Right = Segmented [Easy | Hard] slider
+                            BoardAndContextRow(
+                                gridSize = gridSize,
+                                paceMode = paceMode,
+                                difficultyMode = difficultyMode,
+                                enabled = gameState == GameState.IDLE && !isReplayingLostRound,
+                                onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET },
+                                onSelectDifficulty = { newDiff ->
+                                    if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
+                                        Toast.makeText(context, "Finish your round to switch difficulty.", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        difficultyMode = newDiff
+                                        sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, newDiff.name).apply()
+                                        bestScore = readMigratedBestScore(sharedPrefs, gridSize, paceMode, newDiff)
+                                    }
                                 }
-                                BoardAndContextRow(
-                                    selectedMode = gameMode,
-                                    gridSize = gridSize,
-                                    paceMode = paceMode,
-                                    activeChallengesCount = savedChallenges.size,
-                                    wins = wins,
-                                    enabled = !isReplayingLostRound,
-                                    onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET },
-                                    onOpenEnterChallenge = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
+                            )
+
+                            // CHALLENGE RAIL: Only when non-empty in SOLO IDLE mode
+                            if (gameState == GameState.IDLE && gameMode == GameMode.SOLO && savedChallenges.isNotEmpty()) {
+                                ActiveChallengesRail(
+                                    challenges = savedChallenges,
+                                    onPlayChallenge = ::startChallenge,
+                                    onDeleteChallenge = { code ->
+                                        ChallengeStorage.deleteChallenge(context, code)
+                                        savedChallenges = ChallengeStorage.loadChallenges(context)
+                                    },
+                                    onOpenEnterModal = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
                                 )
-
-                                // CHALLENGE RAIL: Only when non-empty in SOLO mode
-                                if (gameMode == GameMode.SOLO && savedChallenges.isNotEmpty()) {
-                                    ActiveChallengesRail(
-                                        challenges = savedChallenges,
-                                        onPlayChallenge = ::startChallenge,
-                                        onDeleteChallenge = { code ->
-                                            ChallengeStorage.deleteChallenge(context, code)
-                                            savedChallenges = ChallengeStorage.loadChallenges(context)
-                                        },
-                                        onOpenEnterModal = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
-                                    )
-                                }
                             }
                         }
                     }
@@ -1829,16 +1881,31 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                         }
 
-                        val perPadCap = if (gridSize == GridSize.TWO_BY_TWO) 180.dp else 150.dp
-                        val maxBoardCap = (perPadCap * gridSize.dimension) + (gridSize.spacingDp.dp * (gridSize.dimension - 1))
-                        val animatedGridSide by animateDpAsState(
-                            targetValue = minOf(maxWidth, maxHeight, maxBoardCap),
+                        val is5x4 = gridSize == GridSize.FIVE_BY_FOUR
+                        val (targetWidth, targetHeight) = if (is5x4) {
+                            val maxCapW = (90.dp * 4) + (gridSize.spacingDp.dp * 3)
+                            val widthByHeight = maxHeight * (4f / 5f)
+                            val chosenW = minOf(maxWidth, widthByHeight, maxCapW)
+                            chosenW to (chosenW * (5f / 4f))
+                        } else {
+                            val perPadCap = if (gridSize == GridSize.TWO_BY_TWO) 180.dp else 150.dp
+                            val maxBoardCap = (perPadCap * gridSize.dimension) + (gridSize.spacingDp.dp * (gridSize.dimension - 1))
+                            val side = minOf(maxWidth, maxHeight, maxBoardCap)
+                            side to side
+                        }
+                        val animatedGridWidth by animateDpAsState(
+                            targetValue = targetWidth,
                             animationSpec = tween(200, easing = FastOutSlowInEasing),
-                            label = "animatedGridSide"
+                            label = "animatedGridWidth"
+                        )
+                        val animatedGridHeight by animateDpAsState(
+                            targetValue = targetHeight,
+                            animationSpec = tween(200, easing = FastOutSlowInEasing),
+                            label = "animatedGridHeight"
                         )
                         val isInstrumentArmed = gameState == GameState.IDLE
                         SimonPadGrid(
-                            modifier = Modifier.size(animatedGridSide),
+                            modifier = Modifier.size(width = animatedGridWidth, height = animatedGridHeight),
                             gridSize = gridSize,
                             pads = activePadPool,
                             activePadId = activePadId,
@@ -1890,16 +1957,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 }
 
                 if (gameMode == GameMode.SOLO || !isMatchComplete) {
-                    val myName = remember { ChallengeStorage.getMyName(context) }
+                    val myName = remember(activeDialog) { ChallengeStorage.getMyName(context) }
                     val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode, myName) {
-                        val gridTag = when (gridSize) {
-                            GridSize.TWO_BY_TWO -> "2x2"
-                            GridSize.THREE_BY_THREE -> "3x3"
-                            GridSize.FOUR_BY_FOUR -> "4x4"
-                        }
+                        val gridTag = gridSize.keyPrefix
                         val scoreToShare = currentScore.coerceAtLeast(1)
                         val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
-                        val code = ChallengeSeed.formatChallengeCode(
+                        // Pure computation only; recordCreatedCode is invoked strictly inside explicit click handlers
+                        ChallengeSeed.formatChallengeCode(
                             gridTag = gridTag,
                             targetScore = scoreToShare,
                             tries = selectedShareTries,
@@ -1909,13 +1973,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             chainId = chainId,
                             isRevenge = activeChallenge?.isRevenge == true
                         )
-                        ChallengeStorage.recordCreatedCode(context, code)
-                        code
                     }
                     BottomActionSection(
                         gameState = gameState,
                         gameMode = gameMode,
                         gridSize = gridSize,
+                        currentScore = currentScore,
                         activeRunState = if (gameState == GameState.IDLE) activeRunState else null,
                         activeChallenge = activeChallenge,
                         challengeAttemptsLeft = challengeAttemptsLeft,
@@ -1930,10 +1993,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         onStartOrRetry = ::startNewGame,
                         onShareChallenge = {
                             showChallengeNudge = false
-                            requestShareChallenge()
+                            requestShareChallenge(fromGameOver = true)
                         },
                         onCopyCode = {
                             showChallengeNudge = false
+                            if (currentScore < 5) {
+                                activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
+                                Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
+                                return@BottomActionSection
+                            }
                             ChallengeStorage.recordCreatedCode(context, generatedCode)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("Glowback Challenge Code", generatedCode)
@@ -1942,23 +2010,23 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
                             val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
                             val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
-                            val gridTag = when (gridSize) {
-                                GridSize.TWO_BY_TWO -> "2x2"
-                                GridSize.THREE_BY_THREE -> "3x3"
-                                GridSize.FOUR_BY_FOUR -> "4x4"
-                            }
+                            val gridTag = gridSize.keyPrefix
                             val awaiting = AwaitingChallenge(
                                 chainId = chainId,
                                 code = generatedCode,
                                 gridSizeTag = gridTag,
-                                targetScore = currentScore.coerceAtLeast(1),
+                                targetScore = currentScore,
                                 difficulty = difficultyMode,
                                 paceName = paceMode.shortLabel,
                                 tries = selectedShareTries
                             )
                             ChallengeStorage.savePendingShare(context, awaiting)
                             awaitingChallengeForDialog = awaiting
-                            activeDialog = ActiveDialog.DID_YOU_SHARE
+                        },
+                        onCopyFlashFinished = {
+                            if (currentScore >= 5 && awaitingChallengeForDialog != null) {
+                                activeDialog = ActiveDialog.DID_YOU_SHARE
+                            }
                         },
                         onReturnHome = {
                             discardActiveRun()
@@ -1976,10 +2044,25 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         onReplyToRival = {
                             if (activeChallenge != null) {
                                 val ch = activeChallenge!!
+                                // Reply-Code Exemption: Responder's reply code bypasses the score-5 minimum gate at any score (>= 1)
+                                // and embeds the responder's own name, score, seed, chainId, and R-prefixed revenge token.
+                                val myReplyName = ChallengeStorage.getMyName(context)
+                                val replyChainId = ch.chainId.ifEmpty { ChallengeSeed.generateChainId() }
+                                val replyCode = ChallengeSeed.formatChallengeCode(
+                                    gridTag = ch.gridSizeTag,
+                                    targetScore = currentScore.coerceAtLeast(1),
+                                    tries = ch.maxTries,
+                                    difficulty = ch.difficulty,
+                                    seed = currentRunSeed,
+                                    senderName = myReplyName,
+                                    chainId = replyChainId,
+                                    isRevenge = true
+                                )
+                                ChallengeStorage.recordCreatedCode(context, replyCode)
                                 coroutineScope.launch {
                                     ChallengeShareHelper.shareReplyResult(
                                         context = context,
-                                        code = ch.code,
+                                        code = replyCode,
                                         gridSizeTag = ch.gridSizeTag,
                                         myScore = currentScore,
                                         targetScore = ch.targetScore,
@@ -2059,6 +2142,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         ActiveDialog.NONE -> Unit
         ActiveDialog.FIRST_TIME_SHARE_GATE -> {
             FirstTimeShareGateDialog(
+                currentBestScore = if (gameState == GameState.GAME_OVER) currentScore else maxOf(currentScore, bestScore),
                 onDismiss = { activeDialog = ActiveDialog.NONE },
                 onPlayNow = {
                     activeDialog = ActiveDialog.NONE
@@ -2077,9 +2161,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             )
         }
         ActiveDialog.TRIES_SELECTOR -> {
+            val isFromGameOver = gameState == GameState.GAME_OVER
+            val diffLabel = if (difficultyMode == GameDifficulty.HARD) "Hard" else "Easy"
+            val lockedSummary = if (isFromGameOver) {
+                "This challenge: ${gridSize.label} ${paceMode.shortLabel} $diffLabel - your score $currentScore"
+            } else null
+
             ShareTriesSelectorDialog(
                 initialTries = selectedShareTries,
-                boardOptions = getAllBoardScores(sharedPrefs),
+                boardOptions = if (isFromGameOver) emptyList() else getAllBoardScores(sharedPrefs),
+                lockedRunSummary = lockedSummary,
                 currentScoreToShare = currentScore.coerceAtLeast(1),
                 requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
                 awaitingChallengeForDialog = awaitingChallengeForDialog,
@@ -2098,21 +2189,27 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 },
                 onGenerateCard = { chosenTries, senderName, chosenBoard ->
                     selectedShareTries = chosenTries
-                    val gridTag = chosenBoard?.gridTag ?: when (gridSize) {
-                        GridSize.TWO_BY_TWO -> "2x2"
-                        GridSize.THREE_BY_THREE -> "3x3"
-                        GridSize.FOUR_BY_FOUR -> "4x4"
+                    val gridTag = if (isFromGameOver) gridSize.keyPrefix else (chosenBoard?.gridTag ?: gridSize.keyPrefix)
+                    val scoreToShare = if (isFromGameOver) {
+                        currentScore
+                    } else {
+                        chosenBoard?.score ?: currentScore
                     }
-                    val scoreToShare = chosenBoard?.score ?: currentScore.coerceAtLeast(1)
-                    val chosenDiff = chosenBoard?.difficulty ?: difficultyMode
-                    val chosenPace = chosenBoard?.paceName ?: paceMode.shortLabel
+                    if (scoreToShare < 5) {
+                        activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
+                        Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
+                        return@ShareTriesSelectorDialog
+                    }
+                    val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
+                    val chosenPace = if (isFromGameOver) paceMode.shortLabel else (chosenBoard?.paceName ?: paceMode.shortLabel)
+                    val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
                     val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
                     val code = ChallengeSeed.formatChallengeCode(
                         gridTag = gridTag,
                         targetScore = scoreToShare,
                         tries = chosenTries,
                         difficulty = chosenDiff,
-                        seed = currentRunSeed,
+                        seed = seedToUse,
                         senderName = senderName,
                         chainId = chainId,
                         isRevenge = activeChallenge?.isRevenge == true
@@ -2128,7 +2225,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         tries = chosenTries
                     )
                     ChallengeStorage.savePendingShare(context, awaiting)
-                    awaitingChallengeForDialog = awaiting
+                    // Requirement 2: Close dialog so NOTHING renders while system share sheet is open.
+                    // "Did you share it?" will trigger on ON_RESUME after user returns from the chooser.
+                    awaitingChallengeForDialog = null
+                    activeDialog = ActiveDialog.NONE
 
                     coroutineScope.launch {
                         ChallengeShareHelper.shareChallenge(
@@ -2160,14 +2260,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         ActiveDialog.SETTINGS_SHEET -> {
             SettingsSheetDialog(
                 currentGridSize = gridSize,
-                currentDifficulty = difficultyMode,
                 currentPaceMode = paceMode,
                 isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
                 onSelectGridSize = { if (it != gridSize) resetToIdleForConfigChange(it, paceMode) },
-                onSelectDifficulty = { diff ->
-                    difficultyMode = diff
-                    sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, diff.name).apply()
-                },
                 onSelectPaceMode = { if (it != paceMode) resetToIdleForConfigChange(gridSize, it) },
                 onResetMultiplayerWins = {
                     resetMultiplayerWins(sharedPrefs)
@@ -2499,23 +2594,16 @@ private fun SegmentedModeTrack(
 
 @Composable
 private fun BoardAndContextRow(
-    selectedMode: GameMode,
     gridSize: GridSize,
     paceMode: PaceMode,
-    activeChallengesCount: Int,
-    wins: List<Int>,
+    difficultyMode: GameDifficulty,
     enabled: Boolean,
     onOpenSettings: () -> Unit,
-    onOpenEnterChallenge: () -> Unit
+    onSelectDifficulty: (GameDifficulty) -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // Guard for 4P + Progressive at <= 360dp screen width (<= 320dp content width):
-        // Fallback 1: drop trophy icon from tally; Fallback 2: abbreviate "Progressive" to "Prog."
-        val isMulti4P = selectedMode == GameMode.FOUR_PLAYERS
         val isProgressive = paceMode == PaceMode.PROGRESSIVE
-        val hasMultiDigitWins = wins.take(selectedMode.playerCount).any { it >= 10 }
-        val dropTrophy = isMulti4P && (maxWidth < 312.dp || (isProgressive && maxWidth <= 324.dp) || hasMultiDigitWins)
-        val abbreviatePace = isMulti4P && isProgressive && (maxWidth < 300.dp || (hasMultiDigitWins && maxWidth <= 324.dp))
+        val abbreviatePace = isProgressive && maxWidth < 330.dp
         val displayPaceLabel = if (abbreviatePace) "Prog." else paceMode.shortLabel
 
         Row(
@@ -2523,13 +2611,19 @@ private fun BoardAndContextRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left: ONE Board pill ("3×3 · Classic") opening Settings
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = Color(0xFF1E293B),
-                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
-                modifier = Modifier.height(40.dp)
+            // Left: ONE Board pill ("2×2 · Classic") opening Settings — 40dp visual height, 48dp touch target, slate #334155 border
+            Box(
+                modifier = Modifier.height(48.dp),
+                contentAlignment = Alignment.Center
             ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF1E293B),
+                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(vertical = 4.dp)
+                ) {}
                 Row(
                     modifier = Modifier.fillMaxHeight(),
                     verticalAlignment = Alignment.CenterVertically
@@ -2586,99 +2680,112 @@ private fun BoardAndContextRow(
                 }
             }
 
-            // Right: Contextual slot
-            if (selectedMode == GameMode.SOLO) {
-                val pillLabel = if (activeChallengesCount > 0) {
-                    "Challenge · $activeChallengesCount"
-                } else {
-                    "+ Challenge"
-                }
-                Surface(
-                    onClick = onOpenEnterChallenge,
-                    enabled = enabled,
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF1E293B),
-                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f)),
+            // Right: Segmented [Easy | Hard] Slider matching SOLO track — 40dp visual height, 48dp touch target, slate #334155 border
+            val isEasy = difficultyMode == GameDifficulty.EASY
+            val isHard = difficultyMode == GameDifficulty.HARD
+            val segmentWidth = 58.dp
+            val thumbOffset by animateDpAsState(
+                targetValue = if (isEasy) 0.dp else segmentWidth,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium
+                ),
+                label = "difficultyThumbOffset"
+            )
+            val thumbFill = if (isEasy) {
+                Color(0xFF10B981).copy(alpha = 0.22f)
+            } else {
+                Color(0xFFFF5252).copy(alpha = 0.22f)
+            }
+            val thumbBorder = if (isEasy) {
+                Color(0xFF10B981)
+            } else {
+                Color(0xFFFF5252)
+            }
+
+            Box(
+                modifier = Modifier
+                    .width(segmentWidth * 2 + 4.dp)
+                    .height(48.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                // Visual 40.dp outer track with 2.dp uniform inset and sliding 36.dp concentric thumb
+                Box(
                     modifier = Modifier
+                        .fillMaxWidth()
                         .height(40.dp)
-                        .testTag("enter_challenge_code_pill")
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF1E293B))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
+                        .padding(2.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    Box(
+                        modifier = Modifier
+                            .offset(x = thumbOffset)
+                            .width(segmentWidth)
+                            .widthIn(min = 56.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(thumbFill)
+                            .border(1.dp, thumbBorder, RoundedCornerShape(12.dp))
+                    )
+                }
+
+                // Foreground 48.dp touch targets for Easy and Hard halves
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(segmentWidth)
+                            .fillMaxHeight()
+                            .clickable(
+                                role = Role.RadioButton,
+                                onClick = { onSelectDifficulty(GameDifficulty.EASY) }
+                            )
+                            .semantics {
+                                contentDescription = "Easy difficulty"
+                            }
+                            .testTag("difficulty_toggle_easy"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = Color(0xFF00E5FF),
-                            modifier = Modifier.size(15.dp)
-                        )
                         Text(
-                            text = pillLabel,
-                            color = Color(0xFF00E5FF),
+                            text = "Easy",
+                            color = if (isEasy) Color(0xFF34D399) else Color(0xFF94A3B8),
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = if (isEasy) FontWeight.Bold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .width(segmentWidth)
+                            .fillMaxHeight()
+                            .clickable(
+                                role = Role.RadioButton,
+                                onClick = { onSelectDifficulty(GameDifficulty.HARD) }
+                            )
+                            .semantics {
+                                contentDescription = "Hard difficulty"
+                            }
+                            .testTag("difficulty_toggle_hard"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Hard",
+                            color = if (isHard) Color(0xFFFF5252) else Color(0xFF94A3B8),
+                            fontSize = 13.sp,
+                            fontWeight = if (isHard) FontWeight.Bold else FontWeight.SemiBold,
                             maxLines = 1,
                             softWrap = false
                         )
                     }
                 }
-            } else {
-                // Multiplayer: Borderless color-dot tally ([trophy] *0 *0 *0 *0) in 14sp, never wraps at 360dp
-                MultiplayerWinsDotTally(
-                    gameMode = selectedMode,
-                    wins = wins,
-                    showTrophy = !dropTrophy
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MultiplayerWinsDotTally(
-    gameMode: GameMode,
-    wins: List<Int>,
-    showTrophy: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .padding(vertical = 4.dp)
-            .testTag("wins_summary_bar"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        if (showTrophy) {
-            Icon(
-                imageVector = Icons.Default.EmojiEvents,
-                contentDescription = "Multiplayer Wins",
-                tint = Color(0xFFFBBF24),
-                modifier = Modifier.size(16.dp)
-            )
-        }
-        for (i in 0 until gameMode.playerCount) {
-            Row(
-                modifier = Modifier.widthIn(min = 26.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(PLAYER_COLORS[i])
-                )
-                Text(
-                    text = "${wins.getOrElse(i) { 0 }}",
-                    color = Color(0xFFF8FAFC),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    softWrap = false
-                )
             }
         }
     }
@@ -3417,11 +3524,9 @@ private fun PodiumColumn(
 @Composable
 private fun SettingsSheetDialog(
     currentGridSize: GridSize,
-    currentDifficulty: GameDifficulty,
     currentPaceMode: PaceMode,
     isMidRun: Boolean,
     onSelectGridSize: (GridSize) -> Unit,
-    onSelectDifficulty: (GameDifficulty) -> Unit,
     onSelectPaceMode: (PaceMode) -> Unit,
     onResetMultiplayerWins: () -> Unit,
     dailyNotificationsEnabled: Boolean = false,
@@ -3550,10 +3655,9 @@ private fun SettingsSheetDialog(
                         OutlinedTextField(
                             value = myNameInput,
                             onValueChange = { input ->
-                                val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
-                                val truncated = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
-                                myNameInput = truncated
-                                ChallengeStorage.setMyName(context, truncated)
+                                val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
+                                myNameInput = cleaned
+                                ChallengeStorage.setMyName(context, cleaned)
                             },
                             placeholder = { Text("e.g. HERO", color = Color(0xFF64748B)) },
                             singleLine = true,
@@ -3617,37 +3721,6 @@ private fun SettingsSheetDialog(
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(text = "Difficulty", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GameDifficulty.entries.forEach { diff ->
-                                val sel = diff == currentDifficulty
-                                val tag = if (diff == GameDifficulty.EASY) "difficulty_easy" else "difficulty_hard"
-                                FilterChip(
-                                    selected = sel,
-                                    onClick = { onSelectDifficulty(diff) },
-                                    label = {
-                                        Text(
-                                            diff.label,
-                                            fontSize = 14.sp,
-                                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    },
-                                    colors = chipColors,
-                                    border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
-                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(tag)
-                                )
-                            }
-                        }
-                        Text(
-                            text = if (currentDifficulty == GameDifficulty.EASY) "Cumulative sequence across rounds & players" else "Fresh unique sequence every round & turn",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(text = "Pace", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             PaceMode.entries.forEach { mode ->
@@ -3673,6 +3746,10 @@ private fun SettingsSheetDialog(
                         }
                     }
 
+                    val settingsScope = rememberCoroutineScope()
+                    var isResetFlashing by remember { mutableStateOf(false) }
+                    var isDoneFlashing by remember { mutableStateOf(false) }
+
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -3681,31 +3758,65 @@ private fun SettingsSheetDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(text = "Multiplayer records", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(text = "Reset all saved Pass & Play wins (P1-P4)", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                Text(text = "Reset all saved Pass & Play wins and survival records (P1-P4)", color = Color(0xFF94A3B8), fontSize = 12.sp)
                             }
                             OutlinedButton(
-                                onClick = onResetMultiplayerWins,
+                                onClick = {
+                                    if (isResetFlashing) return@OutlinedButton
+                                    onResetMultiplayerWins()
+                                    isResetFlashing = true
+                                    settingsScope.launch {
+                                        flashDelayMs(600L)
+                                        isResetFlashing = false
+                                    }
+                                },
                                 shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isResetFlashing) Color(0xFF10B981) else Color(0xFFEF4444).copy(alpha = 0.6f)
+                                ),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (isResetFlashing) Color(0xFF10B981).copy(alpha = 0.22f) else Color.Transparent
+                                ),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("reset_wins_button")
                             ) {
-                                Text(text = "Reset Wins", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = if (isResetFlashing) "✓ Reset!" else "Reset Wins",
+                                    color = if (isResetFlashing) Color(0xFF34D399) else Color(0xFFEF4444),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
 
                     Text(
-                        text = "Changing grid size, difficulty, or pace updates your active board.",
+                        text = "Changing grid size or pace updates your active board.",
                         color = Color(0xFF94A3B8), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
                     )
                     Button(
-                        onClick = onDismiss,
+                        onClick = {
+                            if (isDoneFlashing) return@Button
+                            isDoneFlashing = true
+                            settingsScope.launch {
+                                flashDelayMs(150L)
+                                isDoneFlashing = false
+                                onDismiss()
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth().height(48.dp).testTag("settings_done_button"),
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color(0xFF0F172A))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isDoneFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
+                            contentColor = Color(0xFF0F172A)
+                        )
                     ) {
-                        Text(text = "Done", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = if (isDoneFlashing) "✓ Done" else "Done",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }
@@ -3923,19 +4034,34 @@ private fun OnboardingPopupDialog(onDismiss: () -> Unit) {
                     }
                 }
 
+                val onboardingScope = rememberCoroutineScope()
+                var isGotItFlashing by remember { mutableStateOf(false) }
+
                 Button(
-                    onClick = onDismiss,
+                    onClick = {
+                        if (isGotItFlashing) return@Button
+                        isGotItFlashing = true
+                        onboardingScope.launch {
+                            flashDelayMs(150L)
+                            isGotItFlashing = false
+                            onDismiss()
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                         .testTag("onboarding_got_it_button"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF38BDF8),
+                        containerColor = if (isGotItFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
                         contentColor = Color(0xFF0F172A)
                     )
                 ) {
-                    Text("Got it", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        if (isGotItFlashing) "✓ Got it" else "Got it",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
         }
@@ -4102,14 +4228,16 @@ private fun GlowPadGrid(
     inputEnabled: Boolean,
     onPadClick: (PadSpec) -> Unit
 ) {
-    val dim = gridSize.dimension
+    val rowCount = gridSize.rowCount
+    val colCount = gridSize.colCount
     val spacing = gridSize.spacingDp.dp
     val cornerRadius = gridSize.cornerDp.dp
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(spacing)) {
-        for (row in 0 until dim) {
+        for (row in 0 until rowCount) {
             Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(spacing)) {
-                for (col in 0 until dim) {
-                    val pad = pads[row * dim + col]
+                for (col in 0 until colCount) {
+                    val padIndex = row * colCount + col
+                    val pad = pads.getOrNull(padIndex) ?: continue
                     GlowPadButton(
                         pad = pad,
                         gridSize = gridSize,
@@ -4296,6 +4424,37 @@ private fun DrawScope.drawPadGlyph(glyph: PadGlyph, center: Offset, radius: Floa
         PadGlyph.HOURGLASS -> path.addPolygon(cx, cy, radius * 0.78f, listOf(-1f to -1f, 1f to -1f, 0.18f to 0f, 1f to 1f, -1f to 1f, -0.18f to 0f))
         PadGlyph.CROWN -> path.addPolygon(cx, cy, radius * 0.82f, listOf(-1f to 0.65f, -0.85f to -0.55f, -0.35f to 0.05f, 0f to -0.75f, 0.35f to 0.05f, 0.85f to -0.55f, 1f to 0.65f))
         PadGlyph.SHIELD -> path.addPolygon(cx, cy, radius * 0.84f, listOf(0f to -1f, 0.78f to -0.62f, 0.68f to 0.18f, 0f to 0.92f, -0.68f to 0.18f, -0.78f to -0.62f))
+        PadGlyph.PENTAGON -> {
+            val pts = (0 until 5).map { i ->
+                val a = -PI / 2.0 + i * (2.0 * PI / 5.0)
+                (0.85f * cos(a)).toFloat() to (0.85f * sin(a)).toFloat()
+            }
+            path.addPolygon(cx, cy, radius, pts)
+        }
+        PadGlyph.TEARDROP -> {
+            val r = radius * 0.82f
+            path.moveTo(cx, cy - r)
+            path.cubicTo(cx + r * 0.95f, cy, cx + r * 0.75f, cy + r * 0.95f, cx, cy + r * 0.95f)
+            path.cubicTo(cx - r * 0.75f, cy + r * 0.95f, cx - r * 0.95f, cy, cx, cy - r)
+            path.close()
+        }
+        PadGlyph.OVAL -> {
+            path.addOval(Rect(cx - radius * 0.48f, cy - radius * 0.78f, cx + radius * 0.48f, cy + radius * 0.78f))
+        }
+        PadGlyph.FLAG -> {
+            val poleLeft = cx - radius * 0.60f
+            val poleRight = cx - radius * 0.42f
+            val poleTop = cy - radius * 0.82f
+            val poleBottom = cy + radius * 0.85f
+            val pole = Path().apply { addRect(Rect(poleLeft, poleTop, poleRight, poleBottom)) }
+            val pennant = Path().apply {
+                addPolygon(
+                    cx, cy, radius,
+                    listOf(-0.42f to -0.82f, 0.75f to -0.38f, -0.42f to 0.06f)
+                )
+            }
+            path.op(pole, pennant, PathOperation.Union)
+        }
     }
 
     if (isFlashing) {
@@ -4312,6 +4471,7 @@ private fun BottomActionSection(
     gameState: GameState,
     gameMode: GameMode = GameMode.SOLO,
     gridSize: GridSize = GridSize.TWO_BY_TWO,
+    currentScore: Int = 0,
     activeRunState: SerializedRunState? = null,
     activeChallenge: ChallengeItem? = null,
     challengeAttemptsLeft: Int = 3,
@@ -4322,6 +4482,7 @@ private fun BottomActionSection(
     onResumeSavedRun: () -> Unit = {},
     onShareChallenge: () -> Unit = {},
     onCopyCode: () -> Unit = {},
+    onCopyFlashFinished: () -> Unit = {},
     onReturnHome: () -> Unit = {},
     onReplyToRival: () -> Unit = {},
     onExitChallenge: () -> Unit = {}
@@ -4332,8 +4493,21 @@ private fun BottomActionSection(
     }
 
     val isMulti = gameMode != GameMode.SOLO
+    val actionScope = rememberCoroutineScope()
 
     if (activeChallenge != null && gameState == GameState.GAME_OVER) {
+        var isReplyFlashing by remember { mutableStateOf(false) }
+        val triggerReplyWithFlash: () -> Unit = {
+            if (!isReplyFlashing) {
+                isReplyFlashing = true
+                actionScope.launch {
+                    flashDelayMs(150L)
+                    isReplyFlashing = false
+                    onReplyToRival()
+                }
+            }
+        }
+
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -4354,31 +4528,45 @@ private fun BottomActionSection(
                 }
             } else if (isChallengeWon) {
                 Button(
-                    onClick = onReplyToRival,
+                    onClick = triggerReplyWithFlash,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp)
                         .testTag("challenge_reply_button"),
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Color.Black)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isReplyFlashing) Color(0xFF10B981) else Color(0xFF00E676),
+                        contentColor = Color.Black
+                    )
                 ) {
                     Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Send Victory to Rival!", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isReplyFlashing) "✓ Sending..." else "Send Victory to Rival!",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             } else {
                 Button(
-                    onClick = onReplyToRival,
+                    onClick = triggerReplyWithFlash,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp)
                         .testTag("challenge_reply_button"),
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color.Black)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isReplyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
+                        contentColor = Color.Black
+                    )
                 ) {
                     Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Send Result to Rival", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isReplyFlashing) "✓ Sending..." else "Send Result to Rival",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 
@@ -4388,15 +4576,26 @@ private fun BottomActionSection(
             ) {
                 if (challengeAttemptsLeft > 0 && !isChallengeWon) {
                     OutlinedButton(
-                        onClick = onReplyToRival,
+                        onClick = triggerReplyWithFlash,
                         modifier = Modifier
                             .weight(1f)
                             .height(40.dp)
                             .testTag("challenge_reply_button"),
                         shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, Color(0xFF38BDF8))
+                        border = BorderStroke(
+                            1.dp,
+                            if (isReplyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isReplyFlashing) Color(0xFF10B981).copy(alpha = 0.22f) else Color.Transparent
+                        )
                     ) {
-                        Text(text = "Share Score", color = Color(0xFF38BDF8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (isReplyFlashing) "✓ Sending..." else "Share Score",
+                            color = if (isReplyFlashing) Color(0xFF34D399) else Color(0xFF38BDF8),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
                 OutlinedButton(
@@ -4418,6 +4617,7 @@ private fun BottomActionSection(
         // Bottom-Left: "Share Challenge" (Dark Slate) | Bottom-Right: "Copy Challenge" (Dark Slate)
         val gridButtonShape = RoundedCornerShape(14.dp)
         val gridButtonHeight = 48.dp
+        var isCopyFlashing by remember { mutableStateOf(false) }
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -4466,12 +4666,27 @@ private fun BottomActionSection(
                 }
             }
 
+            val isShareUnlocked = currentScore >= 5
+            val shareAccent = if (isShareUnlocked) Color(0xFF00E5FF) else Color(0xFF64748B)
+            val shareBorder = if (isShareUnlocked) Color(0xFF00E5FF) else Color(0xFF334155)
+            val copyAccent = when {
+                isCopyFlashing -> Color(0xFF0F172A)
+                isShareUnlocked -> Color(0xFF38BDF8)
+                else -> Color(0xFF64748B)
+            }
+            val copyBorder = when {
+                isCopyFlashing -> Color(0xFF10B981)
+                isShareUnlocked -> Color(0xFF38BDF8)
+                else -> Color(0xFF334155)
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(
                     onClick = onShareChallenge,
+                    enabled = true,
                     modifier = Modifier
                         .weight(1f)
                         .height(gridButtonHeight)
@@ -4480,17 +4695,33 @@ private fun BottomActionSection(
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF1E293B),
-                        contentColor = Color(0xFF00E5FF)
+                        contentColor = shareAccent
                     ),
-                    border = BorderStroke(1.5.dp, Color(0xFF00E5FF))
+                    border = BorderStroke(1.5.dp, shareBorder)
                 ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
+                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = shareAccent, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Share Challenge", color = Color(0xFF00E5FF), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(text = "Share Challenge", color = shareAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
 
                 Button(
-                    onClick = onCopyCode,
+                    onClick = {
+                        if (!isShareUnlocked) {
+                            // Score < 5 gate is 0ms instant (no flash)
+                            onCopyCode()
+                            return@Button
+                        }
+                        if (isCopyFlashing) return@Button
+                        // Lock 2: Clipboard write + pending-share save at 0ms immediately on tap
+                        onCopyCode()
+                        isCopyFlashing = true
+                        actionScope.launch {
+                            flashDelayMs(150L)
+                            isCopyFlashing = false
+                            onCopyFlashFinished()
+                        }
+                    },
+                    enabled = true,
                     modifier = Modifier
                         .weight(1f)
                         .height(gridButtonHeight)
@@ -4498,14 +4729,20 @@ private fun BottomActionSection(
                     shape = gridButtonShape,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1E293B),
-                        contentColor = Color(0xFF38BDF8)
+                        containerColor = if (isCopyFlashing) Color(0xFF10B981) else Color(0xFF1E293B),
+                        contentColor = copyAccent
                     ),
-                    border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
+                    border = BorderStroke(1.5.dp, copyBorder)
                 ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = copyAccent, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Copy Challenge", color = Color(0xFF38BDF8), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(
+                        text = if (isCopyFlashing) "✓ Copied!" else "Copy Challenge",
+                        color = copyAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
                 }
             }
         }

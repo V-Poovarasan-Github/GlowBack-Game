@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.MoreVert
@@ -73,6 +75,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -81,6 +85,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.launch
+
+/**
+ * Frame-clock-driven delay for tactile button confirmation flashes (150ms / 600ms).
+ * Uses Compose's MonotonicFrameClock (withFrameNanos) so that:
+ * 1) Real devices wait the exact wall-clock duration.
+ * 2) Robolectric Compose tests with waitForIdle() advance through the flash deterministically.
+ * 3) Disposing the Composable cancels the coroutine cleanly with zero leaks.
+ */
+suspend fun flashDelayMs(durationMs: Long) {
+    val startNanos = withFrameNanos { it }
+    val targetNanos = startNanos + durationMs * 1_000_000L
+    while (true) {
+        val nowNanos = withFrameNanos { it }
+        if (nowNanos >= targetNanos) break
+    }
+}
+
+/**
+ * Requirement 7: Safe clipboard reader preventing crashes on Android 13+ when clipboard is empty/restricted.
+ */
+fun getClipboardTextSafely(context: Context): String? {
+    return try {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = clipboard?.primaryClip
+        if (clip != null && clip.itemCount > 0) {
+            val text = clip.getItemAt(0)?.text?.toString()?.trim()
+            if (!text.isNullOrEmpty()) text else null
+        } else {
+            null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
 
 /**
  * Helper to display human-readable time ago.
@@ -98,6 +140,22 @@ fun formatTimeAgo(timestamp: Long): String {
         hours < 24 -> "${hours}h ago"
         days < 7 -> "${days}d ago"
         else -> "${days / 7}w ago"
+    }
+}
+
+/**
+ * Formats remaining TTL for an awaiting challenge (72-hour TTL):
+ * - Under 24 hours remaining: "Expires today"
+ * - 24..72 hours remaining: "Expires in Nd" (1d..3d)
+ */
+fun formatAwaitingExpiry(createdAt: Long, now: Long = System.currentTimeMillis()): String {
+    val remainingMs = (ChallengeStorage.AWAITING_TTL_MS - (now - createdAt)).coerceAtLeast(0L)
+    val dayMs = 24 * 60 * 60 * 1000L
+    return if (remainingMs < dayMs) {
+        "Expires today"
+    } else {
+        val days = kotlin.math.ceil(remainingMs.toDouble() / dayMs.toDouble()).toInt().coerceIn(1, 3)
+        "Expires in ${days}d"
     }
 }
 
@@ -296,11 +354,13 @@ fun ChallengeCard(
             ) {
                 val triesText = when {
                     item.isWon -> "WON!"
+                    item.isFreeTries -> if (item.bestScore > 0) "IN PROGRESS" else "FREE TRIES"
                     item.attemptsLeft <= 0 -> "OUT OF TRIES"
                     else -> "${item.attemptsLeft}/${item.maxTries} tries"
                 }
                 val triesColor = when {
                     item.isWon -> Color(0xFF00E676)
+                    item.isFreeTries -> Color(0xFF38BDF8)
                     item.attemptsLeft <= 0 -> Color(0xFFFF5252)
                     else -> Color(0xFF94A3B8)
                 }
@@ -314,7 +374,7 @@ fun ChallengeCard(
 
                 Button(
                     onClick = onPlay,
-                    enabled = item.attemptsLeft > 0 || item.isWon,
+                    enabled = item.isFreeTries || item.attemptsLeft > 0 || item.isWon,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (item.isWon) Color(0xFF00E676) else Color(0xFF00E5FF),
                         contentColor = Color.Black,
@@ -353,10 +413,12 @@ fun EnterChallengeDialog(
     onSubmit: (ChallengeItem) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var rawCode by remember { mutableStateOf("") }
     var rivalName by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showHelpBanner by remember { mutableStateOf(false) }
+    var isSubmitFlashing by remember { mutableStateOf(false) }
 
     // Dialog state for legacy 5-segment codes
     var pendingLegacyChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
@@ -479,10 +541,36 @@ fun EnterChallengeDialog(
                 OutlinedTextField(
                     value = rawCode,
                     onValueChange = { input ->
-                        rawCode = input.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                        val extracted = ChallengeSeed.extractCodeFromText(input)
+                        rawCode = if (extracted != null && extracted != input.trim()) {
+                            extracted
+                        } else {
+                            input.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                        }
                         errorMessage = null
                     },
                     label = { Text("Challenge code") },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                val clip = getClipboardTextSafely(context)
+                                if (!clip.isNullOrBlank()) {
+                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: clip
+                                    rawCode = extracted
+                                    errorMessage = null
+                                } else {
+                                    Toast.makeText(context, "Clipboard empty - paste manually.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.testTag("paste_clipboard_icon_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = "Paste from clipboard",
+                                tint = Color(0xFF00E5FF)
+                            )
+                        }
+                    },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color(0xFF00E5FF),
@@ -522,8 +610,10 @@ fun EnterChallengeDialog(
 
                 OutlinedTextField(
                     value = rivalName,
-                    onValueChange = { rivalName = it },
-                    label = { Text("Custom Rival Name (optional override)") },
+                    onValueChange = { input ->
+                        rivalName = input.replace(' ', '_').uppercase().filter { ch -> (ch in 'A'..'Z') || (ch in '0'..'9') || ch == '_' }.take(10)
+                    },
+                    label = { Text("Custom Rival Name (optional)") },
                     placeholder = { Text("Auto-read from code if left empty", color = Color(0xFF475569)) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -539,10 +629,21 @@ fun EnterChallengeDialog(
                         .testTag("challenge_rival_input")
                 )
 
+                Text(
+                    text = "Use this to separate two rivals with the same name.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, start = 4.dp)
+                        .testTag("same_name_hint_text")
+                )
+
                 Spacer(modifier = Modifier.height(18.dp))
 
                 Button(
                     onClick = {
+                        if (isSubmitFlashing) return@Button
                         val parsed = ChallengeSeed.parseChallengeCode(rawCode)
                         val myName = ChallengeStorage.getMyName(context)
                         if (parsed == null) {
@@ -554,18 +655,48 @@ fun EnterChallengeDialog(
                             errorMessage = "You cannot play your own challenge code!"
                             Toast.makeText(context, "You cannot play your own challenge code!", Toast.LENGTH_SHORT).show()
                         } else if (parsed.isLegacy) {
-                            // Confirmation 4: Pasting a legacy code must ALWAYS show "Old format code detected. Who sent this?" dialog. Never silently default to RIVAL.
+                            // Confirmation 4: Pasting a legacy code opens LegacyCodeNameDialog at 0ms (dialog-opener = no flash).
                             pendingLegacyChallenge = parsed
                         } else {
-                            // Check if an outbound awaiting card matches this chain
-                            if (parsed.chainId.isNotEmpty()) {
-                                ChallengeStorage.deleteAwaitingChallenge(context, parsed.chainId)
-                            }
                             val finalRival = if (rivalName.isNotBlank()) {
                                 ChallengeSeed.sanitizePlayerName(rivalName)
                             } else {
                                 parsed.senderName.ifEmpty { "RIVAL" }
                             }
+                            // Inbound merge tuple: match awaiting challenge by (chainId + gridTag) ONLY
+                            val matchedAwaiting = if (parsed.chainId.isNotEmpty()) {
+                                ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+                            } else null
+
+                            if (matchedAwaiting != null) {
+                                ChallengeStorage.recordMatchOutcome(
+                                    context = context,
+                                    rivalName = finalRival,
+                                    userScore = matchedAwaiting.targetScore,
+                                    targetScore = parsed.targetScore,
+                                    gridSize = parsed.gridTag,
+                                    difficulty = parsed.difficulty,
+                                    chainId = parsed.chainId,
+                                    maxTries = if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
+                                )
+                                ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+                            } else if (parsed.isRevenge) {
+                                // Post-expiry reply code: awaiting card already expired (>72h),
+                                // still create/merge the rival card normally from the NAME segment.
+                                val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+                                val myBoardBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
+                                ChallengeStorage.recordMatchOutcome(
+                                    context = context,
+                                    rivalName = finalRival,
+                                    userScore = myBoardBest,
+                                    targetScore = parsed.targetScore,
+                                    gridSize = parsed.gridTag,
+                                    difficulty = parsed.difficulty,
+                                    chainId = parsed.chainId,
+                                    maxTries = if (parsed.tries == 0) 3 else parsed.tries
+                                )
+                            }
+
                             val item = ChallengeItem(
                                 code = parsed.fullCode,
                                 rivalName = finalRival,
@@ -576,23 +707,29 @@ fun EnterChallengeDialog(
                                 bestScore = 0,
                                 seed = parsed.seedInt,
                                 difficulty = parsed.difficulty,
-                                chainId = parsed.chainId
+                                chainId = parsed.chainId,
+                                isRevenge = parsed.isRevenge
                             )
-                            onSubmit(item)
+                            isSubmitFlashing = true
+                            scope.launch {
+                                flashDelayMs(150L)
+                                isSubmitFlashing = false
+                                onSubmit(item)
+                            }
                         }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("submit_challenge_button"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
+                        containerColor = if (isSubmitFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                         contentColor = Color.Black
                     )
                 ) {
                     Text(
-                        text = "Accept Challenge",
+                        text = if (isSubmitFlashing) "✓ Accepted!" else "Accept Challenge",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -627,7 +764,9 @@ fun LegacyCodeNameCardContent(
     onDismiss: () -> Unit,
     onSubmitName: (String) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var nameInput by remember { mutableStateOf(initialName.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }.take(10)) }
+    var isLegacySubmitFlashing by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -685,28 +824,36 @@ fun LegacyCodeNameCardContent(
                     onClick = onDismiss,
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .heightIn(min = 44.dp)
                         .testTag("legacy_dialog_cancel"),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Cancel", color = Color(0xFF94A3B8))
                 }
                 Button(
                     onClick = {
+                        if (isLegacySubmitFlashing) return@Button
                         val finalName = ChallengeSeed.sanitizePlayerName(nameInput)
-                        onSubmitName(finalName)
+                        isLegacySubmitFlashing = true
+                        scope.launch {
+                            flashDelayMs(150L)
+                            isLegacySubmitFlashing = false
+                            onSubmitName(finalName)
+                        }
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .heightIn(min = 44.dp)
                         .testTag("legacy_dialog_submit"),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
+                        containerColor = if (isLegacySubmitFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                         contentColor = Color.Black
                     )
                 ) {
-                    Text("Accept", fontWeight = FontWeight.Bold)
+                    Text(if (isLegacySubmitFlashing) "✓ Accepted!" else "Accept", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -737,6 +884,9 @@ fun DidYouShareCardContent(
     onDismiss: () -> Unit,
     onConfirmShared: (AwaitingChallenge) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var isTrackFlashing by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -776,25 +926,35 @@ fun DidYouShareCardContent(
                     onClick = onDismiss,
                     modifier = Modifier
                         .weight(1f)
-                        .height(46.dp)
+                        .heightIn(min = 46.dp)
                         .testTag("did_you_share_no_button"),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("No, Cancel", color = Color(0xFF94A3B8))
+                    Text("Cancel", color = Color(0xFF94A3B8))
                 }
                 Button(
-                    onClick = { onConfirmShared(awaiting) },
+                    onClick = {
+                        if (isTrackFlashing) return@Button
+                        isTrackFlashing = true
+                        scope.launch {
+                            flashDelayMs(150L)
+                            isTrackFlashing = false
+                            onConfirmShared(awaiting)
+                        }
+                    },
                     modifier = Modifier
                         .weight(1.2f)
-                        .height(46.dp)
+                        .heightIn(min = 46.dp)
                         .testTag("did_you_share_yes_button"),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
+                        containerColor = if (isTrackFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                         contentColor = Color.Black
                     )
                 ) {
-                    Text("Yes, Track it", fontWeight = FontWeight.ExtraBold)
+                    Text(if (isTrackFlashing) "✓ Tracked!" else "Track It", fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
@@ -811,8 +971,10 @@ fun PasteRivalCodeDialog(
     onSubmit: (ChallengeItem) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var codeInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isPasteRivalFlashing by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -848,11 +1010,37 @@ fun PasteRivalCodeDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = codeInput,
-                    onValueChange = {
-                        codeInput = it.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                    onValueChange = { input ->
+                        val extracted = ChallengeSeed.extractCodeFromText(input)
+                        codeInput = if (extracted != null && extracted != input.trim()) {
+                            extracted
+                        } else {
+                            input.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                        }
                         errorMessage = null
                     },
                     label = { Text("Challenge code") },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                val clip = getClipboardTextSafely(context)
+                                if (!clip.isNullOrBlank()) {
+                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: clip
+                                    codeInput = extracted
+                                    errorMessage = null
+                                } else {
+                                    Toast.makeText(context, "Clipboard empty - paste manually.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.testTag("paste_rival_clipboard_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = "Paste from clipboard",
+                                tint = Color(0xFF00E5FF)
+                            )
+                        }
+                    },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color(0xFF00E5FF),
@@ -877,12 +1065,13 @@ fun PasteRivalCodeDialog(
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = {
+                        if (isPasteRivalFlashing) return@Button
                         val parsed = ChallengeSeed.parseChallengeCode(codeInput)
                         if (parsed == null) {
                             errorMessage = "Invalid challenge code format."
                         } else if (!parsed.isLegacy && !parsed.senderName.equals(rivalName, ignoreCase = true)) {
-                            // Strict Name-Lock rule
-                            val toastMsg = "This code is from ${parsed.senderName}. Paste it on the Home screen."
+                            // Strict Name-Lock rule (0ms instant error, no flash)
+                            val toastMsg = "This code is from ${parsed.senderName}. Use 'Paste Code' on the Rivalry tab instead."
                             Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                             errorMessage = toastMsg
                         } else if (ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
@@ -891,7 +1080,20 @@ fun PasteRivalCodeDialog(
                             errorMessage = toastMsg
                         } else {
                             if (parsed.chainId.isNotEmpty()) {
-                                ChallengeStorage.deleteAwaitingChallenge(context, parsed.chainId)
+                                val matchedAwaiting = ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+                                if (matchedAwaiting != null) {
+                                    ChallengeStorage.recordMatchOutcome(
+                                        context = context,
+                                        rivalName = rivalName,
+                                        userScore = matchedAwaiting.targetScore,
+                                        targetScore = parsed.targetScore,
+                                        gridSize = parsed.gridTag,
+                                        difficulty = parsed.difficulty,
+                                        chainId = parsed.chainId,
+                                        maxTries = if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
+                                    )
+                                }
+                                ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
                             }
                             val item = ChallengeItem(
                                 code = parsed.fullCode,
@@ -903,22 +1105,28 @@ fun PasteRivalCodeDialog(
                                 bestScore = 0,
                                 seed = parsed.seedInt,
                                 difficulty = parsed.difficulty,
-                                chainId = parsed.chainId
+                                chainId = parsed.chainId,
+                                isRevenge = parsed.isRevenge
                             )
-                            onSubmit(item)
+                            isPasteRivalFlashing = true
+                            scope.launch {
+                                flashDelayMs(150L)
+                                isPasteRivalFlashing = false
+                                onSubmit(item)
+                            }
                         }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .heightIn(min = 46.dp)
                         .testTag("paste_rival_submit_button"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
+                        containerColor = if (isPasteRivalFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                         contentColor = Color.Black
                     )
                 ) {
-                    Text("Accept Rival Code", fontWeight = FontWeight.Bold)
+                    Text(if (isPasteRivalFlashing) "✓ Accepted!" else "Accept Rival Code", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -932,6 +1140,7 @@ fun PasteRivalCodeDialog(
 fun ShareTriesSelectorDialog(
     initialTries: Int = 3,
     boardOptions: List<BoardScoreOption> = emptyList(),
+    lockedRunSummary: String? = null,
     currentScoreToShare: Int = 1,
     requireNameSetupFirst: Boolean = false,
     awaitingChallengeForDialog: AwaitingChallenge? = null,
@@ -941,11 +1150,13 @@ fun ShareTriesSelectorDialog(
     onGenerateCard: (tries: Int, senderName: String, chosenBoard: BoardScoreOption?) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var isConfiguringName by remember { mutableStateOf(requireNameSetupFirst) }
     var senderNameInput by remember { mutableStateOf(ChallengeStorage.getMyName(context)) }
     val options = listOf(1, 3, 5, 0) // 0 = Free/Unlimited
     var selectedTries by remember { mutableIntStateOf(if (initialTries in options) initialTries else 3) }
     var selectedBoardIndex by remember { mutableIntStateOf(0) }
+    var isGenerateFlashing by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = {
@@ -1019,8 +1230,8 @@ fun ShareTriesSelectorDialog(
                     OutlinedTextField(
                         value = senderNameInput,
                         onValueChange = { input ->
-                            val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
-                            senderNameInput = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
+                            val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
+                            senderNameInput = cleaned
                         },
                         label = { Text("Your Display Name (max 10 chars)") },
                         singleLine = true,
@@ -1037,7 +1248,25 @@ fun ShareTriesSelectorDialog(
                             .testTag("share_sender_name_input")
                     )
 
-                    if (boardOptions.isNotEmpty()) {
+                    if (lockedRunSummary != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .testTag("locked_run_summary_text")
+                        ) {
+                            Text(
+                                text = lockedRunSummary,
+                                color = Color(0xFF38BDF8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else if (boardOptions.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             text = "Target Score to Beat:",
@@ -1053,6 +1282,7 @@ fun ShareTriesSelectorDialog(
                         ) {
                             itemsIndexed(boardOptions) { idx, opt ->
                                 val isChosen = selectedBoardIndex == idx
+                                val diffText = if (opt.difficulty == GameDifficulty.HARD) "Hard" else "Easy"
                                 Surface(
                                     onClick = { selectedBoardIndex = idx },
                                     shape = RoundedCornerShape(12.dp),
@@ -1066,7 +1296,7 @@ fun ShareTriesSelectorDialog(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Text(
-                                            text = "${opt.gridTag} ${opt.paceName}",
+                                            text = "${opt.gridTag} ${opt.paceName} · $diffText",
                                             color = if (isChosen) Color.White else Color(0xFF94A3B8),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium
@@ -1142,24 +1372,30 @@ fun ShareTriesSelectorDialog(
 
                     Button(
                         onClick = {
+                            if (isGenerateFlashing) return@Button
                             val finalName = ChallengeSeed.sanitizePlayerName(senderNameInput)
                             ChallengeStorage.setMyName(context, finalName)
                             val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
-                            onGenerateCard(selectedTries, finalName, chosenBoard)
+                            isGenerateFlashing = true
+                            scope.launch {
+                                flashDelayMs(150L)
+                                isGenerateFlashing = false
+                                onGenerateCard(selectedTries, finalName, chosenBoard)
+                            }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("generate_card_button"),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF00E5FF),
+                            containerColor = if (isGenerateFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                             contentColor = Color(0xFF090D16)
                         )
                     ) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "Generate Card", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(text = if (isGenerateFlashing) "✓ Generating..." else "Generate Card", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
@@ -1169,13 +1405,15 @@ fun ShareTriesSelectorDialog(
 }
 
 /**
- * Gate dialog shown when user has not yet completed a game with a score > 0.
+ * Gate dialog shown when user has not yet reached a score of 5.
  */
 @Composable
 fun FirstTimeShareGateDialog(
+    currentBestScore: Int = 0,
     onDismiss: () -> Unit,
     onPlayNow: () -> Unit
 ) {
+    val clampedProgress = currentBestScore.coerceIn(0, 5)
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
@@ -1205,7 +1443,7 @@ fun FirstTimeShareGateDialog(
                 }
 
                 Text(
-                    text = "Set a score first!",
+                    text = "Reach a score of 5!",
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1213,18 +1451,51 @@ fun FirstTimeShareGateDialog(
                 )
 
                 Text(
-                    text = "Play a quick game so your friend has a real score to beat.",
+                    text = "Reach a score of 5 to unlock challenge sharing!",
                     color = Color(0xFF94A3B8),
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
                     lineHeight = 20.sp
                 )
 
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("first_time_share_progress"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Progress: $clampedProgress / 5 score",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (step in 1..5) {
+                            val reached = step <= clampedProgress
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (reached) Color(0xFF00E5FF) else Color(0xFF334155))
+                            )
+                        }
+                    }
+                }
+
                 Button(
                     onClick = onPlayNow,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("first_time_share_play_now_button"),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -1264,8 +1535,10 @@ fun ChallengerNameSetupCardContent(
     onSaveName: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var nameInput by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var isSaveFlashing by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -1301,8 +1574,8 @@ fun ChallengerNameSetupCardContent(
             OutlinedTextField(
                 value = nameInput,
                 onValueChange = { input ->
-                    val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
-                    nameInput = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
+                    val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
+                    nameInput = cleaned
                     errorText = null
                 },
                 label = { Text("Your Name (max 10 chars)") },
@@ -1327,25 +1600,31 @@ fun ChallengerNameSetupCardContent(
 
             Button(
                 onClick = {
+                    if (isSaveFlashing) return@Button
                     val finalName = ChallengeSeed.sanitizePlayerName(nameInput)
                     if (nameInput.isBlank()) {
                         errorText = "Please enter a display name."
                     } else {
                         ChallengeStorage.setMyName(context, finalName)
-                        onSaveName(finalName)
+                        isSaveFlashing = true
+                        scope.launch {
+                            flashDelayMs(150L)
+                            isSaveFlashing = false
+                            onSaveName(finalName)
+                        }
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("challenger_tag_save_button"),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF00E5FF),
+                    containerColor = if (isSaveFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
                     contentColor = Color(0xFF090D16)
                 )
             ) {
-                Text("Save & Continue", fontWeight = FontWeight.Bold)
+                Text(if (isSaveFlashing) "✓ Saved" else "Save & Continue", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1365,13 +1644,14 @@ fun HallOfFameScreen(
     onPasteCodeClicked: () -> Unit,
     onAcceptChallenge: (ChallengeItem) -> Unit,
     sharedPrefs: android.content.SharedPreferences,
+    refreshTrigger: Any? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = RIVALRY, 1 = RECORDS
 
-    var rivals by remember { mutableStateOf(ChallengeStorage.loadRivals(context)) }
-    var awaitingChallenges by remember { mutableStateOf(ChallengeStorage.loadAwaitingChallenges(context)) }
+    var rivals by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadRivals(context)) }
+    var awaitingChallenges by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadAwaitingChallenges(context)) }
     var rivalForPasteCode by remember { mutableStateOf<RivalRecord?>(null) }
 
     fun refreshData() {
@@ -1505,6 +1785,7 @@ fun RivalryTabContent(
 
     if (rivals.isEmpty() && awaitingChallenges.isEmpty()) {
         EmptyRivalryState(
+            awaitingCount = 0,
             onShareCode = onShareCode,
             onPasteCode = onPasteCode,
             modifier = modifier
@@ -1519,7 +1800,51 @@ fun RivalryTabContent(
             .testTag("rivalry_list"),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Awaiting Response Section
+        // Persistent Action Bar: [Share Challenge | Paste Code]
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("rivalry_action_bar"),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onShareCode,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 46.dp)
+                        .testTag("rivalry_share_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share Challenge", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                }
+
+                Button(
+                    onClick = onPasteCode,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 46.dp)
+                        .testTag("rivalry_paste_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color.Black
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                }
+            }
+        }
+
+        // Awaiting Challenges Section (no redundant top pill or 1 & 2 onboarding card)
         if (awaitingChallenges.isNotEmpty()) {
             item {
                 Row(
@@ -1540,6 +1865,7 @@ fun RivalryTabContent(
             items(awaitingChallenges, key = { it.chainId }) { awaiting ->
                 AwaitingCard(
                     awaiting = awaiting,
+                    onPasteReply = onPasteCode,
                     onCopyAgain = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", awaiting.code))
@@ -1547,18 +1873,6 @@ fun RivalryTabContent(
                     },
                     onDelete = { onDeleteAwaiting(awaiting) }
                 )
-            }
-
-            if (rivals.isEmpty()) {
-                item {
-                    Text(
-                        text = "Battles will appear here once someone responds.",
-                        color = Color(0xFF64748B),
-                        fontSize = 13.sp,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        textAlign = TextAlign.Center
-                    )
-                }
             }
         }
 
@@ -1588,10 +1902,11 @@ fun RivalryTabContent(
 }
 
 /**
- * Empty State for Rivalry tab.
+ * Empty State for Rivalry tab with 2-step explanation card and action buttons.
  */
 @Composable
 fun EmptyRivalryState(
+    awaitingCount: Int = 0,
     onShareCode: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier
@@ -1604,18 +1919,38 @@ fun EmptyRivalryState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        if (awaitingCount > 0) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF0284C7).copy(alpha = 0.18f),
+                border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .padding(bottom = 16.dp)
+                    .testTag("pending_challenge_pill")
+            ) {
+                Text(
+                    text = if (awaitingCount == 1) "1 challenge sent - waiting for their reply code."
+                    else "$awaitingCount challenges sent - waiting for their reply code.",
+                    color = Color(0xFF38BDF8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(68.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF1E293B))
                 .border(2.dp, Color(0xFF00E5FF), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(text = "⚔️", fontSize = 34.sp)
+            Text(text = "⚔️", fontSize = 32.sp)
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
             text = "No rivalries yet",
@@ -1625,10 +1960,10 @@ fun EmptyRivalryState(
             modifier = Modifier.testTag("empty_rivalry_title")
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Share a challenge code with a friend, or paste theirs to start a battle.",
+            text = "Start a duel with a friend and track your head-to-head records.",
             color = Color(0xFF94A3B8),
             fontSize = 14.sp,
             textAlign = TextAlign.Center,
@@ -1636,7 +1971,69 @@ fun EmptyRivalryState(
             modifier = Modifier.padding(horizontal = 16.dp)
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // 4-Step Battle Walkthrough Card (testTag "two_step_battle_card" preserved for stability)
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("two_step_battle_card"),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.dp, Color(0xFF334155))
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val walkthroughSteps = listOf(
+                    Triple(
+                        "1",
+                        "Share your code",
+                        "Reach a score of 5, then send your challenge code to a friend. It carries your exact sequence and score."
+                    ) to Color(0xFF00E5FF),
+                    Triple(
+                        "2",
+                        "They play & reply",
+                        "Your friend plays your exact sequence. When they finish, they'll share a reply code back to you."
+                    ) to Color(0xFF38BDF8),
+                    Triple(
+                        "3",
+                        "Paste their reply here",
+                        "Got their code? Paste it in this tab to record the duel - win, loss, or tie."
+                    ) to Color(0xFF10B981),
+                    Triple(
+                        "4",
+                        "Fire back",
+                        "Their rivalry card now lives here. Tap Send Challenge or Get Revenge to keep the feud alive."
+                    ) to Color(0xFFF59E0B)
+                )
+
+                walkthroughSteps.forEachIndexed { idx, (stepInfo, badgeColor) ->
+                    val (num, title, desc) = stepInfo
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(badgeColor.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(num, color = badgeColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(desc, color = Color(0xFF94A3B8), fontSize = 12.sp, lineHeight = 16.sp)
+                        }
+                    }
+                    if (idx < walkthroughSteps.lastIndex) {
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF334155).copy(alpha = 0.6f)))
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1646,7 +2043,7 @@ fun EmptyRivalryState(
                 onClick = onShareCode,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("empty_share_button"),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
@@ -1660,7 +2057,7 @@ fun EmptyRivalryState(
                 onClick = onPasteCode,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("empty_paste_button"),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -1677,15 +2074,19 @@ fun EmptyRivalryState(
 }
 
 /**
- * Outbound Awaiting Card.
+ * Outbound Awaiting Card with 72h expiry indicator and in-card [Paste Reply Code] + [Copy Code Again].
  */
 @Composable
 fun AwaitingCard(
     awaiting: AwaitingChallenge,
+    onPasteReply: () -> Unit = {},
     onCopyAgain: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val scope = rememberCoroutineScope()
+    var isCopyFlashing by remember { mutableStateOf(false) }
+    val expiryText = formatAwaitingExpiry(awaiting.createdAt)
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -1721,9 +2122,19 @@ fun AwaitingCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "${awaiting.gridSizeTag.uppercase()} ${awaiting.difficulty.label} · Target: ${awaiting.targetScore} · ${formatTimeAgo(awaiting.createdAt)}",
+                text = "${awaiting.gridSizeTag.uppercase()} ${awaiting.difficulty.label} · Target: ${awaiting.targetScore} · ${formatTimeAgo(awaiting.createdAt)} · $expiryText",
                 color = Color(0xFF94A3B8),
-                fontSize = 12.sp
+                fontSize = 12.sp,
+                modifier = Modifier.testTag("awaiting_meta_${awaiting.chainId}")
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Once they finish, ask for their reply code and paste it here to record the match.",
+                color = Color(0xFFCBD5E1),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1733,17 +2144,45 @@ fun AwaitingCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = onCopyAgain,
+                Button(
+                    onClick = onPasteReply,
                     modifier = Modifier
-                        .height(34.dp)
-                        .testTag("copy_awaiting_${awaiting.chainId}"),
+                        .height(36.dp)
+                        .testTag("paste_reply_awaiting_${awaiting.chainId}"),
                     shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color.Black
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF38BDF8))
+                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(13.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy Code Again", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Paste Reply Code", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                val copyAccent = if (isCopyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)
+                OutlinedButton(
+                    onClick = {
+                        if (isCopyFlashing) return@OutlinedButton
+                        // Lock 2: Clipboard write happens at 0ms immediately on tap
+                        onCopyAgain()
+                        isCopyFlashing = true
+                        scope.launch {
+                            flashDelayMs(600L)
+                            isCopyFlashing = false
+                        }
+                    },
+                    modifier = Modifier
+                        .height(36.dp)
+                        .testTag("copy_awaiting_${awaiting.chainId}"),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, copyAccent),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp), tint = copyAccent)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isCopyFlashing) "✓ Copied!" else "Copy Code Again", color = copyAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1893,7 +2332,7 @@ fun RivalCard(
                     onClick = onDynamicAction,
                     modifier = Modifier
                         .weight(1.2f)
-                        .height(38.dp)
+                        .heightIn(min = 38.dp)
                         .testTag("rival_dynamic_button_${rival.name}"),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -1909,7 +2348,7 @@ fun RivalCard(
                     onClick = onPasteNewCode,
                     modifier = Modifier
                         .weight(1.1f)
-                        .height(38.dp)
+                        .heightIn(min = 38.dp)
                         .testTag("rival_paste_button_${rival.name}"),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
@@ -1934,8 +2373,8 @@ fun RecordsTabContent(
     var selectedGridIndex by remember { mutableIntStateOf(0) } // 0 = 2x2, 1 = 3x3, 2 = 4x4
 
     val modes = listOf("SOLO", "2P", "3P", "4P")
-    val grids = listOf("2×2", "3×3", "4×4")
-    val gridKeys = listOf("2x2", "3x3", "4x4")
+    val grids = listOf("2×2", "3×3", "4×4", "5×4")
+    val gridKeys = listOf("2x2", "3x3", "4x4", "5x4")
 
     Column(
         modifier = modifier
@@ -2106,9 +2545,23 @@ fun RecordsTabContent(
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        val playerDotColors = listOf(
+                            Color(0xFF38BDF8), // P1 Blue
+                            Color(0xFFEF4444), // P2 Red
+                            Color(0xFF10B981), // P3 Green
+                            Color(0xFFF59E0B)  // P4 Yellow
+                        )
+                        val playerDotDescriptions = listOf(
+                            "Player 1, blue",
+                            "Player 2, red",
+                            "Player 3, green",
+                            "Player 4, yellow"
+                        )
                         for (i in 0 until playerCount) {
                             val winsKey = "wins_P${i + 1}"
                             val wins = sharedPrefs.getInt(winsKey, 0)
+                            val dotColor = playerDotColors.getOrElse(i) { Color(0xFF38BDF8) }
+                            val dotDesc = playerDotDescriptions.getOrElse(i) { "Player ${i + 1}" }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2119,11 +2572,26 @@ fun RecordsTabContent(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Player ${i + 1}",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(dotColor)
+                                            .semantics {
+                                                contentDescription = dotDesc
+                                            }
+                                            .testTag("records_p${i + 1}_color_dot")
+                                    )
+                                    Text(
+                                        text = "Player ${i + 1}",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                                 Text(
                                     text = "$wins wins",
                                     color = Color(0xFF00E5FF),

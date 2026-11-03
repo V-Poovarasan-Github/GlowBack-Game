@@ -179,10 +179,11 @@ object ChallengeShareHelper {
             textSize = 30f
             textAlign = Paint.Align.CENTER
         }
+        val triesLabel = if (tries == 0) "Unlimited" else "$tries"
         val subStatText = if (isReply && rivalName != null) {
             "Rival: $rivalName"
         } else {
-            "Target: $score  •  Tries: $tries  •  ${difficulty.label}  •  $paceName"
+            "Target: $score  •  Tries: $triesLabel  •  ${difficulty.label}  •  $paceName"
         }
         canvas.drawText(subStatText, width / 2f, 760f, subStatPaint)
 
@@ -226,7 +227,7 @@ object ChallengeShareHelper {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("Open Glowback  ➔  Tap '+ Challenge'  ➔  Paste code to play", width / 2f, 1160f, footerPaint)
+        canvas.drawText("Open Glowback  ➔  Rivalry Tab  ➔  Paste code to play", width / 2f, 1160f, footerPaint)
 
         val brandFootPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#475569")
@@ -275,8 +276,7 @@ object ChallengeShareHelper {
             imageFile
         )
 
-        val triesWord = if (tries == 1) "try" else "tries"
-        val shareCaption = "I scored $score on Glowback (${difficulty.label})! Beat my sequence in $tries $triesWord: $code"
+        val shareCaption = code
 
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
@@ -329,8 +329,7 @@ object ChallengeShareHelper {
             imageFile
         )
 
-        val verdict = if (won) "I BEAT your score of $targetScore with $myScore!" else "I scored $myScore (target was $targetScore)!"
-        val shareCaption = "Glowback Result: $verdict Challenge: $code"
+        val shareCaption = code
 
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"

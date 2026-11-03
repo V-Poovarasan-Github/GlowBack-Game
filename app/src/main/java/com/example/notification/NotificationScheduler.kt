@@ -173,11 +173,13 @@ object NotificationScheduler {
 
         val rawGrid = prefs.getString("selected_grid_size", "TWO_BY_TWO") ?: "TWO_BY_TWO"
         val rawPace = prefs.getString("selected_pace_mode", "CLASSIC") ?: "CLASSIC"
+        val rawDiff = prefs.getString("difficulty_mode", "EASY") ?: "EASY"
 
         val (gridLabel, gridPrefix) = when (rawGrid) {
             "TWO_BY_TWO" -> "2×2" to "2x2"
             "THREE_BY_THREE" -> "3×3" to "3x3"
             "FOUR_BY_FOUR" -> "4×4" to "4x4"
+            "FIVE_BY_FOUR" -> "5×4" to "5x4"
             else -> "2×2" to "2x2"
         }
 
@@ -186,12 +188,13 @@ object NotificationScheduler {
             else -> "classic"
         }
 
-        val scoreKey = "best_${gridPrefix}_${paceSuffix}"
-        val bestScore = if (gridPrefix == "2x2" && paceSuffix == "classic") {
-            maxOf(prefs.getInt("best_high_score", 0), prefs.getInt(scoreKey, 0))
-        } else {
-            prefs.getInt(scoreKey, 0)
+        val diffSuffix = when (rawDiff.uppercase()) {
+            "HARD" -> "HARD"
+            else -> "EASY"
         }
+
+        val scoreKey = "best_${gridPrefix}_${paceSuffix}_${diffSuffix}"
+        val bestScore = prefs.getInt(scoreKey, 0)
 
         val bodyText = NotificationContentProvider.getPhrase(context, deltaMillis, bestScore, gridLabel)
 
