@@ -42,16 +42,24 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import com.example.challenge.ActiveChallengesRail
+import com.example.challenge.AwaitingChallenge
+import com.example.challenge.BoardScoreOption
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeShareHelper
 import com.example.challenge.ChallengeStorage
+import com.example.challenge.ChallengerNameSetupDialog
+import com.example.challenge.DidYouShareDialog
 import com.example.challenge.EnterChallengeDialog
+import com.example.challenge.FirstTimeShareGateDialog
 import com.example.challenge.GameDifficulty
+import com.example.challenge.HallOfFameScreen
 import com.example.challenge.InGameChallengeBanner
+import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
 import com.example.challenge.ShareTriesSelectorDialog
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -91,7 +99,19 @@ import kotlin.math.*
 import kotlin.random.Random
 import kotlinx.coroutines.*
 
+enum class AppScreen { HOME, LEADERBOARD }
 enum class GameState { IDLE, WATCHING, PLAYING, GAME_OVER }
+enum class ActiveDialog {
+    NONE,
+    TRIES_SELECTOR,
+    ENTER_CHALLENGE,
+    FIRST_TIME_SHARE_GATE,
+    NAME_SETUP,
+    SETTINGS_SHEET,
+    NOTIFICATION_PERM,
+    DISCARD_CONFIRM,
+    DID_YOU_SHARE
+}
 
 enum class GameMode(val playerCount: Int, val label: String, val tagId: String) {
     SOLO(1, "SOLO", "mode_solo"),
@@ -432,24 +452,70 @@ fun computeStandings(players: List<PlayerSlot>): List<PlayerStanding> {
     }
 }
 
-internal fun bestScoreKeyFor(gridSize: GridSize, paceMode: PaceMode): String = "best_${gridSize.keyPrefix}_${paceMode.keySuffix}"
+internal const val KEY_SCORES_MIGRATED_V2 = "scores_migrated_v2"
 
-internal fun readMigratedBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode): Int {
-    val key = bestScoreKeyFor(gridSize, paceMode)
-    if (gridSize == GridSize.TWO_BY_TWO && paceMode == PaceMode.CLASSIC) {
-        val resolved = max(prefs.getInt(KEY_BEST_SCORE, 0), prefs.getInt(key, 0))
-        if (resolved != prefs.getInt(key, 0)) prefs.edit().putInt(key, resolved).apply()
-        return resolved
+internal fun bestScoreKeyFor(gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY): String =
+    "best_${gridSize.keyPrefix}_${paceMode.keySuffix}_${difficulty.name}"
+
+internal fun checkAndMigrateScoresV2(prefs: SharedPreferences) {
+    if (prefs.getBoolean(KEY_SCORES_MIGRATED_V2, false)) return
+    val editor = prefs.edit()
+    for (grid in GridSize.entries) {
+        for (pace in PaceMode.entries) {
+            val oldKey = "best_${grid.keyPrefix}_${pace.keySuffix}"
+            val newEasyKey = "best_${grid.keyPrefix}_${pace.keySuffix}_EASY"
+            val oldScore = prefs.getInt(oldKey, 0)
+            if (oldScore > 0 && prefs.getInt(newEasyKey, 0) == 0) {
+                editor.putInt(newEasyKey, oldScore)
+            }
+        }
     }
+    val legacyBest = prefs.getInt(KEY_BEST_SCORE, 0)
+    val easy2x2ClassicKey = "best_2x2_classic_EASY"
+    if (legacyBest > prefs.getInt(easy2x2ClassicKey, 0)) {
+        editor.putInt(easy2x2ClassicKey, legacyBest)
+    }
+    editor.putBoolean(KEY_SCORES_MIGRATED_V2, true)
+    editor.apply()
+}
+
+internal fun readMigratedBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY): Int {
+    checkAndMigrateScoresV2(prefs)
+    val key = bestScoreKeyFor(gridSize, paceMode, difficulty)
     return prefs.getInt(key, 0)
 }
 
-internal fun writeBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode, score: Int) {
-    val editor = prefs.edit().putInt(bestScoreKeyFor(gridSize, paceMode), score)
-    if ((gridSize == GridSize.TWO_BY_TWO && paceMode == PaceMode.CLASSIC) || score > prefs.getInt(KEY_BEST_SCORE, 0)) {
+internal fun writeBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY, score: Int) {
+    val editor = prefs.edit().putInt(bestScoreKeyFor(gridSize, paceMode, difficulty), score)
+    val baseKey = "best_${gridSize.keyPrefix}_${paceMode.keySuffix}"
+    if (score > prefs.getInt(baseKey, 0)) {
+        editor.putInt(baseKey, score)
+    }
+    if (score > prefs.getInt(KEY_BEST_SCORE, 0)) {
         editor.putInt(KEY_BEST_SCORE, score)
     }
     editor.apply()
+}
+
+internal fun getAllBoardScores(prefs: SharedPreferences): List<BoardScoreOption> {
+    checkAndMigrateScoresV2(prefs)
+    val list = mutableListOf<BoardScoreOption>()
+    for (grid in GridSize.entries) {
+        for (pace in PaceMode.entries) {
+            for (diff in GameDifficulty.entries) {
+                val score = readMigratedBestScore(prefs, grid, pace, diff)
+                if (score > 0) {
+                    val gridTag = when (grid) {
+                        GridSize.TWO_BY_TWO -> "2x2"
+                        GridSize.THREE_BY_THREE -> "3x3"
+                        GridSize.FOUR_BY_FOUR -> "4x4"
+                    }
+                    list.add(BoardScoreOption(gridTag, pace.shortLabel, diff, score))
+                }
+            }
+        }
+    }
+    return list.sortedByDescending { it.score }
 }
 
 private val GlowDarkColorScheme = darkColorScheme(
@@ -627,14 +693,18 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         mutableStateOf(sharedPrefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
     }
     var showChallengeNudge by remember { mutableStateOf(false) }
-    var showSettingsSheet by remember { mutableStateOf(false) }
     var activeRunState by remember { mutableStateOf(RunStateStorage.loadRunState(context)) }
-    var showDiscardConfirmDialog by remember { mutableStateOf(false) }
 
     var dailyNotificationsEnabled by remember {
         mutableStateOf(sharedPrefs.getBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true))
     }
-    var showNotificationCustomDialog by remember { mutableStateOf(false) }
+
+    var activeDialog by remember {
+        mutableStateOf(if (ChallengeStorage.getPendingShare(context) != null) ActiveDialog.DID_YOU_SHARE else ActiveDialog.NONE)
+    }
+    var awaitingChallengeForDialog by remember {
+        mutableStateOf(ChallengeStorage.getPendingShare(context))
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -670,32 +740,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         }
     }
 
-    var trophyTapCount by remember { mutableIntStateOf(0) }
-    var lastTrophyTapTime by remember { mutableLongStateOf(0L) }
-
-    fun handleTrophyClick() {
-        val now = System.currentTimeMillis()
-        if (now - lastTrophyTapTime < 1500L) {
-            trophyTapCount++
-        } else {
-            trophyTapCount = 1
-        }
-        lastTrophyTapTime = now
-
-        if (trophyTapCount >= 5) {
-            trophyTapCount = 0
-            NotificationScheduler.triggerInstantTest(context, delaySeconds = 5)
-            Toast.makeText(context, "Test reminder scheduled in 5 seconds!", Toast.LENGTH_SHORT).show()
-        }
-    }
+    var currentScreen by remember { mutableStateOf(AppScreen.HOME) }
+    var isPausedMidGame by remember { mutableStateOf(false) }
 
     // Async Challenge & Deterministic Solo Seed State
     var activeChallenge by remember { mutableStateOf<ChallengeItem?>(null) }
     var challengeRng by remember { mutableStateOf<java.util.Random?>(null) }
     var currentRunSeed by remember { mutableIntStateOf(ChallengeSeed.generateRandomSeed()) }
     var soloRng by remember { mutableStateOf<java.util.Random?>(null) }
-    var showEnterChallengeDialog by remember { mutableStateOf(false) }
-    var showTriesSelectorDialog by remember { mutableStateOf(false) }
     var selectedShareTries by remember { mutableIntStateOf(3) }
     var savedChallenges by remember { mutableStateOf(ChallengeStorage.loadChallenges(context)) }
     var challengeAttemptsLeft by remember { mutableIntStateOf(3) }
@@ -706,7 +758,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     val sequence = remember { mutableStateListOf<PadSpec>() }
     var playerStepIndex by remember { mutableIntStateOf(0) }
     var currentScore by remember { mutableIntStateOf(0) }
-    var bestScore by remember(gridSize, paceMode) { mutableIntStateOf(readMigratedBestScore(sharedPrefs, gridSize, paceMode)) }
+    var bestScore by remember(gridSize, paceMode, difficultyMode) { mutableIntStateOf(readMigratedBestScore(sharedPrefs, gridSize, paceMode, difficultyMode)) }
+
+    fun requestShareChallenge() {
+        val boardScores = getAllBoardScores(sharedPrefs)
+        if (boardScores.isEmpty() && currentScore <= 0) {
+            activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
+        } else {
+            activeDialog = ActiveDialog.TRIES_SELECTOR
+        }
+    }
 
     // Multiplayer State
     val players = remember { mutableStateListOf<PlayerSlot>() }
@@ -880,7 +941,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     fun updateBestScoreIfNeeded(newScore: Int) {
         if (newScore > bestScore) {
             bestScore = newScore
-            writeBestScore(sharedPrefs, gridSize, paceMode, newScore)
+            writeBestScore(sharedPrefs, gridSize, paceMode, difficultyMode, newScore)
         }
     }
 
@@ -893,7 +954,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         gridSize = newGridSize
         paceMode = newPaceMode
         sharedPrefs.edit().putString(KEY_GRID_SIZE, newGridSize.name).putString(KEY_PACE_MODE, newPaceMode.name).apply()
-        bestScore = readMigratedBestScore(sharedPrefs, newGridSize, newPaceMode)
+        bestScore = readMigratedBestScore(sharedPrefs, newGridSize, newPaceMode, difficultyMode)
         isMatchComplete = false
         gameState = GameState.IDLE
     }
@@ -928,18 +989,25 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     allPadsConfettiFlash = false
                     isRoundClearCelebration = false
                 }
-                Lifecycle.Event.ON_RESUME -> if (wasPausedMidRound && sequence.isNotEmpty()) {
-                    wasPausedMidRound = false
-                    isLifecyclePaused = false
-                    playerStepIndex = 0
-                    activePadId = null
-                    allPadsConfettiFlash = false
-                    isRoundClearCelebration = false
-                    resumedBannerNote = "Round replayed - you were away."
-                    gameState = GameState.WATCHING
-                    roundTrigger++
-                } else {
-                    isLifecyclePaused = false
+                Lifecycle.Event.ON_RESUME -> {
+                    val pending = ChallengeStorage.getPendingShare(context)
+                    if (pending != null) {
+                        awaitingChallengeForDialog = pending
+                        activeDialog = ActiveDialog.DID_YOU_SHARE
+                    }
+                    if (wasPausedMidRound && sequence.isNotEmpty()) {
+                        wasPausedMidRound = false
+                        isLifecyclePaused = false
+                        playerStepIndex = 0
+                        activePadId = null
+                        allPadsConfettiFlash = false
+                        isRoundClearCelebration = false
+                        resumedBannerNote = "Round replayed - you were away."
+                        gameState = GameState.WATCHING
+                        roundTrigger++
+                    } else {
+                        isLifecyclePaused = false
+                    }
                 }
                 else -> Unit
             }
@@ -968,6 +1036,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         matchStandings = standings
         standings.filter { it.isWinner }.forEach { incrementPlayerWin(sharedPrefs, it.player.index) }
         playerWinsVersion++
+
+        // Record multiplayer longest survival
+        val maxSurvived = players.maxOfOrNull { it.roundsSurvived } ?: 0
+        val longestKey = "longest_survival_${players.size}p"
+        if (maxSurvived > sharedPrefs.getInt(longestKey, 0)) {
+            sharedPrefs.edit().putInt(longestKey, maxSurvived).apply()
+        }
+
         coroutineScope.launch {
             allPadsConfettiFlash = true
             if (feedbackEnabled && effectiveVolume > 0f) {
@@ -1008,6 +1084,47 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
         val rng = java.util.Random(item.seed.toLong())
         currentRunSeed = item.seed
+        challengeRng = rng
+        soloRng = rng
+        val pads = padsForGridSize(targetGrid)
+        sequence.add(pads[rng.nextInt(pads.size)])
+        roundTrigger++
+        gameState = GameState.WATCHING
+        saveActiveRun()
+    }
+
+    fun startRevengeGame(rival: RivalRecord) {
+        discardActiveRun()
+        resetRunState()
+        val targetGrid = when (rival.lastGrid.lowercase()) {
+            "3x3" -> GridSize.THREE_BY_THREE
+            "4x4" -> GridSize.FOUR_BY_FOUR
+            else -> GridSize.TWO_BY_TWO
+        }
+        gridSize = targetGrid
+        difficultyMode = rival.lastDifficulty
+        paceMode = PaceMode.CLASSIC
+        val seed = ChallengeSeed.generateRandomSeed()
+        val item = ChallengeItem(
+            code = "",
+            rivalName = rival.name,
+            gridSizeTag = rival.lastGrid,
+            targetScore = rival.lastTarget,
+            maxTries = 3,
+            attemptsLeft = 3,
+            bestScore = 0,
+            seed = seed,
+            difficulty = rival.lastDifficulty,
+            chainId = rival.lastChainId,
+            isRevenge = true
+        )
+        activeChallenge = item
+        challengeAttemptsLeft = 3
+        isChallengeWon = false
+        isChallengeLost = false
+        gameMode = GameMode.SOLO
+        currentRunSeed = seed
+        val rng = java.util.Random(seed.toLong())
         challengeRng = rng
         soloRng = rng
         val pads = padsForGridSize(targetGrid)
@@ -1062,7 +1179,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
     fun startNewGame() {
         if (activeRunState != null && activeRunState!!.modeName != GameMode.SOLO.name) {
-            showDiscardConfirmDialog = true
+            activeDialog = ActiveDialog.DISCARD_CONFIRM
         } else {
             actuallyStartNewGame()
         }
@@ -1288,7 +1405,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 updateBestScoreIfNeeded(currentScore)
                 if (activeChallenge != null) {
                     val ch = activeChallenge!!
-                    val newTries = (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                    val isFree = ch.maxTries == 0
+                    val newTries = if (isFree) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
                     challengeAttemptsLeft = newTries
                     ch.attemptsLeft = newTries
                     if (currentScore > ch.bestScore) {
@@ -1299,9 +1417,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     if (currentScore >= ch.targetScore) {
                         isChallengeWon = true
                         isChallengeLost = false
-                    } else if (newTries <= 0) {
+                    } else if (!isFree && newTries <= 0) {
                         isChallengeLost = true
                         isChallengeWon = false
+                    }
+                    if (isChallengeWon || (isChallengeLost && !isFree)) {
+                        ChallengeStorage.recordMatchOutcome(
+                            context = context,
+                            rivalName = ch.rivalName,
+                            userScore = currentScore,
+                            targetScore = ch.targetScore,
+                            gridSize = ch.gridSizeTag,
+                            difficulty = ch.difficulty,
+                            chainId = ch.chainId,
+                            maxTries = ch.maxTries
+                        )
                     }
                     showChallengeNudge = false
                 } else if (!hasSeenChallengeNudge) {
@@ -1380,7 +1510,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     BackHandler(enabled = gameState != GameState.IDLE) {
         when (gameState) {
             GameState.WATCHING, GameState.PLAYING -> {
-                showSettingsSheet = true
+                activeDialog = ActiveDialog.SETTINGS_SHEET
             }
             GameState.GAME_OVER -> {
                 discardActiveRun()
@@ -1399,62 +1529,134 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         }
     }
 
+    BackHandler(enabled = currentScreen == AppScreen.LEADERBOARD) {
+        currentScreen = AppScreen.HOME
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
-        contentWindowInsets = WindowInsets.safeDrawing
+        contentWindowInsets = WindowInsets.safeDrawing,
+        bottomBar = {
+            NavigationBar(
+                containerColor = Color(0xFF0B1120),
+                contentColor = Color(0xFF00E5FF),
+                modifier = Modifier.testTag("bottom_nav_bar")
+            ) {
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.HOME,
+                    onClick = { currentScreen = AppScreen.HOME },
+                    icon = { Icon(imageVector = Icons.Default.Home, contentDescription = "Home") },
+                    label = { Text("Home", fontWeight = if (currentScreen == AppScreen.HOME) FontWeight.Bold else FontWeight.Medium) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color(0xFF00E5FF),
+                        selectedTextColor = Color(0xFF00E5FF),
+                        unselectedIconColor = Color(0xFF94A3B8),
+                        unselectedTextColor = Color(0xFF94A3B8),
+                        indicatorColor = Color(0xFF1E293B)
+                    ),
+                    modifier = Modifier.testTag("nav_home")
+                )
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.LEADERBOARD,
+                    onClick = {
+                        if (gameState == GameState.PLAYING || gameState == GameState.WATCHING) {
+                            isPausedMidGame = true
+                        }
+                        currentScreen = AppScreen.LEADERBOARD
+                    },
+                    icon = { Icon(imageVector = Icons.Default.EmojiEvents, contentDescription = "Leaderboard") },
+                    label = { Text("Leaderboard", fontWeight = if (currentScreen == AppScreen.LEADERBOARD) FontWeight.Bold else FontWeight.Medium) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color(0xFF00E5FF),
+                        selectedTextColor = Color(0xFF00E5FF),
+                        unselectedIconColor = Color(0xFF94A3B8),
+                        unselectedTextColor = Color(0xFF94A3B8),
+                        indicatorColor = Color(0xFF1E293B)
+                    ),
+                    modifier = Modifier.testTag("nav_leaderboard")
+                )
+            }
+        }
     ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Brush.radialGradient(listOf(Color(0xFF1E293B), Color(0xFF0F172A), Color(0xFF090D16)), radius = 1400f))
-                .padding(innerPadding)
-        ) {
-            Column(
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (currentScreen == AppScreen.LEADERBOARD) {
+            HallOfFameScreen(
+                onNavigateBack = { currentScreen = AppScreen.HOME },
+                onStartRevenge = { rival ->
+                    currentScreen = AppScreen.HOME
+                    startRevengeGame(rival)
+                },
+                onPlayAwaiting = { _ ->
+                    currentScreen = AppScreen.HOME
+                },
+                onShareCodeClicked = {
+                    requestShareChallenge()
+                },
+                onPasteCodeClicked = {
+                    activeDialog = ActiveDialog.ENTER_CHALLENGE
+                },
+                onAcceptChallenge = { item ->
+                    currentScreen = AppScreen.HOME
+                    startChallenge(item)
+                },
+                sharedPrefs = sharedPrefs,
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = maxContentWidth)
-                    .align(Alignment.Center)
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(innerPadding)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.radialGradient(listOf(Color(0xFF1E293B), Color(0xFF0F172A), Color(0xFF090D16)), radius = 1400f))
+                    .padding(innerPadding)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .widthIn(max = maxContentWidth)
+                        .align(Alignment.Center)
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TopTitleRow(
-                        feedbackMode = feedbackMode,
-                        isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
-                        showBestBadge = gameMode == GameMode.SOLO,
-                        bestScore = bestScore,
-                        onCycleFeedbackMode = ::cycleFeedbackMode,
-                        onOpenSettings = { showSettingsSheet = true },
-                        onTrophyClick = ::handleTrophyClick
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TopTitleRow(
+                            feedbackMode = feedbackMode,
+                            isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
+                            onCycleFeedbackMode = ::cycleFeedbackMode,
+                            onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET }
+                        )
 
-                    if (gameState != GameState.IDLE) {
-                        if (activeChallenge != null) {
-                            InGameChallengeBanner(
-                                rivalName = activeChallenge!!.rivalName,
-                                targetScore = activeChallenge!!.targetScore,
-                                triesLeft = challengeAttemptsLeft
-                            )
-                        }
-                        if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
-                            if (gameMode == GameMode.SOLO) {
-                                ScoreboardRow(
-                                    currentScore = currentScore,
-                                    bestScore = bestScore,
-                                    gridSize = gridSize
+                        if (gameState != GameState.IDLE) {
+                            if (activeChallenge != null) {
+                                InGameChallengeBanner(
+                                    rivalName = activeChallenge!!.rivalName,
+                                    targetScore = activeChallenge!!.targetScore,
+                                    triesLeft = challengeAttemptsLeft,
+                                    isRevenge = activeChallenge!!.isRevenge,
+                                    maxTries = activeChallenge!!.maxTries
                                 )
-                            } else if (!isMatchComplete) {
-                                PlayerRail(
-                                    players = players,
-                                    activePlayerIndex = activePlayerIndex,
-                                    isRedemptionTurnActive = isRedemptionTurnActive
-                                )
+                            }
+                            if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
+                                if (gameMode == GameMode.SOLO) {
+                                    ScoreboardRow(
+                                        currentScore = currentScore,
+                                        bestScore = bestScore,
+                                        gridSize = gridSize
+                                    )
+                                } else if (!isMatchComplete) {
+                                    PlayerRail(
+                                        players = players,
+                                        activePlayerIndex = activePlayerIndex,
+                                        isRedemptionTurnActive = isRedemptionTurnActive
+                                    )
+                                }
                             }
                         }
                     }
@@ -1487,8 +1689,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     activeChallengesCount = savedChallenges.size,
                                     wins = wins,
                                     enabled = !isReplayingLostRound,
-                                    onOpenSettings = { showSettingsSheet = true },
-                                    onOpenEnterChallenge = { showEnterChallengeDialog = true }
+                                    onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET },
+                                    onOpenEnterChallenge = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
                                 )
 
                                 // CHALLENGE RAIL: Only when non-empty in SOLO mode
@@ -1500,13 +1702,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                             ChallengeStorage.deleteChallenge(context, code)
                                             savedChallenges = ChallengeStorage.loadChallenges(context)
                                         },
-                                        onOpenEnterModal = { showEnterChallengeDialog = true }
+                                        onOpenEnterModal = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
                                     )
                                 }
                             }
                         }
                     }
-                }
 
                 val isPodiumOverlayActive = gameMode != GameMode.SOLO && isMatchComplete
 
@@ -1689,19 +1890,24 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 }
 
                 if (gameMode == GameMode.SOLO || !isMatchComplete) {
-                    val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode) {
+                    val myName = remember { ChallengeStorage.getMyName(context) }
+                    val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode, myName) {
                         val gridTag = when (gridSize) {
                             GridSize.TWO_BY_TWO -> "2x2"
                             GridSize.THREE_BY_THREE -> "3x3"
                             GridSize.FOUR_BY_FOUR -> "4x4"
                         }
                         val scoreToShare = currentScore.coerceAtLeast(1)
+                        val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
                         val code = ChallengeSeed.formatChallengeCode(
                             gridTag = gridTag,
                             targetScore = scoreToShare,
                             tries = selectedShareTries,
                             difficulty = difficultyMode,
-                            seed = currentRunSeed
+                            seed = currentRunSeed,
+                            senderName = myName,
+                            chainId = chainId,
+                            isRevenge = activeChallenge?.isRevenge == true
                         )
                         ChallengeStorage.recordCreatedCode(context, code)
                         code
@@ -1724,7 +1930,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         onStartOrRetry = ::startNewGame,
                         onShareChallenge = {
                             showChallengeNudge = false
-                            showTriesSelectorDialog = true
+                            requestShareChallenge()
                         },
                         onCopyCode = {
                             showChallengeNudge = false
@@ -1733,6 +1939,26 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             val clip = ClipData.newPlainText("Glowback Challenge Code", generatedCode)
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Challenge code copied: $generatedCode", Toast.LENGTH_SHORT).show()
+
+                            val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
+                            val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
+                            val gridTag = when (gridSize) {
+                                GridSize.TWO_BY_TWO -> "2x2"
+                                GridSize.THREE_BY_THREE -> "3x3"
+                                GridSize.FOUR_BY_FOUR -> "4x4"
+                            }
+                            val awaiting = AwaitingChallenge(
+                                chainId = chainId,
+                                code = generatedCode,
+                                gridSizeTag = gridTag,
+                                targetScore = currentScore.coerceAtLeast(1),
+                                difficulty = difficultyMode,
+                                paceName = paceMode.shortLabel,
+                                tries = selectedShareTries
+                            )
+                            ChallengeStorage.savePendingShare(context, awaiting)
+                            awaitingChallengeForDialog = awaiting
+                            activeDialog = ActiveDialog.DID_YOU_SHARE
                         },
                         onReturnHome = {
                             discardActiveRun()
@@ -1774,55 +2000,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 }
             }
 
-            if (showTriesSelectorDialog) {
-                ShareTriesSelectorDialog(
-                    initialTries = selectedShareTries,
-                    onDismiss = { showTriesSelectorDialog = false },
-                    onGenerateCard = { chosenTries ->
-                        selectedShareTries = chosenTries
-                        showTriesSelectorDialog = false
-                        val gridTag = when (gridSize) {
-                            GridSize.TWO_BY_TWO -> "2x2"
-                            GridSize.THREE_BY_THREE -> "3x3"
-                            GridSize.FOUR_BY_FOUR -> "4x4"
-                        }
-                        val scoreToShare = currentScore.coerceAtLeast(1)
-                        val code = ChallengeSeed.formatChallengeCode(
-                            gridTag = gridTag,
-                            targetScore = scoreToShare,
-                            tries = chosenTries,
-                            difficulty = difficultyMode,
-                            seed = currentRunSeed
-                        )
-                        ChallengeStorage.recordCreatedCode(context, code)
-                        coroutineScope.launch {
-                            ChallengeShareHelper.shareChallenge(
-                                context = context,
-                                code = code,
-                                gridSizeTag = gridTag,
-                                score = scoreToShare,
-                                attempts = 1,
-                                tries = chosenTries,
-                                paceName = paceMode.shortLabel,
-                                difficulty = difficultyMode
-                            )
-                        }
-                    }
-                )
-            }
-
-            if (showEnterChallengeDialog) {
-                EnterChallengeDialog(
-                    onDismiss = { showEnterChallengeDialog = false },
-                    onSubmit = { newItem ->
-                        ChallengeStorage.saveChallenge(context, newItem)
-                        savedChallenges = ChallengeStorage.loadChallenges(context)
-                        showEnterChallengeDialog = false
-                        startChallenge(newItem)
-                    }
-                )
-            }
-
             AnimatedVisibility(
                 visible = isHandoffVisible && players.isNotEmpty(),
                 enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 8 },
@@ -1837,116 +2014,258 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 )
             }
 
-            if (showSettingsSheet) {
-                SettingsSheetDialog(
-                    currentGridSize = gridSize,
-                    currentDifficulty = difficultyMode,
-                    currentPaceMode = paceMode,
-                    isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
-                    onSelectGridSize = { if (it != gridSize) resetToIdleForConfigChange(it, paceMode) },
-                    onSelectDifficulty = { diff ->
-                        difficultyMode = diff
-                        sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, diff.name).apply()
-                    },
-                    onSelectPaceMode = { if (it != paceMode) resetToIdleForConfigChange(gridSize, it) },
-                    onResetMultiplayerWins = {
-                        resetMultiplayerWins(sharedPrefs)
-                        playerWinsVersion++
-                        Toast.makeText(context, "Multiplayer records reset to 0", Toast.LENGTH_SHORT).show()
-                    },
-                    dailyNotificationsEnabled = dailyNotificationsEnabled,
-                    onToggleDailyNotifications = { wantEnabled ->
-                        if (wantEnabled) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                val hasPerm = ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.POST_NOTIFICATIONS
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (hasPerm) {
-                                    dailyNotificationsEnabled = true
-                                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
-                                    NotificationScheduler.scheduleDailyReminder(context)
-                                    Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    showNotificationCustomDialog = true
-                                }
-                            } else {
-                                val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
-                                if (allowed) {
-                                    dailyNotificationsEnabled = true
-                                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
-                                    NotificationScheduler.scheduleDailyReminder(context)
-                                    Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    showNotificationCustomDialog = true
-                                }
-                            }
-                        } else {
-                            dailyNotificationsEnabled = false
-                            sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
-                            NotificationScheduler.cancelReminder(context)
-                            Toast.makeText(context, "Daily notifications turned off", Toast.LENGTH_SHORT).show()
+            if (isPausedMidGame && (gameState == GameState.PLAYING || gameState == GameState.WATCHING)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.8f))
+                        .clickable { isPausedMidGame = false }
+                        .testTag("midgame_paused_overlay"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .padding(24.dp)
+                            .border(2.dp, Color(0xFF00E5FF), RoundedCornerShape(20.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "GAME PAUSED",
+                                color = Color(0xFF00E5FF),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Tap anywhere to resume your sequence",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
                         }
-                    },
-                    onResumeRun = { showSettingsSheet = false },
-                    onSaveAndExit = {
-                        saveActiveRun()
-                        resetRunState()
-                        gameState = GameState.IDLE
-                        showSettingsSheet = false
-                    },
-                    onQuitToHome = {
-                        discardActiveRun()
-                        activeChallenge = null
-                        challengeRng = null
-                        soloRng = null
-                        isChallengeWon = false
-                        isChallengeLost = false
-                        isMatchComplete = false
-                        matchStandings = emptyList()
-                        resetRunState()
-                        activeRunState = null
-                        gameState = GameState.IDLE
-                        showSettingsSheet = false
-                    },
-                    onRestartRun = {
-                        discardActiveRun()
-                        showSettingsSheet = false
-                        actuallyStartNewGame()
-                    },
-                    onDismiss = { showSettingsSheet = false }
-                )
+                    }
+                }
             }
+        }
+    }
 
-            if (showNotificationCustomDialog) {
-                NotificationPermissionDialog(
-                    onAllow = {
-                        showNotificationCustomDialog = false
+    // ROOT DIALOG MUTUAL EXCLUSION: Rendered at root Scaffold level, exactly one active at a time
+    when (activeDialog) {
+        ActiveDialog.NONE -> Unit
+        ActiveDialog.FIRST_TIME_SHARE_GATE -> {
+            FirstTimeShareGateDialog(
+                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onPlayNow = {
+                    activeDialog = ActiveDialog.NONE
+                    currentScreen = AppScreen.HOME
+                    startNewGame()
+                }
+            )
+        }
+        ActiveDialog.NAME_SETUP -> {
+            ChallengerNameSetupDialog(
+                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onSaveName = { savedName ->
+                    ChallengeStorage.setMyName(context, savedName)
+                    activeDialog = ActiveDialog.TRIES_SELECTOR
+                }
+            )
+        }
+        ActiveDialog.TRIES_SELECTOR -> {
+            ShareTriesSelectorDialog(
+                initialTries = selectedShareTries,
+                boardOptions = getAllBoardScores(sharedPrefs),
+                currentScoreToShare = currentScore.coerceAtLeast(1),
+                requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
+                awaitingChallengeForDialog = awaitingChallengeForDialog,
+                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onDismissDidYouShare = {
+                    ChallengeStorage.clearPendingShare(context)
+                    awaitingChallengeForDialog = null
+                    activeDialog = ActiveDialog.NONE
+                },
+                onConfirmDidYouShare = { confirmedItem ->
+                    ChallengeStorage.saveAwaitingChallenge(context, confirmedItem)
+                    ChallengeStorage.clearPendingShare(context)
+                    awaitingChallengeForDialog = null
+                    activeDialog = ActiveDialog.NONE
+                    Toast.makeText(context, "Challenge saved! Waiting for rival...", Toast.LENGTH_SHORT).show()
+                },
+                onGenerateCard = { chosenTries, senderName, chosenBoard ->
+                    selectedShareTries = chosenTries
+                    val gridTag = chosenBoard?.gridTag ?: when (gridSize) {
+                        GridSize.TWO_BY_TWO -> "2x2"
+                        GridSize.THREE_BY_THREE -> "3x3"
+                        GridSize.FOUR_BY_FOUR -> "4x4"
+                    }
+                    val scoreToShare = chosenBoard?.score ?: currentScore.coerceAtLeast(1)
+                    val chosenDiff = chosenBoard?.difficulty ?: difficultyMode
+                    val chosenPace = chosenBoard?.paceName ?: paceMode.shortLabel
+                    val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
+                    val code = ChallengeSeed.formatChallengeCode(
+                        gridTag = gridTag,
+                        targetScore = scoreToShare,
+                        tries = chosenTries,
+                        difficulty = chosenDiff,
+                        seed = currentRunSeed,
+                        senderName = senderName,
+                        chainId = chainId,
+                        isRevenge = activeChallenge?.isRevenge == true
+                    )
+                    ChallengeStorage.recordCreatedCode(context, code)
+                    val awaiting = AwaitingChallenge(
+                        chainId = chainId,
+                        code = code,
+                        gridSizeTag = gridTag,
+                        targetScore = scoreToShare,
+                        difficulty = chosenDiff,
+                        paceName = chosenPace,
+                        tries = chosenTries
+                    )
+                    ChallengeStorage.savePendingShare(context, awaiting)
+                    awaitingChallengeForDialog = awaiting
+
+                    coroutineScope.launch {
+                        ChallengeShareHelper.shareChallenge(
+                            context = context,
+                            code = code,
+                            gridSizeTag = gridTag,
+                            score = scoreToShare,
+                            attempts = 1,
+                            tries = chosenTries,
+                            paceName = chosenPace,
+                            difficulty = chosenDiff
+                        )
+                    }
+                }
+            )
+        }
+        ActiveDialog.ENTER_CHALLENGE -> {
+            EnterChallengeDialog(
+                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onSubmit = { newItem ->
+                    ChallengeStorage.saveChallenge(context, newItem)
+                    savedChallenges = ChallengeStorage.loadChallenges(context)
+                    activeDialog = ActiveDialog.NONE
+                    currentScreen = AppScreen.HOME
+                    startChallenge(newItem)
+                }
+            )
+        }
+        ActiveDialog.SETTINGS_SHEET -> {
+            SettingsSheetDialog(
+                currentGridSize = gridSize,
+                currentDifficulty = difficultyMode,
+                currentPaceMode = paceMode,
+                isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
+                onSelectGridSize = { if (it != gridSize) resetToIdleForConfigChange(it, paceMode) },
+                onSelectDifficulty = { diff ->
+                    difficultyMode = diff
+                    sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, diff.name).apply()
+                },
+                onSelectPaceMode = { if (it != paceMode) resetToIdleForConfigChange(gridSize, it) },
+                onResetMultiplayerWins = {
+                    resetMultiplayerWins(sharedPrefs)
+                    playerWinsVersion++
+                    Toast.makeText(context, "Multiplayer records reset to 0", Toast.LENGTH_SHORT).show()
+                },
+                dailyNotificationsEnabled = dailyNotificationsEnabled,
+                onToggleDailyNotifications = { wantEnabled ->
+                    if (wantEnabled) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            val hasPerm = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasPerm) {
+                                dailyNotificationsEnabled = true
+                                sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+                                NotificationScheduler.scheduleDailyReminder(context)
+                                Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                activeDialog = ActiveDialog.NOTIFICATION_PERM
+                            }
                         } else {
                             val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
                             if (allowed) {
                                 dailyNotificationsEnabled = true
                                 sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
                                 NotificationScheduler.scheduleDailyReminder(context)
+                                Toast.makeText(context, "Daily reminders enabled!", Toast.LENGTH_SHORT).show()
                             } else {
-                                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                }
-                                context.startActivity(intent)
+                                activeDialog = ActiveDialog.NOTIFICATION_PERM
                             }
                         }
-                    },
-                    onDismiss = {
-                        showNotificationCustomDialog = false
+                    } else {
                         dailyNotificationsEnabled = false
                         sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+                        NotificationScheduler.cancelReminder(context)
+                        Toast.makeText(context, "Daily notifications turned off", Toast.LENGTH_SHORT).show()
                     }
-                )
-            }
-
-            if (showDiscardConfirmDialog && activeRunState != null) {
+                },
+                onResumeRun = { activeDialog = ActiveDialog.NONE },
+                onSaveAndExit = {
+                    saveActiveRun()
+                    resetRunState()
+                    gameState = GameState.IDLE
+                    activeDialog = ActiveDialog.NONE
+                },
+                onQuitToHome = {
+                    discardActiveRun()
+                    activeChallenge = null
+                    challengeRng = null
+                    soloRng = null
+                    isChallengeWon = false
+                    isChallengeLost = false
+                    isMatchComplete = false
+                    matchStandings = emptyList()
+                    resetRunState()
+                    activeRunState = null
+                    gameState = GameState.IDLE
+                    activeDialog = ActiveDialog.NONE
+                },
+                onRestartRun = {
+                    discardActiveRun()
+                    activeDialog = ActiveDialog.NONE
+                    actuallyStartNewGame()
+                },
+                onDismiss = { activeDialog = ActiveDialog.NONE }
+            )
+        }
+        ActiveDialog.NOTIFICATION_PERM -> {
+            NotificationPermissionDialog(
+                onAllow = {
+                    activeDialog = ActiveDialog.NONE
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                        if (allowed) {
+                            dailyNotificationsEnabled = true
+                            sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, true).apply()
+                            NotificationScheduler.scheduleDailyReminder(context)
+                        } else {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                },
+                onDismiss = {
+                    activeDialog = ActiveDialog.NONE
+                    dailyNotificationsEnabled = false
+                    sharedPrefs.edit().putBoolean(NotificationScheduler.KEY_DAILY_NOTIFICATIONS_ENABLED, false).apply()
+                }
+            )
+        }
+        ActiveDialog.DISCARD_CONFIRM -> {
+            if (activeRunState != null) {
                 val modeLabel = when (activeRunState!!.modeName) {
                     "TWO_PLAYERS" -> "2P"
                     "THREE_PLAYERS" -> "3P"
@@ -1954,7 +2273,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     else -> activeRunState!!.modeName
                 }
                 AlertDialog(
-                    onDismissRequest = { showDiscardConfirmDialog = false },
+                    onDismissRequest = { activeDialog = ActiveDialog.NONE },
                     title = { Text(text = "Abandon Active Match?", color = Color.White, fontWeight = FontWeight.Bold) },
                     text = {
                         Text(
@@ -1965,7 +2284,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     confirmButton = {
                         Button(
                             onClick = {
-                                showDiscardConfirmDialog = false
+                                activeDialog = ActiveDialog.NONE
                                 actuallyStartNewGame()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
@@ -1976,7 +2295,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     },
                     dismissButton = {
                         OutlinedButton(
-                            onClick = { showDiscardConfirmDialog = false },
+                            onClick = { activeDialog = ActiveDialog.NONE },
                             modifier = Modifier.testTag("cancel_discard_button")
                         ) {
                             Text("Keep Match", color = Color(0xFF38BDF8))
@@ -1985,9 +2304,35 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     containerColor = Color(0xFF1E293B),
                     shape = RoundedCornerShape(18.dp)
                 )
+            } else {
+                activeDialog = ActiveDialog.NONE
+            }
+        }
+        ActiveDialog.DID_YOU_SHARE -> {
+            val awaiting = awaitingChallengeForDialog ?: ChallengeStorage.getPendingShare(context)
+            if (awaiting != null) {
+                DidYouShareDialog(
+                    awaiting = awaiting,
+                    onDismiss = {
+                        ChallengeStorage.clearPendingShare(context)
+                        awaitingChallengeForDialog = null
+                        activeDialog = ActiveDialog.NONE
+                    },
+                    onConfirmShared = { confirmedItem ->
+                        ChallengeStorage.saveAwaitingChallenge(context, confirmedItem)
+                        ChallengeStorage.clearPendingShare(context)
+                        awaitingChallengeForDialog = null
+                        activeDialog = ActiveDialog.NONE
+                        Toast.makeText(context, "Challenge saved! Waiting for rival...", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            } else {
+                activeDialog = ActiveDialog.NONE
             }
         }
     }
+}
+}
 }
 
 @Composable
@@ -2004,11 +2349,8 @@ private fun HeaderIconBtn(icon: ImageVector, contentDesc: String, tint: Color, b
 private fun TopTitleRow(
     feedbackMode: FeedbackMode,
     isMidRun: Boolean = false,
-    showBestBadge: Boolean = true,
-    bestScore: Int = 0,
     onCycleFeedbackMode: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onTrophyClick: () -> Unit = {}
+    onOpenSettings: () -> Unit
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2019,35 +2361,6 @@ private fun TopTitleRow(
             Text(text = "GLOWBACK", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showBestBadge) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .padding(end = 4.dp)
-                        .testTag("best_score_chip")
-                        .pointerInput(Unit) {
-                            detectTapGestures {
-                                onTrophyClick()
-                            }
-                        }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.EmojiEvents,
-                        contentDescription = "Best Score",
-                        tint = Color(0xFFFBBF24),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = bestScore.toString(),
-                        color = Color(0xFFFBBF24),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.testTag("best_score_text")
-                    )
-                }
-            }
             val (modeIcon, modeDesc, modeTint) = when (feedbackMode) {
                 FeedbackMode.SOUND -> Triple(
                     Icons.AutoMirrored.Filled.VolumeUp,
@@ -3229,6 +3542,31 @@ private fun SettingsSheetDialog(
                     }
                 } else {
                     // Full Settings Sheet strictly for the IDLE home screen
+                    val context = LocalContext.current
+                    var myNameInput by remember { mutableStateOf(ChallengeStorage.getMyName(context)) }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(text = "My Name (for challenges)", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        OutlinedTextField(
+                            value = myNameInput,
+                            onValueChange = { input ->
+                                val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
+                                val truncated = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
+                                myNameInput = truncated
+                                ChallengeStorage.setMyName(context, truncated)
+                            },
+                            placeholder = { Text("e.g. HERO", color = Color(0xFF64748B)) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00E5FF),
+                                unfocusedBorderColor = Color(0xFF334155),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_my_name_input")
+                        )
+                    }
+
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),

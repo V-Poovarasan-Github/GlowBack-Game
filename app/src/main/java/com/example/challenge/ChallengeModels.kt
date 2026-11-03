@@ -16,8 +16,8 @@ enum class GameDifficulty(val label: String, val codeChar: Char) {
  * Data model for a peer-to-peer asynchronous challenge in Glowback.
  */
 data class ChallengeItem(
-    val code: String,          // e.g. "4x4-1-T3H-2GPGX-C"
-    val rivalName: String,     // e.g. "Alex" or "Anonymous"
+    val code: String,          // e.g. "4x4-12-T3H-NEON_KING-K7Q-8X2AB-C"
+    val rivalName: String,     // e.g. "ALEX" or "NEON_KING"
     val gridSizeTag: String,   // "2x2", "3x3", "4x4"
     val targetScore: Int,      // e.g. 12
     val maxTries: Int = 3,     // e.g. 3
@@ -25,24 +25,69 @@ data class ChallengeItem(
     var bestScore: Int,        // e.g. 0
     val seed: Int,             // seed integer
     val difficulty: GameDifficulty = GameDifficulty.EASY,
+    val chainId: String = "",  // 3-char chain identifier (e.g. "K7Q")
+    val isRevenge: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val isFreeTries: Boolean
+        get() = maxTries == 0
+
     val isCompleted: Boolean
-        get() = bestScore >= targetScore || attemptsLeft <= 0
+        get() = bestScore >= targetScore || (!isFreeTries && attemptsLeft <= 0)
 
     val isWon: Boolean
         get() = bestScore >= targetScore
 }
+
+data class BoardScoreOption(
+    val gridTag: String,
+    val paceName: String,
+    val difficulty: GameDifficulty,
+    val score: Int
+)
 
 data class ParsedChallenge(
     val gridTag: String,
     val targetScore: Int,
     val tries: Int = 3,
     val difficulty: GameDifficulty = GameDifficulty.EASY,
+    val senderName: String = "HERO",
+    val chainId: String = "",
     val seedCode: String,
     val seedInt: Int,
     val checksum: Char? = null,
-    val fullCode: String
+    val fullCode: String,
+    val isLegacy: Boolean = false
 )
 
+/**
+ * Record for head-to-head rivalry history with a named rival.
+ */
+data class RivalRecord(
+    val name: String,                  // Uppercase sanitized name, e.g. "ALEX"
+    val wins: Int = 0,                 // Times player won against this rival
+    val losses: Int = 0,               // Times player lost to this rival
+    val ties: Int = 0,                 // Times player tied
+    val matches: Int = 0,              // Total matches played
+    val lastGrid: String = "2x2",      // e.g. "4x4"
+    val lastDifficulty: GameDifficulty = GameDifficulty.EASY,
+    val lastTarget: Int = 0,           // Rival's score or target
+    val lastUserScore: Int = 0,        // Player's score in last match
+    val lastStatus: String = "WON",    // "WON", "LOST", "TIED"
+    val lastChainId: String = "",      // Chain ID for revenge/counter-challenges
+    val updatedAt: Long = System.currentTimeMillis()
+)
 
+/**
+ * Record for an outbound challenge waiting for a challenger's response.
+ */
+data class AwaitingChallenge(
+    val chainId: String,               // 3-char chain ID, e.g. "K7Q"
+    val code: String,                  // Full 7-segment code
+    val gridSizeTag: String,           // "2x2", "3x3", "4x4"
+    val targetScore: Int,              // Score to beat
+    val difficulty: GameDifficulty = GameDifficulty.EASY,
+    val paceName: String = "Classic",
+    val tries: Int = 3,
+    val createdAt: Long = System.currentTimeMillis()
+)

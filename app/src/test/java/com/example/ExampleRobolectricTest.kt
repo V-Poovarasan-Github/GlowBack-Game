@@ -280,8 +280,13 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("challenge_rival_input").performTextInput("Alex")
         composeTestRule.waitForIdle()
 
-        // Submit challenge
+        // Submit challenge (3-segment legacy code triggers LegacyCodeNameDialog per Confirmation 4)
         composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirm LegacyCodeNameDialog is displayed and accept
+        composeTestRule.onNodeWithTag("legacy_code_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("legacy_dialog_submit").performClick()
         composeTestRule.waitForIdle()
 
         // Verify in-game challenge banner is displayed
@@ -292,9 +297,9 @@ class ExampleRobolectricTest {
     fun pass2D_homeDeclutter_bestScoreChip_and_combinedRow() {
         composeTestRule.waitForIdle()
 
-        // At IDLE, best score chip is displayed and current score is hidden
-        composeTestRule.onNodeWithTag("best_score_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("best_score_text").assertIsDisplayed()
+        // In PASS 5, home is decluttered: current score is hidden, bottom nav Leaderboard provides access to Hall of Fame
+        composeTestRule.onNodeWithTag("nav_leaderboard").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav_home").assertIsDisplayed()
         composeTestRule.onNodeWithTag("current_score_text").assertDoesNotExist()
 
         // Merged mode + config row
@@ -365,9 +370,8 @@ class ExampleRobolectricTest {
     fun pass2E_homeComposition_instrumentMode_and_dotTally() {
         composeTestRule.waitForIdle()
 
-        // 1. Verify Header Best Badge in Solo, Segmented Mode Track, and Board + Context Row
-        composeTestRule.onNodeWithTag("best_score_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("best_score_text").assertIsDisplayed()
+        // 1. Verify Navigation and Mode Track in Solo, Board + Context Row
+        composeTestRule.onNodeWithTag("nav_leaderboard").assertIsDisplayed()
         composeTestRule.onNodeWithTag("segmented_mode_track").assertIsDisplayed()
         composeTestRule.onNodeWithTag("config_pill_grid").assertIsDisplayed()
         composeTestRule.onNodeWithTag("config_pill_pace").assertIsDisplayed()
@@ -477,7 +481,27 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("copy_challenge_code_button").assertIsDisplayed()
 
-        composeTestRule.onNodeWithTag("share_challenge_button").performClick()
+        // Clear any score from round 1 if the random first pad happened to be green, then verify FirstTimeShareGateDialog -> ChallengerNameSetupDialog -> ShareTriesSelectorDialog
+        prefs.edit().remove(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY)).apply()
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_time_share_gate_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("first_time_share_dismiss_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Seed a best score so the player passes the first-time score gate, then verify ChallengerNameSetupDialog -> ShareTriesSelectorDialog
+        prefs.edit().putInt(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY), 5).apply()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenger_name_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("challenger_tag_input").performTextInput("NEON_KING")
+        composeTestRule.onNodeWithTag("challenger_tag_save_button").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
@@ -486,6 +510,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("tries_option_1").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tries_option_3").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tries_option_5").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tries_option_free").assertIsDisplayed()
         composeTestRule.onNodeWithTag("generate_card_button").assertIsDisplayed()
 
         composeTestRule.onNodeWithTag("tries_option_5").performClick()
@@ -493,8 +518,11 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("generate_card_button").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("tries_selector_sheet").assertDoesNotExist()
+        // Dismiss "Did you share it?" dialog
+        composeTestRule.onNodeWithTag("did_you_share_no_button").performClick()
+        composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.onNodeWithTag("nav_home").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("segmented_mode_track").assertIsDisplayed()
@@ -517,7 +545,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("You cannot play your own challenge code.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("You cannot play your own challenge code", substring = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("close_challenge_dialog_button").performClick()
         composeTestRule.waitForIdle()
 
@@ -669,14 +697,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("settings_done_button").performClick()
         composeTestRule.waitForIdle()
 
-        // 3. Test Trophy 5-tap debug trigger
-        composeTestRule.onNodeWithTag("best_score_chip").assertIsDisplayed()
-        repeat(5) {
-            composeTestRule.onNodeWithTag("best_score_chip").performClick()
-        }
-        composeTestRule.waitForIdle()
-
-        // 4. Test Smart Skip logic:
+        // 3. Test Smart Skip logic:
         // When user opened app today (lastOpened = now), standard worker call (isTest = false) returns false (skipped)
         val prefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
         prefs.edit().putLong(com.example.notification.NotificationScheduler.KEY_LAST_OPENED_TIMESTAMP, System.currentTimeMillis()).apply()
@@ -744,6 +765,234 @@ class ExampleRobolectricTest {
         }
         assertEquals("Shuffle deck must yield all 10 distinct phrases before repeating", 10, generatedPhrases.size)
     }
+
+    @Test
+    fun pass5_newChallengeCodeFormat_and_backwardsCompatibility() {
+        // 1. Test 7-segment v2 format generation and parsing
+        val codeV2 = ChallengeSeed.formatChallengeCode(
+            gridTag = "4x4",
+            targetScore = 12,
+            tries = 3,
+            difficulty = GameDifficulty.HARD,
+            seed = 12345,
+            senderName = "neon_king",
+            chainId = "K7Q",
+            isRevenge = false
+        )
+        val parts = codeV2.split('-')
+        assertEquals("V2 challenge code must have exactly 7 segments", 7, parts.size)
+        assertEquals("4x4", parts[0])
+        assertEquals("12", parts[1])
+        assertEquals("T3H", parts[2])
+        assertEquals("NEON_KING", parts[3]) // Auto-uppercased
+        assertEquals("K7Q", parts[4])
+
+        val parsedV2 = ChallengeSeed.parseChallengeCode(codeV2)
+        assertNotNull("V2 challenge code must parse successfully", parsedV2)
+        requireNotNull(parsedV2)
+        assertEquals("4x4", parsedV2.gridTag)
+        assertEquals(12, parsedV2.targetScore)
+        assertEquals(3, parsedV2.tries)
+        assertEquals(GameDifficulty.HARD, parsedV2.difficulty)
+        assertEquals("NEON_KING", parsedV2.senderName)
+        assertEquals("K7Q", parsedV2.chainId)
+        assertFalse(parsedV2.isLegacy)
+
+        // 2. Test name sanitization rules (max 10 chars, spaces to underscores, uppercase)
+        val sanitized = ChallengeSeed.sanitizePlayerName("john doe 99!")
+        assertEquals("JOHN_DOE_9", sanitized) // sanitized and truncated to 10 chars
+        val emptySanitized = ChallengeSeed.sanitizePlayerName("   ")
+        assertEquals("HERO", emptySanitized) // fallback
+
+        // 3. Test 5-segment backwards compatibility (lacks name, defaults to RIVAL and isLegacy=true)
+        val legacy5Seg = "4x4-6-T3E-2GPGX-N"
+        val parsedLegacy5 = ChallengeSeed.parseChallengeCode(legacy5Seg)
+        assertNotNull("Legacy 5-segment code must parse successfully", parsedLegacy5)
+        requireNotNull(parsedLegacy5)
+        assertEquals("RIVAL", parsedLegacy5.senderName)
+        assertTrue(parsedLegacy5.isLegacy)
+    }
+
+    @Test
+    fun pass5_pendingShare_processDeathAndResilience() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Verify saving pending share persists across simulated process death via SharedPreferences
+        val testItem = com.example.challenge.AwaitingChallenge(
+            chainId = "ABC",
+            code = "4x4-10-T3E-HERO-ABC-2GPGX-C",
+            gridSizeTag = "4x4",
+            targetScore = 10,
+            difficulty = GameDifficulty.EASY,
+            paceName = "Classic",
+            tries = 3,
+            createdAt = System.currentTimeMillis()
+        )
+        ChallengeStorage.savePendingShare(context, testItem)
+
+        // Retrieve
+        val retrieved = ChallengeStorage.getPendingShare(context)
+        assertNotNull("Pending share must be persisted in SharedPreferences", retrieved)
+        assertEquals("ABC", retrieved?.chainId)
+        assertEquals("4x4-10-T3E-HERO-ABC-2GPGX-C", retrieved?.code)
+
+        // Clear
+        ChallengeStorage.clearPendingShare(context)
+        val cleared = ChallengeStorage.getPendingShare(context)
+        assertTrue("Pending share must be null after clearing", cleared == null)
+    }
+
+    @Test
+    fun pass5_awaitingChallenges_and_ttlPruning() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Save fresh awaiting item
+        val freshItem = com.example.challenge.AwaitingChallenge(
+            chainId = "FRESH",
+            code = "2x2-5-T3E-HERO-FRESH-8X2A-C",
+            gridSizeTag = "2x2",
+            targetScore = 5,
+            difficulty = GameDifficulty.EASY,
+            paceName = "Classic",
+            tries = 3,
+            createdAt = System.currentTimeMillis()
+        )
+        ChallengeStorage.saveAwaitingChallenge(context, freshItem)
+
+        // Save expired awaiting item (> 7 days old)
+        val expiredItem = com.example.challenge.AwaitingChallenge(
+            chainId = "OLD",
+            code = "2x2-5-T3E-HERO-OLD-8X2A-C",
+            gridSizeTag = "2x2",
+            targetScore = 5,
+            difficulty = GameDifficulty.EASY,
+            paceName = "Classic",
+            tries = 3,
+            createdAt = System.currentTimeMillis() - (8L * 24 * 60 * 60 * 1000L)
+        )
+        ChallengeStorage.saveAwaitingChallenge(context, expiredItem)
+
+        // Load and verify expired items are automatically pruned
+        val loaded = ChallengeStorage.loadAwaitingChallenges(context)
+        assertTrue("Fresh item must be present", loaded.any { it.chainId == "FRESH" })
+        assertFalse("Expired item (> 7 days) must be automatically pruned", loaded.any { it.chainId == "OLD" })
+    }
+
+    @Test
+    fun pass5_leaderboard_navigation_and_tabs() {
+        composeTestRule.waitForIdle()
+
+        // 1. Tap Leaderboard on bottom nav
+        composeTestRule.onNodeWithTag("nav_leaderboard").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Hall of Fame screen is displayed with tabs
+        composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tab_rivalry").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tab_records").assertIsDisplayed()
+
+        // Switch to Records tab
+        composeTestRule.onNodeWithTag("tab_records").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("records_tab_content").assertIsDisplayed()
+
+        // Switch to Rivalry tab
+        composeTestRule.onNodeWithTag("tab_rivalry").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_tab_content").assertIsDisplayed()
+
+        // Return to Home
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun pass5_1_freeTriesToken_noLossTally_and_rootDialogMutualExclusion() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Confirmation 2: Verify Free tries token is TF (TFE / TFH / RFE / RFH) and parses back as tries == 0
+        val freeEasyCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "4x4",
+            targetScore = 14,
+            tries = 0,
+            difficulty = GameDifficulty.EASY,
+            seed = 987654,
+            senderName = "ALEX",
+            chainId = "K7Q",
+            isRevenge = false
+        )
+        assertTrue("Free tries Easy token must contain -TFE-", freeEasyCode.contains("-TFE-"))
+        val parsedFreeEasy = ChallengeSeed.parseChallengeCode(freeEasyCode)
+        assertNotNull(parsedFreeEasy)
+        assertEquals(0, parsedFreeEasy?.tries)
+
+        val freeHardRevengeCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 20,
+            tries = 0,
+            difficulty = GameDifficulty.HARD,
+            seed = 123456,
+            senderName = "ALEX",
+            chainId = "K7Q",
+            isRevenge = true
+        )
+        assertTrue("Free tries Hard Revenge token must contain -RFH-", freeHardRevengeCode.contains("-RFH-"))
+        val parsedFreeHard = ChallengeSeed.parseChallengeCode(freeHardRevengeCode)
+        assertNotNull(parsedFreeHard)
+        assertEquals(0, parsedFreeHard?.tries)
+
+        // 2. Confirmation 3: Free tries tally rule (loss is impossible when maxTries == 0; win and tie still record)
+        val rivalOnLossAttempt = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "FREE_RIVAL",
+            userScore = 2,
+            targetScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "F01",
+            maxTries = 0
+        )
+        assertTrue("Losses must never be recorded when maxTries == 0 (Free tries)", rivalOnLossAttempt == null)
+
+        val rivalAfterWin = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "FREE_RIVAL",
+            userScore = 11,
+            targetScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "F01",
+            maxTries = 0
+        )
+        assertNotNull("Win under Free tries must record rival outcome", rivalAfterWin)
+        assertEquals(1, rivalAfterWin?.wins)
+        assertEquals(0, rivalAfterWin?.losses)
+        ChallengeStorage.deleteRival(context, "FREE_RIVAL")
+
+        // 3. Confirmation 1: Root-level dialog mutual exclusion from Leaderboard screen
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Tap Paste Code on empty Rivalry state -> opens EnterChallengeDialog directly on Leaderboard
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+
+        // Confirmation 4: Enter a 5-segment legacy code -> prompts LegacyCodeNameDialog ("Old format code detected")
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput("4x4-6-T3E-2GPGX-N")
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("legacy_code_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("legacy_dialog_title").assertTextContains("Old format code detected", substring = true)
+        composeTestRule.onNodeWithTag("legacy_dialog_cancel").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("close_challenge_dialog_button").performClick()
+        composeTestRule.waitForIdle()
+    }
 }
+
 
 

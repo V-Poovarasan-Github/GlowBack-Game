@@ -212,10 +212,10 @@ object ChallengeShareHelper {
 
         val codeValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 64f
+            textSize = if (code.length > 22) 38f else 54f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
-            letterSpacing = 0.18f
+            letterSpacing = if (code.length > 22) 0.06f else 0.14f
         }
         canvas.drawText(code, width / 2f, 1020f, codeValuePaint)
 

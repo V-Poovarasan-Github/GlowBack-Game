@@ -4,25 +4,40 @@ import java.util.Random
 
 /**
  * Deterministic seed generator, Base32 encoder/decoder, and checksum calculator for Glowback.
- * Format: [Grid]-[Target]-T[tries][Difficulty]-[5-char Seed]-[1-char Checksum]
- * Example: 4x4-1-T3H-2GPGX-C or 2x2-5-T1E-8X2AB-D
+ * Format v2 (7 segments): [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[5-char Seed]-[1-char Checksum]
+ * Example: 4x4-12-T3H-NEON_KING-K7Q-8X2AB-C
+ *
+ * Legacy format v1 (5 segments): [Grid]-[Target]-T[tries][Diff]-[5-char Seed]-[1-char Checksum]
+ * Example: 4x4-1-T3H-2GPGX-C
  */
 object ChallengeSeed {
     // 32-character custom alphabet (excludes 0, O, 1, I to eliminate ambiguity)
     const val ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     const val MAX_SEED = (1 shl 25) - 1 // 33,554,431 (25-bit seed)
 
-    // Backwards-compatible regex: T([135])([EH])? defaulting to E, with optional 1-char checksum
-    private val CODE_REGEX = Regex(
-        pattern = """^([234]x[234])-([1-9][0-9]?)-T([135])([EH])?-([2-9A-HJ-NP-Z]{4,5})(?:-([2-9A-HJ-NP-Z]))?$""",
-        option = RegexOption.IGNORE_CASE
-    )
+    val NAME_REGEX = Regex("^[A-Z0-9_]{1,10}$")
 
-    // Legacy format support without tries segment: e.g. "2x2-12-8X2A"
-    private val LEGACY_REGEX = Regex(
-        pattern = """^([234]x[234])-([1-9][0-9]?)-([2-9A-HJ-NP-Z]{4})$""",
-        option = RegexOption.IGNORE_CASE
-    )
+    /**
+     * Sanitizes a player's display name:
+     * - Replaces spaces with underscores
+     * - Converts to uppercase
+     * - Retains only letters, digits, and underscores
+     * - Limits to 10 characters
+     * - Defaults to "HERO" if empty
+     */
+    fun sanitizePlayerName(rawName: String?): String {
+        if (rawName.isNullOrBlank()) return "HERO"
+        val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
+        val truncated = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
+        return truncated.ifEmpty { "HERO" }
+    }
+
+    /**
+     * Generates a 3-character Base36/Base32 Chain ID for rivalry thread tracking.
+     */
+    fun generateChainId(): String {
+        return (1..3).map { ALPHABET[(Math.random() * ALPHABET.length).toInt()] }.joinToString("")
+    }
 
     /**
      * Computes a 1-character Base32 checksum over the raw core string (everything before the checksum hyphen).
@@ -71,20 +86,35 @@ object ChallengeSeed {
 
     /**
      * Formats a complete structured challenge code:
-     * e.g. "4x4-1-T3H-2GPGX-C" or "2x2-5-T1E-8X2AB-D"
+     * Format v2: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
+     * e.g. "4x4-12-T3H-NEON_KING-K7Q-8X2AB-C"
      */
     fun formatChallengeCode(
         gridTag: String,
         targetScore: Int,
         tries: Int = 3,
         difficulty: GameDifficulty = GameDifficulty.EASY,
-        seed: Int
+        seed: Int,
+        senderName: String = "HERO",
+        chainId: String = generateChainId(),
+        isRevenge: Boolean = false
     ): String {
         val seedCode = encodeSeed(seed)
         val normalizedGrid = gridTag.lowercase()
-        val safeTries = if (tries in listOf(1, 3, 5)) tries else 3
+        val safeTries = when (tries) {
+            1 -> "1"
+            3 -> "3"
+            5 -> "5"
+            0 -> "F"
+            else -> "3"
+        }
+        val typeChar = if (isRevenge) 'R' else 'T'
         val diffChar = difficulty.codeChar
-        val rawCore = "$normalizedGrid-$targetScore-T$safeTries$diffChar-$seedCode"
+        val tdSegment = "$typeChar$safeTries$diffChar"
+        val cleanName = sanitizePlayerName(senderName)
+        val cleanChain = chainId.trim().uppercase().take(3).ifEmpty { generateChainId() }
+
+        val rawCore = "$normalizedGrid-$targetScore-$tdSegment-$cleanName-$cleanChain-$seedCode"
         val checksum = computeChecksum(rawCore)
         return "$rawCore-$checksum"
     }
@@ -92,70 +122,196 @@ object ChallengeSeed {
     /**
      * Parses a full challenge code.
      * Supports:
-     * 1) New format: [Grid]-[Target]-T[tries][Difficulty]-[5-char Seed]-[1-char Checksum]
-     * 2) Backwards-compatible: T([135])([EH])? defaulting to E, optional checksum
-     * 3) Legacy format: [Grid]-[Target]-[4-char Seed]
-     * Returns null if invalid format or failing checksum.
+     * 1) Format v2 (7 segments): [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
+     * 2) Legacy format v1 (5 segments): [Grid]-[Target]-T[tries][Difficulty]-[Seed]-[Checksum]
+     * 3) Legacy format v0 (3 or 4 segments): [Grid]-[Target]-[Seed] or [Grid]-[Target]-[Seed]-[Checksum]
+     *
+     * Returns null if invalid structure, invalid characters, or failed checksum.
      */
     fun parseChallengeCode(rawCode: String): ParsedChallenge? {
         val clean = rawCode.trim().uppercase()
+        val parts = clean.split('-')
 
-        val match = CODE_REGEX.matchEntire(clean)
-        if (match != null) {
-            val gridTag = match.groupValues[1].lowercase()
-            val targetScore = match.groupValues[2].toIntOrNull() ?: return null
-            val tries = match.groupValues[3].toIntOrNull() ?: 3
-            val diffChar = match.groupValues[4].firstOrNull()
+        // 7-segment Format v2: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
+        if (parts.size == 7) {
+            val gridTag = parts[0].lowercase()
+            if (!Regex("^[234]x[234]$").matches(gridTag)) return null
+
+            val targetScore = parts[1].toIntOrNull() ?: return null
+            if (targetScore <= 0) return null
+
+            val td = parts[2]
+            val tdMatch = Regex("^([TR])([135F])([EH])$").matchEntire(td) ?: return null
+            val triesChar = tdMatch.groupValues[2]
+            val tries = if (triesChar == "F") 0 else triesChar.toInt()
+            val diffChar = tdMatch.groupValues[3].first()
             val difficulty = GameDifficulty.fromChar(diffChar)
-            val seedStr = match.groupValues[5].uppercase()
-            val checksumStr = match.groupValues[6].takeIf { it.isNotEmpty() }
+
+            val name = parts[3]
+            if (!NAME_REGEX.matches(name)) return null
+
+            val chainId = parts[4]
+            if (chainId.length !in 3..4) return null
+
+            val seedStr = parts[5]
             val seedInt = decodeSeed(seedStr) ?: return null
 
-            val rawCore = "$gridTag-$targetScore-T$tries${difficulty.codeChar}-$seedStr"
-            if (checksumStr != null) {
-                val expected = checksumStr.first()
-                if (!verifyChecksum(rawCore, expected)) {
-                    return null // Invalid Checksum!
-                }
-            }
+            val checksumStr = parts[6]
+            if (checksumStr.length != 1) return null
+            val expectedChecksum = checksumStr.first()
 
-            val finalChecksum = checksumStr?.firstOrNull() ?: computeChecksum(rawCore)
-            val fullCode = "$rawCore-$finalChecksum"
+            val rawCore = "$gridTag-$targetScore-$td-$name-$chainId-$seedStr"
+            if (!verifyChecksum(rawCore, expectedChecksum)) {
+                return null // Checksum mismatch
+            }
 
             return ParsedChallenge(
                 gridTag = gridTag,
                 targetScore = targetScore,
                 tries = tries,
                 difficulty = difficulty,
+                senderName = name,
+                chainId = chainId,
                 seedCode = seedStr,
                 seedInt = seedInt,
-                checksum = finalChecksum,
-                fullCode = fullCode
+                checksum = expectedChecksum,
+                fullCode = clean,
+                isLegacy = false
             )
         }
 
-        val legacyMatch = LEGACY_REGEX.matchEntire(clean)
-        if (legacyMatch != null) {
-            val gridTag = legacyMatch.groupValues[1].lowercase()
-            val targetScore = legacyMatch.groupValues[2].toIntOrNull() ?: return null
-            val seedStr = legacyMatch.groupValues[3].uppercase()
+        // 5-segment Format v1 (Legacy): [Grid]-[Target]-T[tries][Difficulty]-[Seed]-[Checksum]
+        if (parts.size == 5) {
+            val gridTag = parts[0].lowercase()
+            if (!Regex("^[234]x[234]$").matches(gridTag)) return null
+
+            val targetScore = parts[1].toIntOrNull() ?: return null
+            if (targetScore <= 0) return null
+
+            val td = parts[2]
+            val tdMatch = Regex("^([TR])?([135F])?([EH])?$").matchEntire(td) ?: return null
+            val triesChar = tdMatch.groupValues[2]
+            val tries = if (triesChar == "F") 0 else triesChar.toIntOrNull() ?: 3
+            val diffChar = tdMatch.groupValues[3].firstOrNull()
+            val difficulty = GameDifficulty.fromChar(diffChar)
+
+            val seedStr = parts[3]
+            val seedInt = decodeSeed(seedStr) ?: return null
+
+            val checksumStr = parts[4]
+            if (checksumStr.length != 1) return null
+            val expectedChecksum = checksumStr.first()
+
+            val rawTriesChar = if (tries == 0) "F" else tries.toString()
+            val rawCore = "$gridTag-$targetScore-T$rawTriesChar${difficulty.codeChar}-$seedStr"
+            if (!verifyChecksum(rawCore, expectedChecksum)) {
+                return null // Checksum mismatch
+            }
+
+            return ParsedChallenge(
+                gridTag = gridTag,
+                targetScore = targetScore,
+                tries = tries,
+                difficulty = difficulty,
+                senderName = "RIVAL",
+                chainId = "",
+                seedCode = seedStr,
+                seedInt = seedInt,
+                checksum = expectedChecksum,
+                fullCode = clean,
+                isLegacy = true
+            )
+        }
+
+        // 4-segment format:
+        // Option A: [Grid]-[Target]-[TD]-[Seed] (e.g. 4x4-20-T5-8X2A, 4x4-1-T3H-2GPGX)
+        // Option B: [Grid]-[Target]-[Seed]-[Checksum] (e.g. 2x2-12-8X2A-C)
+        if (parts.size == 4) {
+            val gridTag = parts[0].lowercase()
+            if (!Regex("^[234]x[234]$").matches(gridTag)) return null
+
+            val targetScore = parts[1].toIntOrNull() ?: return null
+            if (targetScore <= 0) return null
+
+            // Check if parts[2] is a TD spec: e.g. T5, T3, T3H, TFE, TFH, R3H
+            val tdMatch = Regex("^([TR])?([135F])?([EH])?$").matchEntire(parts[2])
+            val seedFromPart3 = decodeSeed(parts[3])
+            if (tdMatch != null && seedFromPart3 != null) {
+                val triesChar = tdMatch.groupValues[2]
+                val tries = if (triesChar == "F") 0 else triesChar.toIntOrNull() ?: 3
+                val diffChar = tdMatch.groupValues[3].firstOrNull()
+                val difficulty = GameDifficulty.fromChar(diffChar)
+                val rawTriesChar = if (tries == 0) "F" else tries.toString()
+                val rawCore = "$gridTag-$targetScore-T$rawTriesChar${difficulty.codeChar}-${parts[3]}"
+                val checksum = computeChecksum(rawCore)
+
+                return ParsedChallenge(
+                    gridTag = gridTag,
+                    targetScore = targetScore,
+                    tries = tries,
+                    difficulty = difficulty,
+                    senderName = "RIVAL",
+                    chainId = "",
+                    seedCode = parts[3],
+                    seedInt = seedFromPart3,
+                    checksum = checksum,
+                    fullCode = "$rawCore-$checksum",
+                    isLegacy = true
+                )
+            }
+
+            // Option B: [Grid]-[Target]-[Seed]-[Checksum]
+            val seedStr = parts[2]
             val seedInt = decodeSeed(seedStr) ?: return null
             val rawCore = "$gridTag-$targetScore-T3E-$seedStr"
-            val checksum = computeChecksum(rawCore)
-            val fullCode = "$rawCore-$checksum"
+            val expectedChecksum = parts[3].firstOrNull() ?: return null
+            if (!verifyChecksum(rawCore, expectedChecksum)) return null
 
             return ParsedChallenge(
                 gridTag = gridTag,
                 targetScore = targetScore,
                 tries = 3,
                 difficulty = GameDifficulty.EASY,
+                senderName = "RIVAL",
+                chainId = "",
                 seedCode = seedStr,
                 seedInt = seedInt,
-                checksum = checksum,
-                fullCode = fullCode
+                checksum = expectedChecksum,
+                fullCode = "$rawCore-$expectedChecksum",
+                isLegacy = true
             )
         }
 
+        // 3-segment legacy format: [Grid]-[Target]-[Seed] (e.g. 3x3-15-B4Y9)
+        if (parts.size == 3) {
+            val gridTag = parts[0].lowercase()
+            if (!Regex("^[234]x[234]$").matches(gridTag)) return null
+
+            val targetScore = parts[1].toIntOrNull() ?: return null
+            if (targetScore <= 0) return null
+
+            val seedStr = parts[2]
+            val seedInt = decodeSeed(seedStr) ?: return null
+
+            val rawCore = "$gridTag-$targetScore-T3E-$seedStr"
+            val checksum = computeChecksum(rawCore)
+
+            return ParsedChallenge(
+                gridTag = gridTag,
+                targetScore = targetScore,
+                tries = 3,
+                difficulty = GameDifficulty.EASY,
+                senderName = "RIVAL",
+                chainId = "",
+                seedCode = seedStr,
+                seedInt = seedInt,
+                checksum = checksum,
+                fullCode = "$rawCore-$checksum",
+                isLegacy = true
+            )
+        }
+
+        // Any other segment count is invalid
         return null
     }
 
@@ -176,4 +332,3 @@ object ChallengeSeed {
         return (Math.random() * (MAX_SEED + 1)).toInt() and MAX_SEED
     }
 }
-
