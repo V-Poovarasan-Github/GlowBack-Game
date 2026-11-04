@@ -14,10 +14,17 @@ object ChallengeStorage {
     private const val KEY_RIVALS = "glowback_rivalries_v1"
     private const val KEY_AWAITING = "glowback_awaiting_challenges_v1"
     private const val KEY_MY_CODES = "my_created_challenge_codes"
+    private const val KEY_MY_CODES_FIFO = "my_created_challenge_codes_fifo_v1"
+    private const val KEY_CONSUMED_CODES = "consumed_challenge_codes_v1"
+    private const val KEY_CONSUMED_CODES_FIFO = "consumed_challenge_codes_fifo_v1"
+    private const val KEY_CHAIN_TARGETS = "outbound_chain_targets_v1"
+    private const val KEY_LAST_SHARED_RIVAL = "last_shared_rival_name"
     private const val KEY_MY_NAME = "glowback_player_name"
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
 
     const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours)
+    const val MAX_RIVALS_CAP = 50
+    const val MAX_CODES_CAP = 200
 
     // ==========================================
     // PLAYER NAME ("My Name")
@@ -43,10 +50,122 @@ object ChallengeStorage {
     }
 
     // ==========================================
+    // SMART SHARE OPTIMIZATION (lastSharedRivalName)
+    // ==========================================
+
+    fun getLastSharedRivalName(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_LAST_SHARED_RIVAL, null)?.trim()?.uppercase()
+        return if (raw.isNullOrEmpty()) null else raw
+    }
+
+    fun setLastSharedRivalName(context: Context, rivalName: String?) {
+        val cleaned = rivalName?.trim()?.uppercase() ?: ""
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LAST_SHARED_RIVAL, cleaned)
+            .apply()
+    }
+
+    /**
+     * Smart Share Optimization:
+     * - Solo games with no rival (currentRivalName is null/blank) -> Always generate full card (image + text).
+     * - If currentRivalName != lastSharedRivalName -> Generate full card (image + text).
+     * - If currentRivalName == lastSharedRivalName -> Share/copy code text only (no card).
+     */
+    fun shouldShareTextOnly(context: Context, currentRivalName: String?): Boolean {
+        val cleanCurrent = currentRivalName?.trim()?.uppercase() ?: ""
+        if (cleanCurrent.isEmpty()) return false
+        val lastRival = getLastSharedRivalName(context) ?: return false
+        return cleanCurrent.equals(lastRival, ignoreCase = true)
+    }
+
+    // ==========================================
+    // OUTBOUND CHAIN -> TARGET SCORE MAP (72h TTL)
+    // ==========================================
+
+    /**
+     * Saves a 72-hour background mapping of chainId -> targetScore whenever a T-code is generated.
+     * Supports 1-to-many WhatsApp group replies even after the first reply prunes the awaiting UI card.
+     */
+    fun saveOutboundChainTarget(
+        context: Context,
+        chainId: String,
+        targetScore: Int,
+        createdAt: Long = System.currentTimeMillis()
+    ) {
+        val cleanChain = chainId.trim().uppercase()
+        if (cleanChain.isEmpty() || targetScore <= 0) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_CHAIN_TARGETS, null)
+        val mapObj = try {
+            if (raw != null) JSONObject(raw) else JSONObject()
+        } catch (_: Exception) {
+            JSONObject()
+        }
+
+        // Prune expired (> 72h) entries
+        val keys = mapObj.keys().asSequence().toList()
+        for (key in keys) {
+            val entry = mapObj.optJSONObject(key)
+            val entryTime = entry?.optLong("createdAt", 0L) ?: 0L
+            if (createdAt - entryTime > AWAITING_TTL_MS) {
+                mapObj.remove(key)
+            }
+        }
+
+        val newEntry = JSONObject().apply {
+            put("targetScore", targetScore)
+            put("createdAt", createdAt)
+        }
+        mapObj.put(cleanChain, newEntry)
+        prefs.edit().putString(KEY_CHAIN_TARGETS, mapObj.toString()).apply()
+    }
+
+    /**
+     * Looks up the original targetScore for a given chainId if within the 72-hour TTL window.
+     * Prunes expired entries (> 72h) automatically.
+     */
+    fun lookupOutboundChainTarget(
+        context: Context,
+        chainId: String,
+        now: Long = System.currentTimeMillis()
+    ): Int? {
+        val cleanChain = chainId.trim().uppercase()
+        if (cleanChain.isEmpty()) return null
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_CHAIN_TARGETS, null) ?: return null
+        val mapObj = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return null
+        }
+
+        var hadExpired = false
+        val keys = mapObj.keys().asSequence().toList()
+        for (key in keys) {
+            val entry = mapObj.optJSONObject(key)
+            val entryTime = entry?.optLong("createdAt", 0L) ?: 0L
+            if (now - entryTime > AWAITING_TTL_MS) {
+                mapObj.remove(key)
+                hadExpired = true
+            }
+        }
+        if (hadExpired) {
+            prefs.edit().putString(KEY_CHAIN_TARGETS, mapObj.toString()).apply()
+        }
+
+        val matched = mapObj.optJSONObject(cleanChain) ?: return null
+        val score = matched.optInt("targetScore", -1)
+        return if (score > 0) score else null
+    }
+
+    // ==========================================
     // PENDING SHARE (Process Death Survival)
     // ==========================================
 
     fun savePendingShare(context: Context, awaiting: AwaitingChallenge) {
+        saveOutboundChainTarget(context, awaiting.chainId, awaiting.targetScore, awaiting.createdAt)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val obj = JSONObject().apply {
             put("chainId", awaiting.chainId)
@@ -180,7 +299,7 @@ object ChallengeStorage {
     }
 
     // ==========================================
-    // RIVALRIES & HEAD-TO-HEAD HISTORY
+    // RIVALRIES & HEAD-TO-HEAD HISTORY (Capped at 50)
     // ==========================================
 
     fun loadRivals(context: Context): List<RivalRecord> {
@@ -213,13 +332,14 @@ object ChallengeStorage {
         } catch (_: Exception) {
             // Corrupt data fallback
         }
-        return list.sortedByDescending { it.updatedAt }
+        return list.sortedByDescending { it.updatedAt }.take(MAX_RIVALS_CAP)
     }
 
     private fun persistRivals(context: Context, list: List<RivalRecord>) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val capped = list.sortedByDescending { it.updatedAt }.take(MAX_RIVALS_CAP)
         val jsonArray = JSONArray()
-        for (item in list) {
+        for (item in capped) {
             val obj = JSONObject().apply {
                 put("name", item.name)
                 put("wins", item.wins)
@@ -319,6 +439,53 @@ object ChallengeStorage {
         return record
     }
 
+    /**
+     * PASS 5.11 Item 1 (OPTION A): Records the outcome when pasting an inbound Reply Code (R-code).
+     * Since the responder's game auto-stops upon reaching myOriginalTarget:
+     * - If responderScore >= myOriginalTarget: I LOST (Rival Won / Conquered)
+     * - If responderScore < myOriginalTarget: I WON (I Defended)
+     */
+    fun recordReplyOutcome(
+        context: Context,
+        rivalName: String,
+        myOriginalTarget: Int,
+        responderScore: Int,
+        gridSize: String,
+        difficulty: GameDifficulty,
+        chainId: String,
+        maxTries: Int = 3
+    ): RivalRecord {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        val existing = findRivalByName(context, cleanName)
+
+        val isLost = responderScore >= myOriginalTarget
+        val isWon = responderScore < myOriginalTarget
+
+        val status = if (isWon) "WON" else "LOST"
+        val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
+        val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
+        val updatedTies = existing?.ties ?: 0
+        val updatedMatches = (existing?.matches ?: 0) + 1
+
+        val record = RivalRecord(
+            name = cleanName,
+            wins = updatedWins,
+            losses = updatedLosses,
+            ties = updatedTies,
+            matches = updatedMatches,
+            lastGrid = gridSize,
+            lastDifficulty = difficulty,
+            lastTarget = responderScore,
+            lastUserScore = myOriginalTarget,
+            lastStatus = status,
+            lastChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() },
+            updatedAt = System.currentTimeMillis()
+        )
+
+        saveRival(context, record)
+        return record
+    }
+
     // ==========================================
     // AWAITING CHALLENGES (Outbound with 3-day TTL)
     // ==========================================
@@ -386,6 +553,7 @@ object ChallengeStorage {
     }
 
     fun saveAwaitingChallenge(context: Context, awaiting: AwaitingChallenge) {
+        saveOutboundChainTarget(context, awaiting.chainId, awaiting.targetScore, awaiting.createdAt)
         val existing = loadAwaitingChallenges(context).toMutableList()
         val index = existing.indexOfFirst { it.chainId.equals(awaiting.chainId, ignoreCase = true) }
         if (index >= 0) {
@@ -441,47 +609,130 @@ object ChallengeStorage {
     }
 
     // ==========================================
-    // SELF-CHALLENGE PREVENTIONS
+    // FIFO 200-CAP CODE SETS (MY_CODES & CONSUMED_CODES)
     // ==========================================
 
-    fun recordCreatedCode(context: Context, code: String) {
+    private fun loadFifoCodes(context: Context, fifoKey: String, setKey: String): MutableList<String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getStringSet(KEY_MY_CODES, emptySet())?.toMutableSet() ?: mutableSetOf()
-        val clean = code.trim().uppercase()
-        current.add(clean)
-        val parsed = ChallengeSeed.parseChallengeCode(clean)
-        if (parsed != null) {
-            current.add(parsed.fullCode.uppercase())
+        val rawFifo = prefs.getString(fifoKey, null)
+        val result = mutableListOf<String>()
+        if (rawFifo != null) {
+            try {
+                val arr = JSONArray(rawFifo)
+                for (i in 0 until arr.length()) {
+                    val item = arr.optString(i, "").trim().uppercase()
+                    if (item.isNotEmpty()) result.add(item)
+                }
+            } catch (_: Exception) {}
         }
-        prefs.edit().putStringSet(KEY_MY_CODES, current).apply()
+        val legacySet = prefs.getStringSet(setKey, emptySet()) ?: emptySet()
+        for (s in legacySet) {
+            val clean = s.trim().uppercase()
+            if (clean.isNotEmpty() && result.none { it.equals(clean, ignoreCase = true) }) {
+                result.add(clean)
+            }
+        }
+        return if (result.size > MAX_CODES_CAP) {
+            result.takeLast(MAX_CODES_CAP).toMutableList()
+        } else {
+            result
+        }
     }
 
-    fun isSelfChallenge(context: Context, code: String): Boolean {
-        val clean = code.trim().uppercase()
-        val parsed = ChallengeSeed.parseChallengeCode(clean)
+    private fun saveFifoCodes(context: Context, fifoKey: String, setKey: String, codes: List<String>) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val capped = if (codes.size > MAX_CODES_CAP) codes.takeLast(MAX_CODES_CAP) else codes
+        val arr = JSONArray()
+        for (c in capped) {
+            arr.put(c)
+        }
+        prefs.edit()
+            .putString(fifoKey, arr.toString())
+            .putStringSet(setKey, capped.toSet())
+            .apply()
+    }
 
-        // Rule 1: Check against local "My Name"
-        val myName = getMyName(context)
-        if (parsed != null && parsed.senderName.isNotEmpty() && parsed.senderName.equals(myName, ignoreCase = true)) {
+    fun getMyCreatedCodes(context: Context): List<String> =
+        loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES)
+
+    fun getConsumedCodes(context: Context): List<String> =
+        loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+
+    fun recordCreatedCode(context: Context, code: String) {
+        val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
+        if (clean.isEmpty()) return
+        val list = loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES)
+        list.removeAll { it.equals(clean, ignoreCase = true) }
+        list.add(clean)
+        val parsed = ChallengeSeed.parseChallengeCode(clean)
+        if (parsed != null) {
+            val fullUpper = parsed.fullCode.uppercase()
+            list.removeAll { it.equals(fullUpper, ignoreCase = true) }
+            list.add(fullUpper)
+            if (!parsed.isRevenge && parsed.chainId.isNotEmpty()) {
+                saveOutboundChainTarget(context, parsed.chainId, parsed.targetScore)
+            }
+        }
+        saveFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES, list)
+    }
+
+    fun markCodeConsumed(context: Context, code: String) {
+        val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
+        if (clean.isEmpty()) return
+        val list = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+        list.removeAll { it.equals(clean, ignoreCase = true) }
+        list.add(clean)
+        val parsed = ChallengeSeed.parseChallengeCode(clean)
+        if (parsed != null) {
+            val fullUpper = parsed.fullCode.uppercase()
+            list.removeAll { it.equals(fullUpper, ignoreCase = true) }
+            list.add(fullUpper)
+        }
+        saveFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, list)
+    }
+
+    fun isCodeConsumed(context: Context, code: String): Boolean {
+        val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
+        if (clean.isEmpty()) return false
+        val consumed = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+        if (consumed.any { it.equals(clean, ignoreCase = true) }) return true
+        val parsed = ChallengeSeed.parseChallengeCode(clean)
+        if (parsed != null && consumed.any { it.equals(parsed.fullCode, ignoreCase = true) }) {
             return true
         }
+        return false
+    }
 
-        // Bypass Rule 2 for Reply Codes: Reply codes carry the original seed/chain back to the creator's device
+    /**
+     * PASS 5.11 Item 2 & 3:
+     * Tier 1 (Hard Block):
+     * 1. Check the EXACT code string against KEY_MY_CODES FIRST. If it matches, HARD BLOCK.
+     * 2. Only AFTER the exact string check passes, apply the R-token bypass for the seed/chain check.
+     * 3. For T-codes, check seed + targetScore + gridTag against locally created T-codes.
+     * Note: Same-name collision (senderName == myName) is now handled via Tier 2 Soft Block Dialog.
+     */
+    fun isSelfChallenge(context: Context, code: String): Boolean {
+        val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
+        if (clean.isEmpty()) return false
+        val parsed = ChallengeSeed.parseChallengeCode(clean)
+        val current = loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES)
+
+        // Step 1: Check EXACT code string against KEY_MY_CODES FIRST (blocks self-reply & own T-code)
+        if (current.any { it.equals(clean, ignoreCase = true) }) return true
+        if (parsed != null && current.any { it.equals(parsed.fullCode, ignoreCase = true) }) return true
+
+        // Step 2: Only AFTER exact string check passes, apply R-token bypass for seed/chain check
         val tdToken = clean.split('-').getOrNull(2)?.uppercase() ?: ""
         if (parsed?.isRevenge == true || tdToken.startsWith("R")) {
             return false
         }
 
-        // Rule 2: Check against locally generated code hashes
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getStringSet(KEY_MY_CODES, emptySet()) ?: emptySet()
-        if (current.any { it.equals(clean, ignoreCase = true) }) return true
-
+        // Step 3: Check seed + targetScore + gridTag against locally generated T-codes
         if (parsed != null) {
-            if (current.any { it.equals(parsed.fullCode, ignoreCase = true) }) return true
             for (stored in current) {
                 val storedParsed = ChallengeSeed.parseChallengeCode(stored)
                 if (storedParsed != null &&
+                    !storedParsed.isRevenge &&
                     storedParsed.seedInt == parsed.seedInt &&
                     storedParsed.targetScore == parsed.targetScore &&
                     storedParsed.gridTag.equals(parsed.gridTag, ignoreCase = true)
@@ -491,5 +742,18 @@ object ChallengeStorage {
             }
         }
         return false
+    }
+
+    fun isSelfChallenge(context: Context, parsed: ParsedChallenge): Boolean =
+        isSelfChallenge(context, parsed.fullCode)
+
+    /**
+     * Tier 2 (Soft Block): Returns true if the code's senderName matches local "My Name"
+     * (after Tier 1 device-history check has already passed).
+     */
+    fun isSameNameCollision(context: Context, parsed: ParsedChallenge?): Boolean {
+        if (parsed == null || parsed.isLegacy || parsed.senderName.isBlank()) return false
+        val myName = getMyName(context)
+        return parsed.senderName.equals(myName, ignoreCase = true)
     }
 }

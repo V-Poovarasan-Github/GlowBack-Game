@@ -324,25 +324,36 @@ class GlowAudioSynthesizer {
 
         internal fun synthesizeRisingArpeggioPcm(): ShortArray =
             concatPcm(synthesizeWavePcm(523.25, 110, 0.70), synthesizeWavePcm(659.25, 110, 0.72), synthesizeWavePcm(783.99, 160, 0.75))
+        private val sharedFrequencyCache = ConcurrentHashMap<Double, ShortArray>()
+
+        internal fun getOrSynthesizeTone(freqHz: Double): ShortArray =
+            sharedFrequencyCache.getOrPut(freqHz) { synthesizeWavePcm(freqHz, 240, 0.72) }
     }
 
     private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val staticTrackPool = ConcurrentHashMap<ShortArray, AudioTrack>()
 
-    val frequencyPcmBuffers: Map<Double, ShortArray> = (CLASSIC_2X2_PADS + GRID_16_PADS + GRID_20_PADS)
-        .map { it.frequencyHz }
-        .distinct()
-        .associateWith { synthesizeWavePcm(it, 240, 0.72) }
-
-    val padPcmBuffers: Map<GlowColor, ShortArray> = GlowColor.entries.associateWith {
-        frequencyPcmBuffers[it.frequencyHz] ?: synthesizeWavePcm(it.frequencyHz, 240, 0.72)
+    val frequencyPcmBuffers: Map<Double, ShortArray> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        (CLASSIC_2X2_PADS + GRID_16_PADS + GRID_20_PADS)
+            .map { it.frequencyHz }
+            .distinct()
+            .associateWith { getOrSynthesizeTone(it) }
     }
 
-    val errorBuzzPcm: ShortArray = synthesizeDescendingErrorBuzzPcm(420)
-    val clearArpeggioPcm: ShortArray = synthesizeRisingArpeggioPcm()
+    val padPcmBuffers: Map<GlowColor, ShortArray> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        GlowColor.entries.associateWith { getOrSynthesizeTone(it.frequencyHz) }
+    }
+
+    val errorBuzzPcm: ShortArray by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        synthesizeDescendingErrorBuzzPcm(420)
+    }
+    val clearArpeggioPcm: ShortArray by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        synthesizeRisingArpeggioPcm()
+    }
 
     init {
-        // Pre-allocate AudioTrack pool on background dispatcher (Dispatchers.Default) to prevent UI thread ANRs
+        // Pre-synthesize PCM buffers and pre-allocate AudioTrack pool on background dispatcher (Dispatchers.Default)
+        // so cold-start on low-end devices never blocks the main UI thread
         audioScope.launch {
             for (pcm in frequencyPcmBuffers.values) {
                 runCatching {
@@ -377,36 +388,52 @@ class GlowAudioSynthesizer {
         return track
     }
 
-    fun playPadSpecTone(pad: PadSpec, volume: Float = 0.85f) =
-        frequencyPcmBuffers[pad.frequencyHz]?.let { playStaticPcmAsync(it, 240L, volume) } ?: Unit
-
-    fun playPadTone(color: GlowColor, volume: Float = 0.85f) =
-        padPcmBuffers[color]?.let { playStaticPcmAsync(it, 240L, volume) } ?: Unit
-
-    fun playErrorBuzz(volume: Float = 0.85f) = playStaticPcmAsync(errorBuzzPcm, 420L, volume)
-    fun playRoundClearArpeggio(volume: Float = 0.85f) = playStaticPcmAsync(clearArpeggioPcm, 380L, volume)
-
-    private fun playStaticPcmAsync(pcmBuffer: ShortArray, durationMs: Long, volume: Float) {
+    fun playPadSpecTone(pad: PadSpec, volume: Float = 0.85f) {
         val vol = volume.coerceIn(0f, 1f)
         if (vol <= 0f) return
         audioScope.launch {
-            try {
-                var track = staticTrackPool[pcmBuffer]
-                if (track == null || track.state != AudioTrack.STATE_INITIALIZED) {
-                    track = createStaticTrack(pcmBuffer)
-                    staticTrackPool[pcmBuffer] = track
-                }
-                synchronized(track) {
-                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                        track.stop()
-                    }
-                    track.flush()
-                    track.playbackHeadPosition = 0
-                    track.setVolume(vol)
-                    track.play()
-                }
-            } catch (_: Throwable) {
+            val pcm = getOrSynthesizeTone(pad.frequencyHz)
+            playStaticPcmInternal(pcm, vol)
+        }
+    }
+
+    fun playPadTone(color: GlowColor, volume: Float = 0.85f) {
+        val vol = volume.coerceIn(0f, 1f)
+        if (vol <= 0f) return
+        audioScope.launch {
+            val pcm = getOrSynthesizeTone(color.frequencyHz)
+            playStaticPcmInternal(pcm, vol)
+        }
+    }
+
+    fun playErrorBuzz(volume: Float = 0.85f) = playStaticPcmAsync( { errorBuzzPcm }, volume)
+    fun playRoundClearArpeggio(volume: Float = 0.85f) = playStaticPcmAsync( { clearArpeggioPcm }, volume)
+
+    private fun playStaticPcmAsync(pcmProvider: () -> ShortArray, volume: Float) {
+        val vol = volume.coerceIn(0f, 1f)
+        if (vol <= 0f) return
+        audioScope.launch {
+            playStaticPcmInternal(pcmProvider(), vol)
+        }
+    }
+
+    private fun playStaticPcmInternal(pcmBuffer: ShortArray, vol: Float) {
+        try {
+            var track = staticTrackPool[pcmBuffer]
+            if (track == null || track.state != AudioTrack.STATE_INITIALIZED) {
+                track = createStaticTrack(pcmBuffer)
+                staticTrackPool[pcmBuffer] = track
             }
+            synchronized(track) {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.stop()
+                }
+                track.flush()
+                track.playbackHeadPosition = 0
+                track.setVolume(vol)
+                track.play()
+            }
+        } catch (_: Throwable) {
         }
     }
 
@@ -787,6 +814,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var challengeAttemptsLeft by remember { mutableIntStateOf(3) }
     var isChallengeWon by remember { mutableStateOf(false) }
     var isChallengeLost by remember { mutableStateOf(false) }
+    var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
+    var isMultiTouchGuardActive by remember { mutableStateOf(false) }
+    var multiTouchGuardJob by remember { mutableStateOf<Job?>(null) }
 
     val activePadPool = remember(gridSize) { padsForGridSize(gridSize) }
     val sequence = remember { mutableStateListOf<PadSpec>() }
@@ -880,6 +910,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
     fun resetRunState() {
         tapFlashJob?.cancel()
+        multiTouchGuardJob?.cancel()
+        isMultiTouchGuardActive = false
         ghostReplayJob?.cancel()
         isReplayingLostRound = false
         isRoundClearCelebration = false
@@ -1024,6 +1056,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         resetRunState()
         activeChallenge = null
         challengeRng = null
+        currentRivalNameForShare = null
         isChallengeWon = false
         isChallengeLost = false
         gridSize = newGridSize
@@ -1038,6 +1071,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         resetRunState()
         activeChallenge = null
         challengeRng = null
+        currentRivalNameForShare = null
         isChallengeWon = false
         isChallengeLost = false
         gameMode = newMode
@@ -1143,6 +1177,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         discardActiveRun()
         resetRunState()
         activeChallenge = item
+        currentRivalNameForShare = item.rivalName
         difficultyMode = item.difficulty
         challengeAttemptsLeft = item.attemptsLeft
         isChallengeWon = false
@@ -1170,6 +1205,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun startRevengeGame(rival: RivalRecord) {
+        // Revenge Button = Fresh Solo Game:
+        // Launch a standard Solo game on the rival's grid & difficulty with NO activeChallenge target auto-stop.
+        // User plays until they miss; if they reach >= 5, Share Challenge unlocks on Game Over.
         discardActiveRun()
         resetRunState()
         val targetGrid = when (rival.lastGrid.lowercase()) {
@@ -1181,28 +1219,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         gridSize = targetGrid
         difficultyMode = rival.lastDifficulty
         paceMode = PaceMode.CLASSIC
-        val seed = ChallengeSeed.generateRandomSeed()
-        val item = ChallengeItem(
-            code = "",
-            rivalName = rival.name,
-            gridSizeTag = rival.lastGrid,
-            targetScore = rival.lastTarget,
-            maxTries = 3,
-            attemptsLeft = 3,
-            bestScore = 0,
-            seed = seed,
-            difficulty = rival.lastDifficulty,
-            chainId = rival.lastChainId,
-            isRevenge = true
-        )
-        activeChallenge = item
-        challengeAttemptsLeft = 3
+        activeChallenge = null
+        challengeRng = null
+        currentRivalNameForShare = rival.name
         isChallengeWon = false
         isChallengeLost = false
         gameMode = GameMode.SOLO
+        selectedShareTries = 3
+        val seed = ChallengeSeed.generateRandomSeed()
         currentRunSeed = seed
         val rng = java.util.Random(seed.toLong())
-        challengeRng = rng
         soloRng = rng
         val pads = padsForGridSize(targetGrid)
         sequence.add(pads[rng.nextInt(pads.size)])
@@ -1334,6 +1360,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             return
         }
         if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible) return
+        // 45ms multi-touch guard: ignore simultaneous multi-finger pad slams during active gameplay
+        if (isMultiTouchGuardActive) return
+        isMultiTouchGuardActive = true
+        multiTouchGuardJob?.cancel()
+        multiTouchGuardJob = coroutineScope.launch {
+            delay(45L)
+            isMultiTouchGuardActive = false
+        }
+
         resumedBannerNote = null
         val expectedPad = sequence.getOrNull(playerStepIndex) ?: return
 
@@ -1358,9 +1393,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             ch.bestScore = currentScore
                         }
                         if (currentScore >= ch.targetScore) {
-                            // Immediate Victory: record outcome, stop sequence coroutine, and transition to victory game over
+                            // Immediate Victory: record outcome, mark code consumed, stop sequence coroutine, and transition to victory game over
                             isChallengeWon = true
                             isChallengeLost = false
+                            if (ch.code.isNotBlank()) {
+                                ChallengeStorage.markCodeConsumed(context, ch.code)
+                            }
                             ChallengeStorage.recordMatchOutcome(
                                 context = context,
                                 rivalName = ch.rivalName,
@@ -1507,6 +1545,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     isChallengeWon = currentScore >= ch.targetScore
                     isChallengeLost = !isChallengeWon && !isFree && newTries <= 0
                     if (isChallengeWon || (isChallengeLost && !isFree)) {
+                        if (ch.code.isNotBlank()) {
+                            ChallengeStorage.markCodeConsumed(context, ch.code)
+                        }
                         ChallengeStorage.recordMatchOutcome(
                             context = context,
                             rivalName = ch.rivalName,
@@ -2034,6 +2075,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
                             val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
                             val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
+                            ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore)
+                            val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
+                            if (!shareRival.isNullOrBlank()) {
+                                ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                            }
                             val gridTag = gridSize.keyPrefix
                             val awaiting = AwaitingChallenge(
                                 chainId = chainId,
@@ -2056,6 +2102,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
+                            currentRivalNameForShare = null
                             soloRng = null
                             isChallengeWon = false
                             isChallengeLost = false
@@ -2079,6 +2126,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
+                            currentRivalNameForShare = null
                             soloRng = null
                             isChallengeWon = false
                             isChallengeLost = false
@@ -2247,6 +2295,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     awaitingChallengeForDialog = null
                     activeDialog = ActiveDialog.NONE
 
+                    val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
                     coroutineScope.launch {
                         ChallengeShareHelper.shareChallenge(
                             context = context,
@@ -2256,7 +2305,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             attempts = 1,
                             tries = chosenTries,
                             paceName = chosenPace,
-                            difficulty = chosenDiff
+                            difficulty = chosenDiff,
+                            rivalName = shareRival
                         )
                     }
                 }
@@ -3717,6 +3767,13 @@ private fun SettingsSheetDialog(
                                 modifier = Modifier.testTag("daily_notifications_switch")
                             )
                         }
+                        Text(
+                            text = "If notifications don't arrive, please disable battery optimization for Glowback.",
+                            color = Color(0xFF64748B),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            modifier = Modifier.testTag("battery_optimization_tip")
+                        )
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

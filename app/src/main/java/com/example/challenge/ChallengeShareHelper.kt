@@ -241,7 +241,32 @@ object ChallengeShareHelper {
     }
 
     /**
-     * Writes the bitmap to app cache and launches the system share sheet with both image and copyable text.
+     * Shares/copies plain code text only (no bitmap card generation) when consecutive shares
+     * target the same rival.
+     */
+    suspend fun shareTextOnly(
+        context: Context,
+        code: String,
+        chooserTitle: String = "Share Glowback Challenge"
+    ) = withContext(Dispatchers.Main) {
+        runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Glowback Challenge Code", code))
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, code)
+            putExtra(Intent.EXTRA_SUBJECT, "Glowback Challenge")
+        }
+        val chooser = Intent.createChooser(sendIntent, chooserTitle).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    }
+
+    /**
+     * Writes the bitmap to app cache and launches the system share sheet with both image and copyable text,
+     * or shares text-only if consecutive share is to the same rival (PASS 5.11 Smart Share).
      */
     suspend fun shareChallenge(
         context: Context,
@@ -251,8 +276,18 @@ object ChallengeShareHelper {
         attempts: Int = 1,
         tries: Int = 3,
         paceName: String = "Classic",
-        difficulty: GameDifficulty = GameDifficulty.EASY
+        difficulty: GameDifficulty = GameDifficulty.EASY,
+        rivalName: String? = null
     ) = withContext(Dispatchers.IO) {
+        val useTextOnly = ChallengeStorage.shouldShareTextOnly(context, rivalName)
+        if (!rivalName.isNullOrBlank()) {
+            ChallengeStorage.setLastSharedRivalName(context, rivalName)
+        }
+        if (useTextOnly) {
+            shareTextOnly(context, code, "Share Glowback Challenge")
+            return@withContext
+        }
+
         val bitmap = createChallengeBitmap(
             code = code,
             gridSizeTag = gridSizeTag,
@@ -296,7 +331,7 @@ object ChallengeShareHelper {
     }
 
     /**
-     * Shares a response card back to a rival.
+     * Shares a response card back to a rival (or text-only if consecutive share to same rival).
      */
     suspend fun shareReplyResult(
         context: Context,
@@ -307,6 +342,15 @@ object ChallengeShareHelper {
         rivalName: String,
         won: Boolean
     ) = withContext(Dispatchers.IO) {
+        val useTextOnly = ChallengeStorage.shouldShareTextOnly(context, rivalName)
+        if (rivalName.isNotBlank()) {
+            ChallengeStorage.setLastSharedRivalName(context, rivalName)
+        }
+        if (useTextOnly) {
+            shareTextOnly(context, code, "Send Result to Rival")
+            return@withContext
+        }
+
         val bitmap = createChallengeBitmap(
             code = code,
             gridSizeTag = gridSizeTag,

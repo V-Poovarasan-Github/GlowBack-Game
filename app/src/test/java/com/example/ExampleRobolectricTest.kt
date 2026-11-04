@@ -1604,6 +1604,175 @@ class ExampleRobolectricTest {
             ChallengeStorage.loadRivals(context).any { it.name == "FALCON" && it.lastStatus == "WON" }
         )
     }
+
+    @Test
+    fun pass5_11_stressTestHardening_optionAReply_antiFarming_softBlock_revengeSolo_smartShare_and_safeguards() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        // 1. Fix Inverted Win/Loss on Reply Codes (Option A) + 72h chainId -> targetScore map for 1-to-many group replies
+        val outboundTCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 8080,
+            senderName = "ALEX",
+            chainId = "GRP",
+            isRevenge = false
+        )
+        ChallengeStorage.recordCreatedCode(context, outboundTCode)
+        assertEquals(6, ChallengeStorage.lookupOutboundChainTarget(context, "GRP"))
+
+        // Friend 1 (BRAVO) beats/reaches target 6 (responderScore = 6 >= myOriginalTarget 6 -> I LOST)
+        val bravoReply = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "BRAVO",
+            responderScore = 6,
+            myOriginalTarget = ChallengeStorage.lookupOutboundChainTarget(context, "GRP") ?: 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "GRP",
+            maxTries = 3
+        )
+        assertNotNull(bravoReply)
+        assertEquals("LOST", bravoReply!!.lastStatus)
+        assertEquals(1, bravoReply.losses)
+        assertEquals(0, bravoReply.wins)
+
+        // Friend 2 (DELTA) in same WhatsApp group replies later on same chainId "GRP" with score 4 (< 6 -> I WON / Defended)
+        val lookedUpTargetAfterFirstReply = ChallengeStorage.lookupOutboundChainTarget(context, "GRP")
+        assertEquals("chainId -> targetScore map must persist for 1-to-many group replies", 6, lookedUpTargetAfterFirstReply)
+        val deltaReply = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "DELTA",
+            responderScore = 4,
+            myOriginalTarget = lookedUpTargetAfterFirstReply!!,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "GRP",
+            maxTries = 3
+        )
+        assertNotNull(deltaReply)
+        assertEquals("WON", deltaReply!!.lastStatus)
+        assertEquals(1, deltaReply.wins)
+
+        // 2. Block Self-Reply & Duplicate Paste Farming + 200 FIFO Cap
+        val myOwnReplyCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 8080,
+            senderName = "ALEX",
+            chainId = "GRP",
+            isRevenge = true
+        )
+        ChallengeStorage.recordCreatedCode(context, myOwnReplyCode)
+        val parsedOwnReply = ChallengeSeed.parseChallengeCode(myOwnReplyCode)!!
+        assertTrue(
+            "Self-reply code in KEY_MY_CODES must be hard-blocked FIRST before R-token bypass",
+            ChallengeStorage.isSelfChallenge(context, parsedOwnReply)
+        )
+
+        // Different person's R-code with same seed/chainId (not in KEY_MY_CODES) bypasses Tier 1
+        val friendReplyCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 8080,
+            senderName = "ECHO",
+            chainId = "GRP",
+            isRevenge = true
+        )
+        val parsedFriendReply = ChallengeSeed.parseChallengeCode(friendReplyCode)!!
+        assertFalse(
+            "Genuine friend reply code not in KEY_MY_CODES must pass Tier 1",
+            ChallengeStorage.isSelfChallenge(context, parsedFriendReply)
+        )
+
+        // Mark consumed & verify duplicate paste block
+        assertFalse(ChallengeStorage.isCodeConsumed(context, friendReplyCode))
+        ChallengeStorage.markCodeConsumed(context, friendReplyCode)
+        assertTrue(ChallengeStorage.isCodeConsumed(context, friendReplyCode))
+
+        // Verify 200 FIFO cap on KEY_CONSUMED_CODES
+        for (i in 1..210) {
+            ChallengeStorage.markCodeConsumed(context, "DUMMY-CODE-$i")
+        }
+        val consumedSet = ChallengeStorage.getConsumedCodes(context)
+        assertEquals(200, consumedSet.size)
+        assertFalse("Oldest consumed entry must be evicted (FIFO)", consumedSet.contains("DUMMY-CODE-1"))
+        assertTrue("Newest consumed entry must be retained", consumedSet.contains("DUMMY-CODE-210"))
+
+        // 3. Unicode dashes & zero-width char sanitization in extractCodeFromText / parseChallengeCode
+        val baseValidCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 9090,
+            senderName = "CHARLIE",
+            chainId = "C77",
+            isRevenge = false
+        )
+        val segs = baseValidCode.split('-')
+        val mangledWhatsAppCode = "\u200B${segs[0]}\u2013${segs[1]}\u2014${segs[2]}\u2212${segs[3]}\uFE58${segs[4]}\uFF0D${segs[5]}\u2010${segs[6]}\u200D"
+        val extractedClean = ChallengeSeed.extractCodeFromText("Play my code: $mangledWhatsAppCode")
+        assertNotNull("WhatsApp mangled code with Unicode dashes & zero-width chars must extract cleanly", extractedClean)
+        val parsedClean = ChallengeSeed.parseChallengeCode(mangledWhatsAppCode)
+        assertNotNull("WhatsApp mangled code must parse cleanly", parsedClean)
+        assertEquals("CHARLIE", parsedClean!!.senderName)
+
+        // 4. Smart Share Optimization (Solo vs First-time Rival vs Repeat Rival)
+        assertFalse("Solo game with no rival must always generate full card", ChallengeStorage.shouldShareTextOnly(context, null))
+        assertFalse("First share with rival BRAVO must generate full card", ChallengeStorage.shouldShareTextOnly(context, "BRAVO"))
+        ChallengeStorage.setLastSharedRivalName(context, "BRAVO")
+        assertTrue("Consecutive share with same rival BRAVO must share text only", ChallengeStorage.shouldShareTextOnly(context, "BRAVO"))
+        assertFalse("Sharing with different rival DELTA must generate full card", ChallengeStorage.shouldShareTextOnly(context, "DELTA"))
+
+        // 5. Same Name Soft Block (Tier 2) in EnterChallengeDialog
+        val otherAlexCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 4321,
+            senderName = "ALEX",
+            chainId = "ALX",
+            isRevenge = false
+        )
+        val parsedOtherAlex = ChallengeSeed.parseChallengeCode(otherAlexCode)!!
+        assertFalse("Another user named ALEX on a different device is not Tier 1 self-challenge", ChallengeStorage.isSelfChallenge(context, parsedOtherAlex))
+        assertTrue("Another user named ALEX triggers Tier 2 Same Name collision", ChallengeStorage.isSameNameCollision(context, parsedOtherAlex))
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Open Settings and verify Battery Optimization Tip
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("battery_optimization_tip").assertExists()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Navigate to Rivalry tab, open Paste Rival Code dialog, paste other ALEX's code -> verify Soft Block dialog appears
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(otherAlexCode)
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("same_name_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("same_name_confirm_cancel_button").performClick()
+        composeTestRule.waitForIdle()
+    }
 }
 
 

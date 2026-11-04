@@ -128,30 +128,44 @@ object ChallengeSeed {
      *
      * Returns null if invalid structure, invalid characters, or failed checksum.
      */
+    private val ZERO_WIDTH_REGEX = Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]")
+    private val UNICODE_DASH_REGEX = Regex("[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]")
+
+    /**
+     * Strips invisible zero-width formatting characters (e.g. from WhatsApp/Telegram/iOS copy-paste)
+     * and normalizes Unicode en-dashes/em-dashes/minus signs to standard ASCII '-'.
+     */
+    fun sanitizeCodeText(input: String): String {
+        return input
+            .replace(ZERO_WIDTH_REGEX, "")
+            .replace(UNICODE_DASH_REGEX, "-")
+            .trim()
+    }
+
     /**
      * Extracts a challenge code token from freeform text if surrounded by words, colons, or quotes.
      */
     fun extractCodeFromText(input: String): String? {
-        val trimmed = input.trim()
-        if (parseInternal(trimmed) != null) return trimmed
+        val cleanedInput = sanitizeCodeText(input)
+        if (parseInternal(cleanedInput) != null) return cleanedInput
 
         // Format v2 7-segment: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
         val v2Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,4}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
-        v2Regex.find(input)?.let { m ->
+        v2Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             if (parseInternal(cand) != null) return cand
         }
 
         // 5-segment Legacy format: [Grid]-[Target]-T[tries][Diff]-[Seed]-[Checksum]
         val v1Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-T[135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
-        v1Regex.find(input)?.let { m ->
+        v1Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             if (parseInternal(cand) != null) return cand
         }
 
         // 4-segment / 3-segment Legacy format
         val v0Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b""", RegexOption.IGNORE_CASE)
-        v0Regex.find(input)?.let { m ->
+        v0Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             if (parseInternal(cand) != null) return cand
         }
@@ -160,18 +174,19 @@ object ChallengeSeed {
     }
 
     fun parseChallengeCode(rawCode: String): ParsedChallenge? {
-        val direct = parseInternal(rawCode.trim())
+        val cleaned = sanitizeCodeText(rawCode)
+        val direct = parseInternal(cleaned)
         if (direct != null) return direct
 
-        val extracted = extractCodeFromText(rawCode)
-        if (extracted != null && extracted != rawCode.trim()) {
+        val extracted = extractCodeFromText(cleaned)
+        if (extracted != null && extracted != cleaned) {
             return parseInternal(extracted)
         }
         return null
     }
 
     private fun parseInternal(rawCode: String): ParsedChallenge? {
-        val clean = rawCode.trim().uppercase()
+        val clean = sanitizeCodeText(rawCode).uppercase()
         val parts = clean.split('-')
 
         // 7-segment Format v2: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]

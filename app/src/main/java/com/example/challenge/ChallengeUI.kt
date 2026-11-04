@@ -420,20 +420,117 @@ fun EnterChallengeDialog(
     var showHelpBanner by remember { mutableStateOf(false) }
     var isSubmitFlashing by remember { mutableStateOf(false) }
 
-    // Dialog state for legacy 5-segment codes
+    // Dialog state for legacy 5-segment codes & Tier 2 Same-Name Soft Block
     var pendingLegacyChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
+    var pendingSameNameChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
+
+    val existingRivals = remember { ChallengeStorage.loadRivals(context) }
+    val liveParsed = remember(rawCode) { ChallengeSeed.parseChallengeCode(rawCode) }
+    val collidingRival = remember(liveParsed, existingRivals) {
+        if (liveParsed != null && !liveParsed.isLegacy && liveParsed.senderName.isNotEmpty()) {
+            existingRivals.firstOrNull {
+                it.name.equals(liveParsed.senderName, ignoreCase = true) &&
+                    it.lastChainId.isNotEmpty() &&
+                    !it.lastChainId.equals(liveParsed.chainId, ignoreCase = true)
+            }
+        } else null
+    }
+
+    fun executeValidChallengeSubmission(parsed: ParsedChallenge) {
+        if (parsed.isLegacy) {
+            // Confirmation 4: Pasting a legacy code opens LegacyCodeNameDialog at 0ms (dialog-opener = no flash).
+            pendingLegacyChallenge = parsed
+            return
+        }
+        val finalRival = if (rivalName.isNotBlank()) {
+            ChallengeSeed.sanitizePlayerName(rivalName)
+        } else {
+            parsed.senderName.ifEmpty { "RIVAL" }
+        }
+        // Inbound merge tuple: match awaiting challenge by (chainId + gridTag) ONLY
+        val matchedAwaiting = if (parsed.chainId.isNotEmpty()) {
+            ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+        } else null
+
+        if (matchedAwaiting != null || parsed.isRevenge) {
+            val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+            val fallbackBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
+            val myOriginalTarget = matchedAwaiting?.targetScore
+                ?: ChallengeStorage.lookupOutboundChainTarget(context, parsed.chainId)
+                ?: fallbackBest
+            val maxTriesToUse = if (matchedAwaiting != null) {
+                if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
+            } else {
+                if (parsed.tries == 0) 3 else parsed.tries
+            }
+
+            // PASS 5.11 Item 1 (OPTION A): responderScore >= myOriginalTarget -> LOST, < myOriginalTarget -> WON
+            ChallengeStorage.recordReplyOutcome(
+                context = context,
+                rivalName = finalRival,
+                myOriginalTarget = myOriginalTarget,
+                responderScore = parsed.targetScore,
+                gridSize = parsed.gridTag,
+                difficulty = parsed.difficulty,
+                chainId = parsed.chainId,
+                maxTries = maxTriesToUse
+            )
+            if (parsed.chainId.isNotEmpty()) {
+                ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+            }
+            ChallengeStorage.markCodeConsumed(context, parsed.fullCode)
+
+            isSubmitFlashing = true
+            scope.launch {
+                flashDelayMs(150L)
+                isSubmitFlashing = false
+                Toast.makeText(context, "Match result recorded vs $finalRival!", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            }
+        } else {
+            val item = ChallengeItem(
+                code = parsed.fullCode,
+                rivalName = finalRival,
+                gridSizeTag = parsed.gridTag,
+                targetScore = parsed.targetScore,
+                maxTries = parsed.tries,
+                attemptsLeft = parsed.tries,
+                bestScore = 0,
+                seed = parsed.seedInt,
+                difficulty = parsed.difficulty,
+                chainId = parsed.chainId,
+                isRevenge = parsed.isRevenge
+            )
+            isSubmitFlashing = true
+            scope.launch {
+                flashDelayMs(150L)
+                isSubmitFlashing = false
+                onSubmit(item)
+            }
+        }
+    }
 
     Dialog(
         onDismissRequest = {
-            if (pendingLegacyChallenge != null) {
-                pendingLegacyChallenge = null
-            } else {
-                onDismiss()
+            when {
+                pendingSameNameChallenge != null -> pendingSameNameChallenge = null
+                pendingLegacyChallenge != null -> pendingLegacyChallenge = null
+                else -> onDismiss()
             }
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        if (pendingLegacyChallenge != null) {
+        if (pendingSameNameChallenge != null) {
+            val parsedSame = pendingSameNameChallenge!!
+            SameNameConfirmCardContent(
+                senderName = parsedSame.senderName,
+                onCancel = { pendingSameNameChallenge = null },
+                onConfirmPlay = {
+                    pendingSameNameChallenge = null
+                    executeValidChallengeSubmission(parsedSame)
+                }
+            )
+        } else if (pendingLegacyChallenge != null) {
             LegacyCodeNameCardContent(
                 initialName = rivalName,
                 onDismiss = { pendingLegacyChallenge = null },
@@ -541,11 +638,12 @@ fun EnterChallengeDialog(
                 OutlinedTextField(
                     value = rawCode,
                     onValueChange = { input ->
-                        val extracted = ChallengeSeed.extractCodeFromText(input)
-                        rawCode = if (extracted != null && extracted != input.trim()) {
+                        val sanitized = ChallengeSeed.sanitizeCodeText(input)
+                        val extracted = ChallengeSeed.extractCodeFromText(sanitized)
+                        rawCode = if (extracted != null && extracted != sanitized) {
                             extracted
                         } else {
-                            input.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                            sanitized.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
                         }
                         errorMessage = null
                     },
@@ -555,7 +653,7 @@ fun EnterChallengeDialog(
                             onClick = {
                                 val clip = getClipboardTextSafely(context)
                                 if (!clip.isNullOrBlank()) {
-                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: clip
+                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: ChallengeSeed.sanitizeCodeText(clip)
                                     rawCode = extracted
                                     errorMessage = null
                                 } else {
@@ -594,6 +692,20 @@ fun EnterChallengeDialog(
                         .padding(top = 6.dp, start = 4.dp)
                         .testTag("challenge_code_example_text")
                 )
+
+                if (collidingRival != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Matches existing rival ${collidingRival.name} (or enter Custom Rival Name below if different).",
+                        color = Color(0xFFFFD600),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp)
+                            .testTag("rival_collision_hint_text")
+                    )
+                }
 
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(6.dp))
@@ -645,86 +757,21 @@ fun EnterChallengeDialog(
                     onClick = {
                         if (isSubmitFlashing) return@Button
                         val parsed = ChallengeSeed.parseChallengeCode(rawCode)
-                        val myName = ChallengeStorage.getMyName(context)
                         if (parsed == null) {
                             errorMessage = "Invalid challenge code format."
-                        } else if (parsed.senderName.isNotEmpty() && parsed.senderName.equals(myName, ignoreCase = true)) {
-                            errorMessage = "You cannot play your own challenge code!"
-                            Toast.makeText(context, "You cannot play your own challenge code!", Toast.LENGTH_SHORT).show()
                         } else if (ChallengeStorage.isSelfChallenge(context, rawCode) || ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
+                            // Tier 1: Hard Block on device history (KEY_MY_CODES)
                             errorMessage = "You cannot play your own challenge code!"
                             Toast.makeText(context, "You cannot play your own challenge code!", Toast.LENGTH_SHORT).show()
-                        } else if (parsed.isLegacy) {
-                            // Confirmation 4: Pasting a legacy code opens LegacyCodeNameDialog at 0ms (dialog-opener = no flash).
-                            pendingLegacyChallenge = parsed
+                        } else if (ChallengeStorage.isCodeConsumed(context, rawCode) || ChallengeStorage.isCodeConsumed(context, parsed.fullCode)) {
+                            // Anti-Farming: Block re-pasting already completed codes
+                            errorMessage = "Already completed"
+                            Toast.makeText(context, "Already completed", Toast.LENGTH_SHORT).show()
+                        } else if (ChallengeStorage.isSameNameCollision(context, parsed)) {
+                            // Tier 2: Soft Block Confirmation Dialog when senderName == myName
+                            pendingSameNameChallenge = parsed
                         } else {
-                            val finalRival = if (rivalName.isNotBlank()) {
-                                ChallengeSeed.sanitizePlayerName(rivalName)
-                            } else {
-                                parsed.senderName.ifEmpty { "RIVAL" }
-                            }
-                            // Inbound merge tuple: match awaiting challenge by (chainId + gridTag) ONLY
-                            val matchedAwaiting = if (parsed.chainId.isNotEmpty()) {
-                                ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
-                            } else null
-
-                            if (matchedAwaiting != null || parsed.isRevenge) {
-                                if (matchedAwaiting != null) {
-                                    ChallengeStorage.recordMatchOutcome(
-                                        context = context,
-                                        rivalName = finalRival,
-                                        userScore = matchedAwaiting.targetScore,
-                                        targetScore = parsed.targetScore,
-                                        gridSize = parsed.gridTag,
-                                        difficulty = parsed.difficulty,
-                                        chainId = parsed.chainId,
-                                        maxTries = if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
-                                    )
-                                    ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
-                                } else {
-                                    // Post-expiry reply code: awaiting card already expired (>72h),
-                                    // still create/merge the rival card normally from the NAME segment.
-                                    val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
-                                    val myBoardBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
-                                    ChallengeStorage.recordMatchOutcome(
-                                        context = context,
-                                        rivalName = finalRival,
-                                        userScore = myBoardBest,
-                                        targetScore = parsed.targetScore,
-                                        gridSize = parsed.gridTag,
-                                        difficulty = parsed.difficulty,
-                                        chainId = parsed.chainId,
-                                        maxTries = if (parsed.tries == 0) 3 else parsed.tries
-                                    )
-                                }
-                                isSubmitFlashing = true
-                                scope.launch {
-                                    flashDelayMs(150L)
-                                    isSubmitFlashing = false
-                                    Toast.makeText(context, "Match result recorded vs $finalRival!", Toast.LENGTH_SHORT).show()
-                                    onDismiss()
-                                }
-                            } else {
-                                val item = ChallengeItem(
-                                    code = parsed.fullCode,
-                                    rivalName = finalRival,
-                                    gridSizeTag = parsed.gridTag,
-                                    targetScore = parsed.targetScore,
-                                    maxTries = parsed.tries,
-                                    attemptsLeft = parsed.tries,
-                                    bestScore = 0,
-                                    seed = parsed.seedInt,
-                                    difficulty = parsed.difficulty,
-                                    chainId = parsed.chainId,
-                                    isRevenge = parsed.isRevenge
-                                )
-                                isSubmitFlashing = true
-                                scope.launch {
-                                    flashDelayMs(150L)
-                                    isSubmitFlashing = false
-                                    onSubmit(item)
-                                }
-                            }
+                            executeValidChallengeSubmission(parsed)
                         }
                     },
                     modifier = Modifier
@@ -745,6 +792,80 @@ fun EnterChallengeDialog(
                 }
             }
         }
+        }
+    }
+}
+
+/**
+ * Tier 2 Soft Block Confirmation Card when senderName matches local player name.
+ */
+@Composable
+fun SameNameConfirmCardContent(
+    senderName: String,
+    onCancel: () -> Unit,
+    onConfirmPlay: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .border(1.5.dp, Color(0xFFFFD600), RoundedCornerShape(20.dp))
+            .testTag("same_name_confirm_dialog"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Same Name Detected",
+                color = Color(0xFFFFD600),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.testTag("same_name_confirm_title")
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "This code is from $senderName, and your name is also $senderName. Are you sure you want to play it?",
+                color = Color(0xFFCBD5E1),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("same_name_confirm_message")
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 46.dp)
+                        .testTag("same_name_confirm_cancel_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Cancel", color = Color(0xFF94A3B8), fontWeight = FontWeight.SemiBold)
+                }
+                Button(
+                    onClick = onConfirmPlay,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 46.dp)
+                        .testTag("same_name_confirm_yes_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color.Black
+                    )
+                ) {
+                    Text("Yes, Play", fontWeight = FontWeight.ExtraBold)
+                }
+            }
         }
     }
 }
@@ -984,8 +1105,91 @@ fun PasteRivalCodeDialog(
     var codeInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isPasteRivalFlashing by remember { mutableStateOf(false) }
+    var pendingSameNameChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    fun executeValidRivalPaste(parsed: ParsedChallenge) {
+        val matchedAwaiting = if (parsed.chainId.isNotEmpty()) {
+            ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+        } else null
+
+        if (matchedAwaiting != null || parsed.isRevenge) {
+            val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+            val fallbackBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
+            val myOriginalTarget = matchedAwaiting?.targetScore
+                ?: ChallengeStorage.lookupOutboundChainTarget(context, parsed.chainId)
+                ?: fallbackBest
+            val maxTriesToUse = if (matchedAwaiting != null) {
+                if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
+            } else {
+                if (parsed.tries == 0) 3 else parsed.tries
+            }
+
+            // PASS 5.11 Item 1 (OPTION A): responderScore >= myOriginalTarget -> LOST, < myOriginalTarget -> WON
+            ChallengeStorage.recordReplyOutcome(
+                context = context,
+                rivalName = rivalName,
+                myOriginalTarget = myOriginalTarget,
+                responderScore = parsed.targetScore,
+                gridSize = parsed.gridTag,
+                difficulty = parsed.difficulty,
+                chainId = parsed.chainId,
+                maxTries = maxTriesToUse
+            )
+            if (parsed.chainId.isNotEmpty()) {
+                ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
+            }
+            ChallengeStorage.markCodeConsumed(context, parsed.fullCode)
+
+            isPasteRivalFlashing = true
+            scope.launch {
+                flashDelayMs(150L)
+                isPasteRivalFlashing = false
+                Toast.makeText(context, "Match result recorded vs $rivalName!", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            }
+        } else {
+            val item = ChallengeItem(
+                code = parsed.fullCode,
+                rivalName = rivalName,
+                gridSizeTag = parsed.gridTag,
+                targetScore = parsed.targetScore,
+                maxTries = parsed.tries,
+                attemptsLeft = parsed.tries,
+                bestScore = 0,
+                seed = parsed.seedInt,
+                difficulty = parsed.difficulty,
+                chainId = parsed.chainId,
+                isRevenge = parsed.isRevenge
+            )
+            isPasteRivalFlashing = true
+            scope.launch {
+                flashDelayMs(150L)
+                isPasteRivalFlashing = false
+                onSubmit(item)
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = {
+            if (pendingSameNameChallenge != null) {
+                pendingSameNameChallenge = null
+            } else {
+                onDismiss()
+            }
+        }
+    ) {
+        if (pendingSameNameChallenge != null) {
+            val parsedSame = pendingSameNameChallenge!!
+            SameNameConfirmCardContent(
+                senderName = parsedSame.senderName,
+                onCancel = { pendingSameNameChallenge = null },
+                onConfirmPlay = {
+                    pendingSameNameChallenge = null
+                    executeValidRivalPaste(parsedSame)
+                }
+            )
+        } else {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1020,11 +1224,12 @@ fun PasteRivalCodeDialog(
                 OutlinedTextField(
                     value = codeInput,
                     onValueChange = { input ->
-                        val extracted = ChallengeSeed.extractCodeFromText(input)
-                        codeInput = if (extracted != null && extracted != input.trim()) {
+                        val sanitized = ChallengeSeed.sanitizeCodeText(input)
+                        val extracted = ChallengeSeed.extractCodeFromText(sanitized)
+                        codeInput = if (extracted != null && extracted != sanitized) {
                             extracted
                         } else {
-                            input.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                            sanitized.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
                         }
                         errorMessage = null
                     },
@@ -1034,7 +1239,7 @@ fun PasteRivalCodeDialog(
                             onClick = {
                                 val clip = getClipboardTextSafely(context)
                                 if (!clip.isNullOrBlank()) {
-                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: clip
+                                    val extracted = ChallengeSeed.extractCodeFromText(clip) ?: ChallengeSeed.sanitizeCodeText(clip)
                                     codeInput = extracted
                                     errorMessage = null
                                 } else {
@@ -1083,73 +1288,18 @@ fun PasteRivalCodeDialog(
                             val toastMsg = "This code is from ${parsed.senderName}. Use 'Paste Code' on the Rivalry tab instead."
                             Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                             errorMessage = toastMsg
-                        } else if (ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
+                        } else if (ChallengeStorage.isSelfChallenge(context, codeInput) || ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
                             val toastMsg = "You cannot play your own challenge code!"
                             Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                             errorMessage = toastMsg
+                        } else if (ChallengeStorage.isCodeConsumed(context, codeInput) || ChallengeStorage.isCodeConsumed(context, parsed.fullCode)) {
+                            val toastMsg = "Already completed"
+                            Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+                            errorMessage = toastMsg
+                        } else if (ChallengeStorage.isSameNameCollision(context, parsed)) {
+                            pendingSameNameChallenge = parsed
                         } else {
-                            val matchedAwaiting = if (parsed.chainId.isNotEmpty()) {
-                                ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
-                            } else null
-
-                            if (matchedAwaiting != null || parsed.isRevenge) {
-                                if (matchedAwaiting != null) {
-                                    ChallengeStorage.recordMatchOutcome(
-                                        context = context,
-                                        rivalName = rivalName,
-                                        userScore = matchedAwaiting.targetScore,
-                                        targetScore = parsed.targetScore,
-                                        gridSize = parsed.gridTag,
-                                        difficulty = parsed.difficulty,
-                                        chainId = parsed.chainId,
-                                        maxTries = if (matchedAwaiting.tries == 0) 3 else matchedAwaiting.tries
-                                    )
-                                    ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
-                                } else {
-                                    val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
-                                    val myBoardBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
-                                    ChallengeStorage.recordMatchOutcome(
-                                        context = context,
-                                        rivalName = rivalName,
-                                        userScore = myBoardBest,
-                                        targetScore = parsed.targetScore,
-                                        gridSize = parsed.gridTag,
-                                        difficulty = parsed.difficulty,
-                                        chainId = parsed.chainId,
-                                        maxTries = if (parsed.tries == 0) 3 else parsed.tries
-                                    )
-                                    if (parsed.chainId.isNotEmpty()) {
-                                        ChallengeStorage.deleteAwaitingMatch(context, parsed.chainId, parsed.gridTag)
-                                    }
-                                }
-                                isPasteRivalFlashing = true
-                                scope.launch {
-                                    flashDelayMs(150L)
-                                    isPasteRivalFlashing = false
-                                    Toast.makeText(context, "Match result recorded vs $rivalName!", Toast.LENGTH_SHORT).show()
-                                    onDismiss()
-                                }
-                            } else {
-                                val item = ChallengeItem(
-                                    code = parsed.fullCode,
-                                    rivalName = rivalName,
-                                    gridSizeTag = parsed.gridTag,
-                                    targetScore = parsed.targetScore,
-                                    maxTries = parsed.tries,
-                                    attemptsLeft = parsed.tries,
-                                    bestScore = 0,
-                                    seed = parsed.seedInt,
-                                    difficulty = parsed.difficulty,
-                                    chainId = parsed.chainId,
-                                    isRevenge = parsed.isRevenge
-                                )
-                                isPasteRivalFlashing = true
-                                scope.launch {
-                                    flashDelayMs(150L)
-                                    isPasteRivalFlashing = false
-                                    onSubmit(item)
-                                }
-                            }
+                            executeValidRivalPaste(parsed)
                         }
                     },
                     modifier = Modifier
@@ -1165,6 +1315,7 @@ fun PasteRivalCodeDialog(
                     Text(if (isPasteRivalFlashing) "✓ Accepted!" else "Accept Rival Code", fontWeight = FontWeight.Bold)
                 }
             }
+        }
         }
     }
 }
