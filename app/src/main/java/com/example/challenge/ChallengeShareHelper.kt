@@ -36,7 +36,8 @@ object ChallengeShareHelper {
         difficulty: GameDifficulty = GameDifficulty.EASY,
         isReply: Boolean = false,
         rivalName: String? = null,
-        won: Boolean = false
+        won: Boolean = false,
+        tied: Boolean = false
     ): Bitmap {
         val width = 1080
         val height = 1350
@@ -112,14 +113,22 @@ object ChallengeShareHelper {
         canvas.drawRoundRect(badgeRect, 20f, 20f, badgeBgPaint)
 
         val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#00E5FF")
+            color = when {
+                isReply && tied -> Color.parseColor("#FFD600")
+                isReply && won -> Color.parseColor("#00E676")
+                else -> Color.parseColor("#00E5FF")
+            }
             textSize = 34f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.15f
         }
         val badgeLabel = if (isReply) {
-            if (won) "CHALLENGE CONQUERED!" else "CHALLENGE COMPLETED"
+            when {
+                tied -> "CHALLENGE TIED! 🤝"
+                won -> "CHALLENGE CONQUERED!"
+                else -> "CHALLENGE COMPLETED"
+            }
         } else {
             "OFFICIAL ASYNC CHALLENGE"
         }
@@ -134,7 +143,11 @@ object ChallengeShareHelper {
         canvas.drawRoundRect(centerCardRect, 32f, 32f, centerCardBg)
 
         val centerCardBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (won) Color.parseColor("#00E676") else Color.parseColor("#38BDF8")
+            color = when {
+                tied -> Color.parseColor("#FFD600")
+                won -> Color.parseColor("#00E676")
+                else -> Color.parseColor("#38BDF8")
+            }
             style = Paint.Style.STROKE
             strokeWidth = 4f
         }
@@ -340,7 +353,8 @@ object ChallengeShareHelper {
         myScore: Int,
         targetScore: Int,
         rivalName: String,
-        won: Boolean
+        won: Boolean,
+        tied: Boolean = myScore == targetScore
     ) = withContext(Dispatchers.IO) {
         val useTextOnly = ChallengeStorage.shouldShareTextOnly(context, rivalName)
         if (rivalName.isNotBlank()) {
@@ -358,7 +372,8 @@ object ChallengeShareHelper {
             attempts = 1,
             isReply = true,
             rivalName = rivalName,
-            won = won
+            won = won && !tied,
+            tied = tied
         )
 
         val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }

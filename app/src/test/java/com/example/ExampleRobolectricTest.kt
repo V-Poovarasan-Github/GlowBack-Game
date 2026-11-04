@@ -1526,8 +1526,8 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         ChallengeStorage.setMyName(context, "HERO")
 
-        // 1. Verify recordMatchOutcome treats userScore == targetScore as WON in challenge context (auto-stop at target)
-        val conquestRecord = ChallengeStorage.recordMatchOutcome(
+        // 1. Verify recordMatchOutcome uses strict <, ==, > (5 vs 5 = TIED, 6 vs 5 = WON)
+        val tieRecord = ChallengeStorage.recordMatchOutcome(
             context = context,
             rivalName = "POOVARASAN",
             userScore = 5,
@@ -1537,10 +1537,25 @@ class ExampleRobolectricTest {
             chainId = "CNQ",
             maxTries = 3
         )
+        assertNotNull(tieRecord)
+        assertEquals("TIED", tieRecord!!.lastStatus)
+        assertEquals(0, tieRecord.wins)
+        assertEquals(1, tieRecord.ties)
+
+        val conquestRecord = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "POOVARASAN",
+            userScore = 6,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CNQ",
+            maxTries = 3
+        )
         assertNotNull(conquestRecord)
         assertEquals("WON", conquestRecord!!.lastStatus)
         assertEquals(1, conquestRecord.wins)
-        assertEquals(0, conquestRecord.ties)
+        assertEquals(1, conquestRecord.ties)
 
         composeTestRule.waitForIdle()
         runCatching {
@@ -1556,7 +1571,7 @@ class ExampleRobolectricTest {
             targetScore = 5,
             maxTries = 3,
             attemptsLeft = 2,
-            bestScore = 5,
+            bestScore = 6,
             seed = 12345,
             difficulty = GameDifficulty.EASY,
             chainId = "CNQ",
@@ -1600,7 +1615,7 @@ class ExampleRobolectricTest {
         // Must stay on Hall of Fame / Rivalry tab (not start a game on Home)
         composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
         assertTrue(
-            "Rival FALCON must be recorded from Reply Code with WON status (6 >= 5)",
+            "Rival FALCON must be recorded from Reply Code with WON status (responder 5 < myTarget 6)",
             ChallengeStorage.loadRivals(context).any { it.name == "FALCON" && it.lastStatus == "WON" }
         )
     }
@@ -1610,7 +1625,7 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         ChallengeStorage.setMyName(context, "ALEX")
 
-        // 1. Fix Inverted Win/Loss on Reply Codes (Option A) + 72h chainId -> targetScore map for 1-to-many group replies
+        // 1. Fix Inverted Win/Loss on Reply Codes + 72h chainId -> targetScore map for 1-to-many group replies
         val outboundTCode = ChallengeSeed.formatChallengeCode(
             gridTag = "3x3",
             targetScore = 6,
@@ -1624,11 +1639,11 @@ class ExampleRobolectricTest {
         ChallengeStorage.recordCreatedCode(context, outboundTCode)
         assertEquals(6, ChallengeStorage.lookupOutboundChainTarget(context, "GRP"))
 
-        // Friend 1 (BRAVO) beats/reaches target 6 (responderScore = 6 >= myOriginalTarget 6 -> I LOST)
+        // Friend 1 (BRAVO) beats target 6 (responderScore = 7 > myOriginalTarget 6 -> I LOST)
         val bravoReply = ChallengeStorage.recordReplyOutcome(
             context = context,
             rivalName = "BRAVO",
-            responderScore = 6,
+            responderScore = 7,
             myOriginalTarget = ChallengeStorage.lookupOutboundChainTarget(context, "GRP") ?: 6,
             gridSize = "3x3",
             difficulty = GameDifficulty.EASY,
@@ -1772,6 +1787,126 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("same_name_confirm_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("same_name_confirm_cancel_button").performClick()
         composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun pass5_13_finalLogicCompletion_strictTie_revengeBannerAndGate_and_challengeItemIsWon() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // Item 1: Fix "7 vs 7" Showing as LOST -> strict <, ==, > comparisons
+        // Responder playing T-code: 7 vs 7 = TIED, 8 vs 7 = WON, 6 vs 7 = LOST
+        val tTie = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "VIKRAM",
+            userScore = 7,
+            targetScore = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "T77",
+            maxTries = 3
+        )
+        assertNotNull(tTie)
+        assertEquals("TIED", tTie!!.lastStatus)
+        assertEquals(1, tTie.ties)
+        assertEquals(0, tTie.wins)
+        assertEquals(0, tTie.losses)
+
+        // Original sender pasting R-code: responderScore == myOriginalTarget (7 vs 7) = TIED
+        val rTie = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "VIKRAM",
+            responderScore = 7,
+            myOriginalTarget = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "T77",
+            maxTries = 3
+        )
+        assertNotNull(rTie)
+        assertEquals("TIED", rTie!!.lastStatus)
+        assertEquals(2, rTie.ties)
+
+        // Responder 6 < myOriginalTarget 7 -> I WON (Defended)
+        val rWin = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "VIKRAM",
+            responderScore = 6,
+            myOriginalTarget = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "T77",
+            maxTries = 3
+        )
+        assertEquals("WON", rWin!!.lastStatus)
+        assertEquals(1, rWin.wins)
+
+        // Responder 8 > myOriginalTarget 7 -> I LOST (Rival Conquered)
+        val rLoss = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "VIKRAM",
+            responderScore = 8,
+            myOriginalTarget = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "T77",
+            maxTries = 3
+        )
+        assertEquals("LOST", rLoss!!.lastStatus)
+        assertEquals(1, rLoss.losses)
+
+        // Item 7: ChallengeItem.isWon strictly uses bestScore > targetScore (== is Tie)
+        val tiedChallengeItem = ChallengeItem(
+            code = "2x2-7-T3E-VIKRAM-T77-8X2A-C",
+            rivalName = "VIKRAM",
+            gridSizeTag = "2x2",
+            targetScore = 7,
+            maxTries = 3,
+            attemptsLeft = 2,
+            bestScore = 7,
+            seed = 1234,
+            difficulty = GameDifficulty.EASY
+        )
+        assertFalse("bestScore == targetScore must NOT be isWon", tiedChallengeItem.isWon)
+        assertTrue("bestScore == targetScore must be isTied", tiedChallengeItem.isTied)
+        assertFalse("Tied item with attemptsLeft > 0 must NOT be isCompleted", tiedChallengeItem.isCompleted)
+
+        val wonChallengeItem = tiedChallengeItem.copy(bestScore = 8)
+        assertTrue("bestScore > targetScore must be isWon", wonChallengeItem.isWon)
+        assertTrue("Won item must be isCompleted immediately", wonChallengeItem.isCompleted)
+
+        // Item 5: Reply card bitmap with tied = true renders cleanly
+        val tiedBitmap = com.example.challenge.ChallengeShareHelper.createChallengeBitmap(
+            code = "2x2-7-R3E-HERO-T77-8X2A-K",
+            gridSizeTag = "2x2",
+            score = 7,
+            attempts = 1,
+            tries = 3,
+            paceName = "Classic",
+            difficulty = GameDifficulty.EASY,
+            isReply = true,
+            won = false,
+            tied = true,
+            rivalName = "VIKRAM"
+        )
+        assertNotNull(tiedBitmap)
+        assertEquals(1080, tiedBitmap.width)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Item 8 & 9: Tap "Get Revenge" on VIKRAM (lastStatus = "LOST", lastTarget = 8) -> verify in-game Revenge banner
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_VIKRAM").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("⚡ REVENGE vs VIKRAM").assertIsDisplayed()
+        composeTestRule.onNodeWithText("BEAT: 8", substring = true).assertIsDisplayed()
     }
 }
 

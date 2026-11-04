@@ -166,13 +166,14 @@ fun formatAwaitingExpiry(createdAt: Long, now: Long = System.currentTimeMillis()
 fun InGameChallengeBanner(
     rivalName: String,
     targetScore: Int,
-    triesLeft: Int,
+    triesLeft: Int = 0,
     maxTries: Int = 3,
     isRevenge: Boolean = false,
+    isRevengeRunMode: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val borderColor = if (isRevenge) Color(0xFFFF0055) else Color(0xFF00E5FF)
-    val dotColor = if (isRevenge) Color(0xFFFF0055) else Color(0xFF00E5FF)
+    val borderColor = if (isRevenge || isRevengeRunMode) Color(0xFFFF0055) else Color(0xFF00E5FF)
+    val dotColor = if (isRevenge || isRevengeRunMode) Color(0xFFFF0055) else Color(0xFF00E5FF)
 
     Box(
         modifier = modifier
@@ -184,37 +185,58 @@ fun InGameChallengeBanner(
             .testTag("ingame_challenge_banner"),
         contentAlignment = Alignment.Center
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(dotColor)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isRevenge) "REVENGE vs $rivalName" else "RIVAL: $rivalName",
-                color = if (isRevenge) Color(0xFFFF5252) else Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp
-            )
-            Text(
-                text = "  •  TARGET: $targetScore",
-                color = Color(0xFFFFD600),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            val triesDisplay = if (maxTries == 0) "Unlimited" else "$triesLeft"
-            Text(
-                text = "  •  TRIES: $triesDisplay",
-                color = if (maxTries == 0 || triesLeft > 1) Color(0xFF00E676) else Color(0xFFFF5252),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+        if (isRevengeRunMode) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "⚡ REVENGE vs ${rivalName.uppercase()}",
+                    color = Color(0xFFFF5252),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
+                )
+                Text(
+                    text = "  •  BEAT: $targetScore",
+                    color = Color(0xFFFFD600),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isRevenge) "REVENGE vs $rivalName" else "RIVAL: $rivalName",
+                    color = if (isRevenge) Color(0xFFFF5252) else Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
+                )
+                Text(
+                    text = "  •  TARGET: $targetScore",
+                    color = Color(0xFFFFD600),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                val triesDisplay = if (maxTries == 0) "Unlimited" else "$triesLeft"
+                Text(
+                    text = "  •  TRIES: $triesDisplay",
+                    color = if (maxTries == 0 || triesLeft > 1) Color(0xFF00E676) else Color(0xFFFF5252),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -266,6 +288,7 @@ fun ChallengeCard(
 ) {
     val borderColor = when {
         item.isWon -> Color(0xFF00E676)
+        item.isTied -> Color(0xFFFFD600)
         item.attemptsLeft <= 0 -> Color(0xFF64748B)
         item.isRevenge -> Color(0xFFFF0055)
         else -> Color(0xFF00E5FF)
@@ -354,12 +377,15 @@ fun ChallengeCard(
             ) {
                 val triesText = when {
                     item.isWon -> "WON!"
+                    item.isTied && !item.isFreeTries && item.attemptsLeft <= 0 -> "TIED!"
+                    item.isTied -> "TIED (${item.attemptsLeft}/${item.maxTries})"
                     item.isFreeTries -> if (item.bestScore > 0) "IN PROGRESS" else "FREE TRIES"
                     item.attemptsLeft <= 0 -> "OUT OF TRIES"
                     else -> "${item.attemptsLeft}/${item.maxTries} tries"
                 }
                 val triesColor = when {
                     item.isWon -> Color(0xFF00E676)
+                    item.isTied -> Color(0xFFFFD600)
                     item.isFreeTries -> Color(0xFF38BDF8)
                     item.attemptsLeft <= 0 -> Color(0xFFFF5252)
                     else -> Color(0xFF94A3B8)

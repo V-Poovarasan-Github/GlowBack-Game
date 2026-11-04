@@ -391,19 +391,19 @@ object ChallengeStorage {
         difficulty: GameDifficulty,
         chainId: String,
         maxTries: Int = 3,
-        allowTie: Boolean = false
+        allowTie: Boolean = true
     ): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName)
 
-        // In challenge contexts (where gameplay auto-stops upon reaching targetScore),
-        // userScore >= targetScore is a CONQUEST/WIN. Ties only occur if allowTie is explicitly enabled.
+        // PASS 5.13 Item 1: Strict <, ==, > comparisons for responder playing T-code:
+        // userScore > target = WON, userScore == target = TIED, userScore < target = LOST.
         val isWon = if (allowTie) userScore > targetScore else userScore >= targetScore
         val isTie = allowTie && userScore == targetScore
         val isLoss = userScore < targetScore
 
         // Confirmation 3: With Free tries (maxTries == 0), a Loss is impossible.
-        // Beat/conquer target = Win, quit without beating = no record (match stays open/pending).
+        // Beat/tie target = Win/Tie, quit without reaching target = no record (match stays open/pending).
         // Losses are only recorded when 1/3/5 tries are exhausted.
         if (maxTries == 0 && isLoss) {
             return null
@@ -440,10 +440,11 @@ object ChallengeStorage {
     }
 
     /**
-     * PASS 5.11 Item 1 (OPTION A): Records the outcome when pasting an inbound Reply Code (R-code).
-     * Since the responder's game auto-stops upon reaching myOriginalTarget:
-     * - If responderScore >= myOriginalTarget: I LOST (Rival Won / Conquered)
+     * PASS 5.13 Item 1: Records the outcome when pasting an inbound Reply Code (R-code)
+     * using strict <, ==, > comparisons:
      * - If responderScore < myOriginalTarget: I WON (I Defended)
+     * - If responderScore == myOriginalTarget: TIED
+     * - If responderScore > myOriginalTarget: I LOST (Rival Won / Conquered)
      */
     fun recordReplyOutcome(
         context: Context,
@@ -458,13 +459,18 @@ object ChallengeStorage {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName)
 
-        val isLost = responderScore >= myOriginalTarget
         val isWon = responderScore < myOriginalTarget
+        val isTie = responderScore == myOriginalTarget
+        val isLost = responderScore > myOriginalTarget
 
-        val status = if (isWon) "WON" else "LOST"
+        val status = when {
+            isWon -> "WON"
+            isTie -> "TIED"
+            else -> "LOST"
+        }
         val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
         val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
-        val updatedTies = existing?.ties ?: 0
+        val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
 
         val record = RivalRecord(

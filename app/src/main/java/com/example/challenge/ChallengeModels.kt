@@ -33,10 +33,13 @@ data class ChallengeItem(
         get() = maxTries == 0
 
     val isCompleted: Boolean
-        get() = bestScore >= targetScore || (!isFreeTries && attemptsLeft <= 0)
+        get() = bestScore > targetScore || (!isFreeTries && attemptsLeft <= 0)
 
     val isWon: Boolean
-        get() = bestScore >= targetScore
+        get() = bestScore > targetScore
+
+    val isTied: Boolean
+        get() = bestScore == targetScore && targetScore > 0
 }
 
 data class BoardScoreOption(
