@@ -270,17 +270,20 @@ object ChallengeStorage {
         gridSize: String,
         difficulty: GameDifficulty,
         chainId: String,
-        maxTries: Int = 3
+        maxTries: Int = 3,
+        allowTie: Boolean = false
     ): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName)
 
-        val isWon = userScore > targetScore
-        val isTie = userScore == targetScore
+        // In challenge contexts (where gameplay auto-stops upon reaching targetScore),
+        // userScore >= targetScore is a CONQUEST/WIN. Ties only occur if allowTie is explicitly enabled.
+        val isWon = if (allowTie) userScore > targetScore else userScore >= targetScore
+        val isTie = allowTie && userScore == targetScore
         val isLoss = userScore < targetScore
 
         // Confirmation 3: With Free tries (maxTries == 0), a Loss is impossible.
-        // Beat target = Win, exact match = Tie, quit without beating = no record (match stays open/pending).
+        // Beat/conquer target = Win, quit without beating = no record (match stays open/pending).
         // Losses are only recorded when 1/3/5 tries are exhausted.
         if (maxTries == 0 && isLoss) {
             return null
@@ -461,6 +464,12 @@ object ChallengeStorage {
         val myName = getMyName(context)
         if (parsed != null && parsed.senderName.isNotEmpty() && parsed.senderName.equals(myName, ignoreCase = true)) {
             return true
+        }
+
+        // Bypass Rule 2 for Reply Codes: Reply codes carry the original seed/chain back to the creator's device
+        val tdToken = clean.split('-').getOrNull(2)?.uppercase() ?: ""
+        if (parsed?.isRevenge == true || tdToken.startsWith("R")) {
+            return false
         }
 
         // Rule 2: Check against locally generated code hashes

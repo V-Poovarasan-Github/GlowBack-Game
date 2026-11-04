@@ -1520,6 +1520,90 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
         composeTestRule.waitForIdle()
     }
+
+    @Test
+    fun pass5_9_rivalryFlowCleanup_replyRecordOnly_and_conquestWin() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Verify recordMatchOutcome treats userScore == targetScore as WON in challenge context (auto-stop at target)
+        val conquestRecord = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "POOVARASAN",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CNQ",
+            maxTries = 3
+        )
+        assertNotNull(conquestRecord)
+        assertEquals("WON", conquestRecord!!.lastStatus)
+        assertEquals(1, conquestRecord.wins)
+        assertEquals(0, conquestRecord.ties)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 2. Verify ActiveChallengesRail is never shown on Home screen even if legacy challenge is saved
+        val legacyItem = ChallengeItem(
+            code = "2x2-5-T3E-POOVARASAN-CNQ-8X2A-C",
+            rivalName = "POOVARASAN",
+            gridSizeTag = "2x2",
+            targetScore = 5,
+            maxTries = 3,
+            attemptsLeft = 2,
+            bestScore = 5,
+            seed = 12345,
+            difficulty = GameDifficulty.EASY,
+            chainId = "CNQ",
+            isRevenge = false
+        )
+        ChallengeStorage.saveChallenge(context, legacyItem)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("active_challenges_rail").assertDoesNotExist()
+
+        // 3. Verify pasting a Reply Code on Leaderboard -> Rivalry records outcome and stays on Leaderboard (does NOT start game)
+        val awaiting = com.example.challenge.AwaitingChallenge(
+            chainId = "R99",
+            code = "2x2-6-T3E-HERO-R99-8X2A-C",
+            gridSizeTag = "2x2",
+            targetScore = 6,
+            difficulty = GameDifficulty.EASY,
+            paceName = "Classic",
+            tries = 3
+        )
+        ChallengeStorage.saveAwaitingChallenge(context, awaiting)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val replyCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 7777,
+            senderName = "FALCON",
+            chainId = "R99",
+            isRevenge = true
+        )
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(replyCode)
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must stay on Hall of Fame / Rivalry tab (not start a game on Home)
+        composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
+        assertTrue(
+            "Rival FALCON must be recorded from Reply Code with WON status (6 >= 5)",
+            ChallengeStorage.loadRivals(context).any { it.name == "FALCON" && it.lastStatus == "WON" }
+        )
+    }
 }
 
 

@@ -729,6 +729,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var activeDialog by remember {
         mutableStateOf(if (ChallengeStorage.getPendingShare(context) != null) ActiveDialog.DID_YOU_SHARE else ActiveDialog.NONE)
     }
+    var pendingReplyAfterNameSetup by remember { mutableStateOf(false) }
     var awaitingChallengeForDialog by remember {
         mutableStateOf(ChallengeStorage.getPendingShare(context))
     }
@@ -810,6 +811,35 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
         } else {
             activeDialog = ActiveDialog.TRIES_SELECTOR
+        }
+    }
+
+    fun executeReplyToRival(senderName: String) {
+        val ch = activeChallenge ?: return
+        // Reply-Code Exemption: Responder's reply code bypasses the score-5 minimum gate at any score (>= 1)
+        // and embeds the responder's own name, score, seed, chainId, and R-prefixed revenge token.
+        val replyChainId = ch.chainId.ifEmpty { ChallengeSeed.generateChainId() }
+        val replyCode = ChallengeSeed.formatChallengeCode(
+            gridTag = ch.gridSizeTag,
+            targetScore = currentScore.coerceAtLeast(1),
+            tries = ch.maxTries,
+            difficulty = ch.difficulty,
+            seed = currentRunSeed,
+            senderName = senderName,
+            chainId = replyChainId,
+            isRevenge = true
+        )
+        ChallengeStorage.recordCreatedCode(context, replyCode)
+        coroutineScope.launch {
+            ChallengeShareHelper.shareReplyResult(
+                context = context,
+                code = replyCode,
+                gridSizeTag = ch.gridSizeTag,
+                myScore = currentScore,
+                targetScore = ch.targetScore,
+                rivalName = ch.rivalName,
+                won = currentScore >= ch.targetScore
+            )
         }
     }
 
@@ -1115,8 +1145,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         activeChallenge = item
         difficultyMode = item.difficulty
         challengeAttemptsLeft = item.attemptsLeft
-        isChallengeWon = item.isWon
-        isChallengeLost = item.attemptsLeft <= 0 && !item.isWon
+        isChallengeWon = false
+        isChallengeLost = false
         gameMode = GameMode.SOLO
 
         val targetGrid = when (item.gridSizeTag.lowercase()) {
@@ -1188,6 +1218,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         matchStandings = emptyList()
         if (activeChallenge != null) {
             val challenge = activeChallenge!!
+            isChallengeWon = false
+            isChallengeLost = false
             val targetGrid = when (challenge.gridSizeTag.lowercase()) {
                 "3x3" -> GridSize.THREE_BY_THREE
                 "4x4" -> GridSize.FOUR_BY_FOUR
@@ -1204,6 +1236,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             roundTrigger++
             gameState = GameState.WATCHING
         } else if (gameMode == GameMode.SOLO) {
+            isChallengeWon = false
+            isChallengeLost = false
             val newSeed = ChallengeSeed.generateRandomSeed()
             currentRunSeed = newSeed
             selectedShareTries = 3
@@ -1322,12 +1356,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         val ch = activeChallenge!!
                         if (currentScore > ch.bestScore) {
                             ch.bestScore = currentScore
-                            ChallengeStorage.updateChallenge(context, ch)
-                            savedChallenges = ChallengeStorage.loadChallenges(context)
                         }
                         if (currentScore >= ch.targetScore) {
-                            // Immediate Victory: stop sequence coroutine and transition to victory game over
+                            // Immediate Victory: record outcome, stop sequence coroutine, and transition to victory game over
                             isChallengeWon = true
+                            isChallengeLost = false
+                            ChallengeStorage.recordMatchOutcome(
+                                context = context,
+                                rivalName = ch.rivalName,
+                                userScore = currentScore,
+                                targetScore = ch.targetScore,
+                                gridSize = ch.gridSizeTag,
+                                difficulty = ch.difficulty,
+                                chainId = ch.chainId,
+                                maxTries = ch.maxTries
+                            )
                             tapFlashJob?.cancel()
                             activePadId = null
                             allPadsConfettiFlash = false
@@ -1460,15 +1503,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     if (currentScore > ch.bestScore) {
                         ch.bestScore = currentScore
                     }
-                    ChallengeStorage.updateChallenge(context, ch)
-                    savedChallenges = ChallengeStorage.loadChallenges(context)
-                    if (currentScore >= ch.targetScore) {
-                        isChallengeWon = true
-                        isChallengeLost = false
-                    } else if (!isFree && newTries <= 0) {
-                        isChallengeLost = true
-                        isChallengeWon = false
-                    }
+                    // Determine win/loss strictly from currentScore vs targetScore on THIS attempt
+                    isChallengeWon = currentScore >= ch.targetScore
+                    isChallengeLost = !isChallengeWon && !isFree && newTries <= 0
                     if (isChallengeWon || (isChallengeLost && !isFree)) {
                         ChallengeStorage.recordMatchOutcome(
                             context = context,
@@ -1745,19 +1782,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     }
                                 }
                             )
-
-                            // CHALLENGE RAIL: Only when non-empty in SOLO IDLE mode
-                            if (gameState == GameState.IDLE && gameMode == GameMode.SOLO && savedChallenges.isNotEmpty()) {
-                                ActiveChallengesRail(
-                                    challenges = savedChallenges,
-                                    onPlayChallenge = ::startChallenge,
-                                    onDeleteChallenge = { code ->
-                                        ChallengeStorage.deleteChallenge(context, code)
-                                        savedChallenges = ChallengeStorage.loadChallenges(context)
-                                    },
-                                    onOpenEnterModal = { activeDialog = ActiveDialog.ENTER_CHALLENGE }
-                                )
-                            }
                         }
                     }
 
@@ -2043,40 +2067,23 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         },
                         onReplyToRival = {
                             if (activeChallenge != null) {
-                                val ch = activeChallenge!!
-                                // Reply-Code Exemption: Responder's reply code bypasses the score-5 minimum gate at any score (>= 1)
-                                // and embeds the responder's own name, score, seed, chainId, and R-prefixed revenge token.
-                                val myReplyName = ChallengeStorage.getMyName(context)
-                                val replyChainId = ch.chainId.ifEmpty { ChallengeSeed.generateChainId() }
-                                val replyCode = ChallengeSeed.formatChallengeCode(
-                                    gridTag = ch.gridSizeTag,
-                                    targetScore = currentScore.coerceAtLeast(1),
-                                    tries = ch.maxTries,
-                                    difficulty = ch.difficulty,
-                                    seed = currentRunSeed,
-                                    senderName = myReplyName,
-                                    chainId = replyChainId,
-                                    isRevenge = true
-                                )
-                                ChallengeStorage.recordCreatedCode(context, replyCode)
-                                coroutineScope.launch {
-                                    ChallengeShareHelper.shareReplyResult(
-                                        context = context,
-                                        code = replyCode,
-                                        gridSizeTag = ch.gridSizeTag,
-                                        myScore = currentScore,
-                                        targetScore = ch.targetScore,
-                                        rivalName = ch.rivalName,
-                                        won = currentScore >= ch.targetScore
-                                    )
+                                if (!ChallengeStorage.hasConfiguredName(context)) {
+                                    pendingReplyAfterNameSetup = true
+                                    activeDialog = ActiveDialog.NAME_SETUP
+                                } else {
+                                    executeReplyToRival(ChallengeStorage.getMyName(context))
                                 }
                             }
                         },
                         onExitChallenge = {
+                            discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
                             soloRng = null
+                            isChallengeWon = false
+                            isChallengeLost = false
                             resetRunState()
+                            activeRunState = null
                             gameState = GameState.IDLE
                         }
                     )
@@ -2147,16 +2154,26 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 onPlayNow = {
                     activeDialog = ActiveDialog.NONE
                     currentScreen = AppScreen.HOME
+                    resetToIdleForMode(GameMode.SOLO)
                     startNewGame()
                 }
             )
         }
         ActiveDialog.NAME_SETUP -> {
             ChallengerNameSetupDialog(
-                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onDismiss = {
+                    pendingReplyAfterNameSetup = false
+                    activeDialog = ActiveDialog.NONE
+                },
                 onSaveName = { savedName ->
                     ChallengeStorage.setMyName(context, savedName)
-                    activeDialog = ActiveDialog.TRIES_SELECTOR
+                    if (pendingReplyAfterNameSetup) {
+                        pendingReplyAfterNameSetup = false
+                        activeDialog = ActiveDialog.NONE
+                        executeReplyToRival(savedName)
+                    } else {
+                        activeDialog = ActiveDialog.TRIES_SELECTOR
+                    }
                 }
             )
         }
@@ -2249,8 +2266,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             EnterChallengeDialog(
                 onDismiss = { activeDialog = ActiveDialog.NONE },
                 onSubmit = { newItem ->
-                    ChallengeStorage.saveChallenge(context, newItem)
-                    savedChallenges = ChallengeStorage.loadChallenges(context)
                     activeDialog = ActiveDialog.NONE
                     currentScreen = AppScreen.HOME
                     startChallenge(newItem)
