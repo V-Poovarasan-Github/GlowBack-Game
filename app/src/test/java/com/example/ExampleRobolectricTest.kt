@@ -1908,6 +1908,74 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText("⚡ REVENGE vs VIKRAM").assertIsDisplayed()
         composeTestRule.onNodeWithText("BEAT: 8", substring = true).assertIsDisplayed()
     }
+
+    @Test
+    fun pass5_14_securityHardening_and_uiCleanup() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Verify exact tampered 7-segment code reported by user ("2x2-20-R3E-ALEXX-A75-4P629-G") is rejected outright
+        val tamperedCode = "2x2-20-R3E-ALEXX-A75-4P629-G"
+        assertTrue(
+            "Tampered 7-segment code with failed checksum must return null in parseChallengeCode (never fall back to v0)",
+            ChallengeSeed.parseChallengeCode(tamperedCode) == null
+        )
+        assertTrue(
+            "Tampered 7-segment code inside freeform text must return null in extractCodeFromText (never slice first 4 segments)",
+            ChallengeSeed.extractCodeFromText("Beat my score: $tamperedCode") == null
+        )
+
+        // 2. Verify tampered 5-segment v1 code is also rejected outright
+        val tamperedV1 = "4x4-6-T3E-2GPGX-Z" // Valid checksum is N, tampered to Z
+        assertTrue(
+            "Tampered 5-segment code must return null",
+            ChallengeSeed.parseChallengeCode(tamperedV1) == null
+        )
+        assertTrue(
+            "Tampered 5-segment code in text must return null",
+            ChallengeSeed.extractCodeFromText("Try this: $tamperedV1") == null
+        )
+
+        // 3. Verify UI: pasting tampered code in EnterChallengeDialog shows error and NEVER opens LegacyCodeNameDialog
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 5,
+            targetScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "A75",
+            maxTries = 3
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Bin icon on RivalCard opens Clear Rivalry confirmation dialog (and 3-dot menu is gone)
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("delete_rival_ALEX").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_cancel").performClick()
+        composeTestRule.waitForIdle()
+
+        // Tap Paste Code button to test tampered code rejection in UI
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tamperedCode)
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must NOT open legacy_code_dialog; must show invalid code error
+        composeTestRule.onNodeWithTag("legacy_code_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("challenge_code_error_text").assertIsDisplayed()
+    }
 }
 
 

@@ -2416,12 +2416,81 @@ fun RivalCard(
     onDeleteRival: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
+    var showClearConfirm by remember { mutableStateOf(false) }
 
     val statusColor = when (rival.lastStatus) {
         "WON" -> Color(0xFF00E676)
         "LOST" -> Color(0xFFFF5252)
         else -> Color(0xFFFFD600)
+    }
+
+    if (showClearConfirm) {
+        Dialog(onDismissRequest = { showClearConfirm = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .border(1.5.dp, Color(0xFFFF5252), RoundedCornerShape(20.dp))
+                    .testTag("confirm_clear_rivalry_dialog"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Clear Rivalry?",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Remove your head-to-head record with ${rival.name} (${rival.matches} ${if (rival.matches == 1) "match" else "matches"})?",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showClearConfirm = false },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 44.dp)
+                                .testTag("confirm_clear_rivalry_cancel"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Cancel", color = Color(0xFF94A3B8), fontWeight = FontWeight.SemiBold)
+                        }
+                        Button(
+                            onClick = {
+                                showClearConfirm = false
+                                onDeleteRival()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 44.dp)
+                                .testTag("confirm_clear_rivalry_confirm"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFF5252),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text("Clear", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Card(
@@ -2433,7 +2502,7 @@ fun RivalCard(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row: ⚔️ [NAME] and Three-dot menu
+            // Header Row: ⚔️ [NAME] and Bin Icon (matching AwaitingCard)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2452,35 +2521,16 @@ fun RivalCard(
                     )
                 }
 
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(28.dp).testTag("rival_menu_button_${rival.name}")
-                    ) {
-                        Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu", tint = Color(0xFF94A3B8))
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.background(Color(0xFF1E293B))
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Paste New Code", color = Color.White) },
-                            onClick = {
-                                menuExpanded = false
-                                onPasteNewCode()
-                            },
-                            modifier = Modifier.testTag("rival_menu_paste_${rival.name}")
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Clear Rivalry", color = Color(0xFFFF5252)) },
-                            onClick = {
-                                menuExpanded = false
-                                onDeleteRival()
-                            },
-                            modifier = Modifier.testTag("rival_menu_delete_${rival.name}")
-                        )
-                    }
+                IconButton(
+                    onClick = { showClearConfirm = true },
+                    modifier = Modifier.size(28.dp).testTag("delete_rival_${rival.name}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Clear rivalry",
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
 

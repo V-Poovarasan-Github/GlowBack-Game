@@ -144,27 +144,35 @@ object ChallengeSeed {
 
     /**
      * Extracts a challenge code token from freeform text if surrounded by words, colons, or quotes.
+     * PASS 5.14: Fail fast if a 5/6/7-segment structure is detected but fails checksum verification.
      */
     fun extractCodeFromText(input: String): String? {
         val cleanedInput = sanitizeCodeText(input)
         if (parseInternal(cleanedInput) != null) return cleanedInput
 
+        // If input is a bare 5/6/7+ segment hyphenated token whose checksum/parse failed, hard stop immediately
+        if (!cleanedInput.contains(' ') && !cleanedInput.contains('\n') && cleanedInput.split('-').size >= 5) {
+            return null
+        }
+
         // Format v2 7-segment: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
         val v2Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,4}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
         v2Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
-            if (parseInternal(cand) != null) return cand
+            // Hard stop: if a 7-segment v2 code structure is present, return it ONLY if checksum passes, otherwise null (never fall back to v0)
+            return if (parseInternal(cand) != null) cand else null
         }
 
-        // 5-segment Legacy format: [Grid]-[Target]-T[tries][Diff]-[Seed]-[Checksum]
-        val v1Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-T[135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
+        // 5-segment Legacy format: [Grid]-[Target]-[T/R][tries][Diff]-[Seed]-[Checksum]
+        val v1Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
         v1Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
-            if (parseInternal(cand) != null) return cand
+            // Hard stop: if a 5-segment v1 code structure is present, return it ONLY if checksum passes, otherwise null
+            return if (parseInternal(cand) != null) cand else null
         }
 
-        // 4-segment / 3-segment Legacy format
-        val v0Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b""", RegexOption.IGNORE_CASE)
+        // 4-segment / 3-segment Legacy format — negative lookahead (?!-[A-Za-z0-9_]) ensures a 5/6/7-segment code can never have its first 4 segments sliced off
+        val v0Regex = Regex("""(?<![A-Za-z0-9_-])\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b(?!-[A-Za-z0-9_])""", RegexOption.IGNORE_CASE)
         v0Regex.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             if (parseInternal(cand) != null) return cand
@@ -177,6 +185,11 @@ object ChallengeSeed {
         val cleaned = sanitizeCodeText(rawCode)
         val direct = parseInternal(cleaned)
         if (direct != null) return direct
+
+        // PASS 5.14: Fail fast if a bare 5/6/7+ segment code failed direct parsing (e.g. checksum mismatch)
+        if (!cleaned.contains(' ') && !cleaned.contains('\n') && cleaned.split('-').size >= 5) {
+            return null
+        }
 
         val extracted = extractCodeFromText(cleaned)
         if (extracted != null && extracted != cleaned) {
