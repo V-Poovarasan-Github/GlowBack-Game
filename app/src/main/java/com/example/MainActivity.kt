@@ -2625,12 +2625,16 @@ private fun BoardAndContextRow(
                         .padding(vertical = 4.dp)
                 ) {}
                 Row(
-                    modifier = Modifier.fillMaxHeight(),
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxHeight()
+                            .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
                             .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
                             .padding(start = 12.dp, end = 4.dp)
                             .testTag("config_pill_grid"),
@@ -2663,6 +2667,7 @@ private fun BoardAndContextRow(
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
+                            .clip(RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp))
                             .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
                             .padding(start = 4.dp, end = 12.dp)
                             .testTag("config_pill_pace"),
@@ -2731,17 +2736,20 @@ private fun BoardAndContextRow(
                     )
                 }
 
-                // Foreground 48.dp touch targets for Easy and Hard halves
+                // Foreground touch targets clipped to the 40.dp track and 12.dp segment shapes
                 Row(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 2.dp),
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .padding(2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
                             .width(segmentWidth)
                             .fillMaxHeight()
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable(
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.EASY) }
@@ -2766,6 +2774,7 @@ private fun BoardAndContextRow(
                         modifier = Modifier
                             .width(segmentWidth)
                             .fillMaxHeight()
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable(
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.HARD) }
