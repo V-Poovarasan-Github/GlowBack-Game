@@ -1991,6 +1991,18 @@ fun HallOfFameScreen(
                         ChallengeStorage.deleteAwaitingChallenge(context, awaiting.chainId)
                         refreshData()
                     },
+                    onSendReply = { rival ->
+                        val replyCode = rival.lastReplyCode
+                        if (replyCode.isNotBlank()) {
+                            runCatching {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCode))
+                            }
+                            ChallengeStorage.markReplySent(context, rival.name, replyCode)
+                            refreshData()
+                            Toast.makeText(context, "Reply code copied: $replyCode", Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     onShareCode = onShareCodeClicked,
                     onPasteCode = onPasteCodeClicked,
                     modifier = Modifier.fillMaxSize().testTag("rivalry_tab_content")
@@ -2016,11 +2028,13 @@ fun RivalryTabContent(
     onPasteNewCode: (RivalRecord) -> Unit,
     onDeleteRival: (RivalRecord) -> Unit,
     onDeleteAwaiting: (AwaitingChallenge) -> Unit,
+    onSendReply: (RivalRecord) -> Unit = {},
     onShareCode: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     if (rivals.isEmpty() && awaitingChallenges.isEmpty()) {
         EmptyRivalryState(
@@ -2133,6 +2147,25 @@ fun RivalryTabContent(
                     rival = rival,
                     onDynamicAction = { onGetRevenge(rival) },
                     onPasteNewCode = { onPasteNewCode(rival) },
+                    onSendReply = {
+                        onSendReply(rival)
+                        if (rival.lastReplyCode.isNotBlank()) {
+                            scope.launch {
+                                runCatching {
+                                    ChallengeShareHelper.shareReplyResult(
+                                        context = context,
+                                        code = rival.lastReplyCode,
+                                        gridSizeTag = rival.lastGrid,
+                                        myScore = rival.lastUserScore.coerceAtLeast(1),
+                                        targetScore = rival.lastTarget,
+                                        rivalName = rival.name,
+                                        won = rival.lastStatus == "WON",
+                                        tied = rival.lastStatus == "TIED"
+                                    )
+                                }
+                            }
+                        }
+                    },
                     onDeleteRival = { onDeleteRival(rival) }
                 )
             }
@@ -2436,6 +2469,7 @@ fun RivalCard(
     rival: RivalRecord,
     onDynamicAction: () -> Unit,
     onPasteNewCode: () -> Unit,
+    onSendReply: () -> Unit = {},
     onDeleteRival: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2667,6 +2701,38 @@ fun RivalCard(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            // PASS 5.18 Part 1: Show "Send Reply" button when an unsent R-code exists for the last match
+            val hasUnsentReply = rival.lastStatus != "IN_PROGRESS" && !rival.isReplySent && rival.lastReplyCode.isNotBlank()
+            if (hasUnsentReply) {
+                Button(
+                    onClick = onSendReply,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 38.dp)
+                        .testTag("rival_send_reply_button_${rival.name}"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color(0xFF090D16)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Send Reply (${rival.lastReplyCode})",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             // Dynamic Action Button & Secondary Button
             Row(

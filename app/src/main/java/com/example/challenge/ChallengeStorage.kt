@@ -340,7 +340,9 @@ object ChallengeStorage {
                         inProgressTriesLeft = obj.optInt("inProgressTriesLeft", 0),
                         inProgressMaxTries = obj.optInt("inProgressMaxTries", 3),
                         inProgressSeed = obj.optInt("inProgressSeed", 0),
-                        gridStats = parsedGridStats
+                        gridStats = parsedGridStats,
+                        lastReplyCode = obj.optString("lastReplyCode", ""),
+                        isReplySent = obj.optBoolean("isReplySent", true)
                     )
                 )
             }
@@ -382,6 +384,8 @@ object ChallengeStorage {
                 put("inProgressMaxTries", item.inProgressMaxTries)
                 put("inProgressSeed", item.inProgressSeed)
                 put("gridStats", gridObj)
+                put("lastReplyCode", item.lastReplyCode)
+                put("isReplySent", item.isReplySent)
             }
             jsonArray.put(obj)
         }
@@ -416,6 +420,22 @@ object ChallengeStorage {
     }
 
     /**
+     * PASS 5.18 Part 1:
+     * Marks a rival's saved R-code reply as sent (isReplySent = true) once the user copies or shares it
+     * from either the Game Over screen or the Rivalry tab's "Send Reply" button.
+     */
+    fun markReplySent(context: Context, rivalName: String, replyCode: String? = null): RivalRecord? {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        val existing = findRivalByName(context, cleanName) ?: return null
+        val updated = existing.copy(
+            lastReplyCode = if (!replyCode.isNullOrBlank()) replyCode else existing.lastReplyCode,
+            isReplySent = true
+        )
+        saveRival(context, updated)
+        return updated
+    }
+
+    /**
      * PASS 5.15 Item 1 & 2:
      * Persists an active/in-progress challenge both in KEY_CHALLENGES and as an "IN_PROGRESS"
      * RivalRecord in the Rivalry tab so exiting mid-tries preserves remaining tries and bestScore.
@@ -441,7 +461,9 @@ object ChallengeStorage {
             inProgressTriesLeft = item.attemptsLeft,
             inProgressMaxTries = item.maxTries,
             inProgressSeed = item.seed,
-            gridStats = existing?.gridStats ?: emptyMap()
+            gridStats = existing?.gridStats ?: emptyMap(),
+            lastReplyCode = existing?.lastReplyCode ?: "",
+            isReplySent = existing?.isReplySent ?: true
         )
         saveRival(context, record)
         return record
@@ -560,7 +582,9 @@ object ChallengeStorage {
         difficulty: GameDifficulty,
         chainId: String,
         maxTries: Int = 3,
-        allowTie: Boolean = true
+        allowTie: Boolean = true,
+        seed: Int = 0,
+        replyCode: String = ""
     ): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName)
@@ -589,6 +613,26 @@ object ChallengeStorage {
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
         val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLoss, isTie)
+        val resolvedChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
+        val resolvedSeed = if (seed != 0) {
+            seed
+        } else {
+            existing?.inProgressSeed?.takeIf { it != 0 } ?: ChallengeSeed.generateRandomSeed()
+        }
+        val mySenderName = ChallengeSeed.sanitizePlayerName(getMyName(context))
+        val savedReplyCode = replyCode.ifBlank {
+            ChallengeSeed.formatChallengeCode(
+                gridTag = gridSize,
+                targetScore = userScore.coerceAtLeast(1),
+                tries = maxTries,
+                difficulty = difficulty,
+                seed = resolvedSeed,
+                senderName = mySenderName,
+                chainId = resolvedChainId,
+                isRevenge = true
+            )
+        }
+        recordCreatedCode(context, savedReplyCode)
 
         val record = RivalRecord(
             name = cleanName,
@@ -601,13 +645,15 @@ object ChallengeStorage {
             lastTarget = targetScore,
             lastUserScore = userScore,
             lastStatus = status,
-            lastChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() },
+            lastChainId = resolvedChainId,
             updatedAt = System.currentTimeMillis(),
             inProgressCode = "",
             inProgressTriesLeft = 0,
             inProgressMaxTries = 0,
             inProgressSeed = 0,
-            gridStats = updatedGridStats
+            gridStats = updatedGridStats,
+            lastReplyCode = savedReplyCode,
+            isReplySent = false
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)
@@ -667,7 +713,9 @@ object ChallengeStorage {
             inProgressTriesLeft = 0,
             inProgressMaxTries = 0,
             inProgressSeed = 0,
-            gridStats = updatedGridStats
+            gridStats = updatedGridStats,
+            lastReplyCode = "",
+            isReplySent = true
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)

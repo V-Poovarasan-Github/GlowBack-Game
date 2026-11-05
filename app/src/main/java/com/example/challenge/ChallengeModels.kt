@@ -90,7 +90,9 @@ data class RivalRecord(
     val inProgressTriesLeft: Int = 0,  // Remaining tries when lastStatus == "IN_PROGRESS"
     val inProgressMaxTries: Int = 3,   // Max tries (0 = Free tries) when lastStatus == "IN_PROGRESS"
     val inProgressSeed: Int = 0,       // Challenge seed when lastStatus == "IN_PROGRESS"
-    val gridStats: Map<String, GridStat> = emptyMap() // Per-grid breakdown (e.g. "2x2" -> GridStat(1, 1, 0))
+    val gridStats: Map<String, GridStat> = emptyMap(), // Per-grid breakdown (e.g. "2x2" -> GridStat(1, 1, 0))
+    val lastReplyCode: String = "",    // Saved R-code from last completed incoming challenge
+    val isReplySent: Boolean = true    // False when an R-code was generated on Game Over but not yet copied/shared
 )
 
 /**

@@ -854,7 +854,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 gridSize = ch.gridSizeTag,
                 difficulty = ch.difficulty,
                 chainId = ch.chainId,
-                maxTries = ch.maxTries
+                maxTries = ch.maxTries,
+                seed = currentRunSeed
             )
             savedChallenges = ChallengeStorage.loadChallenges(context)
         }
@@ -922,6 +923,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             isRevenge = true
         )
         ChallengeStorage.recordCreatedCode(context, replyCode)
+        ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
+        runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCode))
+        }
         coroutineScope.launch {
             ChallengeShareHelper.shareReplyResult(
                 context = context,
@@ -1636,7 +1642,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             gridSize = ch.gridSizeTag,
                             difficulty = ch.difficulty,
                             chainId = ch.chainId,
-                            maxTries = ch.maxTries
+                            maxTries = ch.maxTries,
+                            seed = currentRunSeed
                         )
                         savedChallenges = ChallengeStorage.loadChallenges(context)
                     } else if (!hasRecordedChallengeOutcome) {
@@ -1875,11 +1882,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                             if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
                                 if (gameMode == GameMode.SOLO) {
-                                    ScoreboardRow(
-                                        currentScore = currentScore,
-                                        bestScore = bestScore,
-                                        gridSize = gridSize
-                                    )
+                                    // PASS 5.18 Part 2: Remove large Current/Best score cards during active challenges
+                                    if (activeChallenge == null) {
+                                        ScoreboardRow(
+                                            currentScore = currentScore,
+                                            bestScore = bestScore,
+                                            gridSize = gridSize
+                                        )
+                                    }
                                 } else if (!isMatchComplete) {
                                     PlayerRail(
                                         players = players,
@@ -1909,24 +1919,35 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                 )
                             }
 
-                            // ROW B: Left = ONE Board pill ("2×2 · Classic"), Right = Segmented [Easy | Hard] slider
-                            BoardAndContextRow(
-                                gridSize = gridSize,
-                                paceMode = paceMode,
-                                difficultyMode = difficultyMode,
-                                enabled = gameState == GameState.IDLE && !isReplayingLostRound,
-                                onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET },
-                                onSelectDifficulty = { newDiff ->
-                                    if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
-                                        Toast.makeText(context, "Finish your round to switch difficulty.", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        clearRevengeState()
-                                        difficultyMode = newDiff
-                                        sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, newDiff.name).apply()
-                                        bestScore = readMigratedBestScore(sharedPrefs, gridSize, paceMode, newDiff)
+                            if (activeChallenge != null && gameState != GameState.IDLE) {
+                                // PASS 5.18 Part 2: Compact inline bar for Active Challenges ONLY:
+                                // [5×4 · Classic] [⚡ Score: 1] [Easy/Hard]
+                                ActiveChallengeCompactBar(
+                                    gridSize = gridSize,
+                                    paceMode = paceMode,
+                                    currentScore = currentScore,
+                                    difficultyMode = difficultyMode
+                                )
+                            } else {
+                                // ROW B: Left = ONE Board pill ("2×2 · Classic"), Right = Segmented [Easy | Hard] slider
+                                BoardAndContextRow(
+                                    gridSize = gridSize,
+                                    paceMode = paceMode,
+                                    difficultyMode = difficultyMode,
+                                    enabled = gameState == GameState.IDLE && !isReplayingLostRound,
+                                    onOpenSettings = { activeDialog = ActiveDialog.SETTINGS_SHEET },
+                                    onSelectDifficulty = { newDiff ->
+                                        if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
+                                            Toast.makeText(context, "Finish your round to switch difficulty.", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            clearRevengeState()
+                                            difficultyMode = newDiff
+                                            sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, newDiff.name).apply()
+                                            bestScore = readMigratedBestScore(sharedPrefs, gridSize, paceMode, newDiff)
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
 
@@ -3005,6 +3026,147 @@ private fun BoardAndContextRow(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * PASS 5.18 Part 2:
+ * Compact single-line bar rendered ONLY during an active challenge (`activeChallenge != null`):
+ * [5×4 · Classic] [⚡ Score: 1] [Easy / Hard]
+ * Frees vertical space for the 5×4 grid by removing the tall Best Score card and interactive Easy/Hard toggle.
+ */
+@Composable
+private fun ActiveChallengeCompactBar(
+    gridSize: GridSize,
+    paceMode: PaceMode,
+    currentScore: Int,
+    difficultyMode: GameDifficulty
+) {
+    val isEasy = difficultyMode == GameDifficulty.EASY
+    val diffTextColor = if (isEasy) Color(0xFF34D399) else Color(0xFFFF5252)
+    val diffBgColor = if (isEasy) Color(0xFF10B981).copy(alpha = 0.18f) else Color(0xFFFF5252).copy(alpha = 0.18f)
+    val diffBorderColor = if (isEasy) Color(0xFF10B981).copy(alpha = 0.55f) else Color(0xFFFF5252).copy(alpha = 0.55f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .testTag("active_challenge_compact_bar"),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 1. Left: Compact Grid + Pace Pill (e.g. "5×4 · Classic")
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF1E293B),
+            border = BorderStroke(1.dp, Color(0xFF334155)),
+            modifier = Modifier.fillMaxHeight()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.testTag("config_pill_grid")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.GridView,
+                        contentDescription = null,
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = gridSize.label,
+                        color = Color(0xFFF8FAFC),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+                Text(
+                    text = "·",
+                    color = Color(0xFF64748B),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = paceMode.shortLabel,
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.testTag("config_pill_pace")
+                )
+            }
+        }
+
+        // 2. Center: Inline Score Pill ("Score: 1")
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF1E293B),
+            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f)),
+            modifier = Modifier
+                .fillMaxHeight()
+                .testTag("active_challenge_score_pill")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Bolt,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = "Score:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = currentScore.toString(),
+                    color = Color(0xFFF8FAFC),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.testTag("current_score_text")
+                )
+            }
+        }
+
+        // 3. Right: Static Difficulty Badge ("Easy" in green or "Hard" in red)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = diffBgColor,
+            border = BorderStroke(1.dp, diffBorderColor),
+            modifier = Modifier.fillMaxHeight()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = difficultyMode.label,
+                    color = diffTextColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier.testTag("active_challenge_difficulty_badge")
+                )
             }
         }
     }
@@ -4432,13 +4594,21 @@ private fun StatusBanner(
                     }
                 }
             } else if (sequenceSize > 0 && (gameState == GameState.PLAYING || gameState == GameState.WATCHING)) {
-                Spacer(modifier = Modifier.height(6.dp))
-                val completed = when {
-                    isRoundClearCelebration -> sequenceSize
-                    gameState == GameState.PLAYING -> playerStepIndex
-                    else -> 0
+                // PASS 5.18 Part 2: Hide step indicator dots if target score or total steps > 7
+                val effectiveTargetSteps = if (activeChallenge != null) {
+                    maxOf(sequenceSize, activeChallenge.targetScore)
+                } else {
+                    sequenceSize
                 }
-                SequenceStepIndicator(totalSteps = sequenceSize, completedSteps = completed, accentColor = bannerAccentColor)
+                if (effectiveTargetSteps <= 7) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val completed = when {
+                        isRoundClearCelebration -> sequenceSize
+                        gameState == GameState.PLAYING -> playerStepIndex
+                        else -> 0
+                    }
+                    SequenceStepIndicator(totalSteps = sequenceSize, completedSteps = completed, accentColor = bannerAccentColor)
+                }
             }
         }
     }
@@ -4446,14 +4616,15 @@ private fun StatusBanner(
 
 @Composable
 private fun SequenceStepIndicator(totalSteps: Int, completedSteps: Int, accentColor: Color) {
-    val visibleDots = totalSteps.coerceAtMost(12)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        for (i in 0 until visibleDots) {
+    if (totalSteps > 7) return
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.testTag("sequence_step_indicator")
+    ) {
+        for (i in 0 until totalSteps) {
             val done = i < completedSteps
             Box(modifier = Modifier.size(if (done) 10.dp else 8.dp).clip(CircleShape).background(if (done) accentColor else Color(0xFF475569)))
-        }
-        if (totalSteps > visibleDots) {
-            Text(text = "+${totalSteps - visibleDots}", color = accentColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

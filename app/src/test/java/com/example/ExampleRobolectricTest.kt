@@ -2223,7 +2223,97 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
         composeTestRule.onNodeWithText("TARGET: 16", substring = true).assertIsDisplayed()
     }
+
+    @Test
+    fun pass5_18_lostReplyCodeRecovery_and_activeChallengeUiRefactor() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // PART 1: Responder (HERO) finishes ALEX's 5x4 challenge and loses (score 4 vs target 5).
+        // Even if HERO leaves Game Over without copying, recordMatchOutcome must persist the R-code with isReplySent = false.
+        val finishedRecord = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 4,
+            targetScore = 5,
+            gridSize = "5x4",
+            difficulty = GameDifficulty.HARD,
+            chainId = "R54",
+            maxTries = 3,
+            seed = 54321
+        )
+        assertNotNull(finishedRecord)
+        assertFalse("Newly finished match must have isReplySent = false until user copies/shares", finishedRecord!!.isReplySent)
+        assertTrue("Saved lastReplyCode must be non-blank", finishedRecord.lastReplyCode.isNotBlank())
+        val parsedReply = ChallengeSeed.parseChallengeCode(finishedRecord.lastReplyCode)
+        assertNotNull("Saved lastReplyCode must be a valid 7-segment code", parsedReply)
+        assertTrue("Saved lastReplyCode must be an R-code (isRevenge = true)", parsedReply!!.isRevenge)
+        assertEquals(4, parsedReply.targetScore)
+        assertEquals("HERO", parsedReply.senderName)
+        assertEquals("R54", parsedReply.chainId)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Verify Home IDLE UI still has the normal interactive Easy/Hard toggle (zero regression on IDLE)
+        composeTestRule.onNodeWithTag("difficulty_toggle_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("difficulty_toggle_hard").assertIsDisplayed()
+
+        // Navigate to Rivalry tab -> verify "Send Reply" button is visible on ALEX's RivalCard
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply", substring = true)
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Once tapped, isReplySent becomes true and the button hides
+        val afterSendRecord = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull(afterSendRecord)
+        assertTrue("Tapping Send Reply must set isReplySent = true", afterSendRecord!!.isReplySent)
+        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX").assertDoesNotExist()
+
+        // PART 2: Accept an active 5x4 Hard challenge with high target (30 > 7)
+        val highTargetTCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "5x4",
+            targetScore = 30,
+            tries = 3,
+            difficulty = GameDifficulty.HARD,
+            seed = 99999,
+            senderName = "ALEX",
+            chainId = "R54",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(highTargetTCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Active Challenge Compact UI:
+        // 1. Best score card ("scoreboard_best_score_text") is REMOVED during active challenge
+        composeTestRule.onNodeWithTag("scoreboard_best_score_text").assertDoesNotExist()
+        // 2. Interactive Easy/Hard toggle switches are REMOVED during active challenge
+        composeTestRule.onNodeWithTag("difficulty_toggle_easy").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("difficulty_toggle_hard").assertDoesNotExist()
+        // 3. Compact inline bar [5×4 · Classic] [Score: 0] [Hard] is DISPLAYED
+        composeTestRule.onNodeWithTag("active_challenge_compact_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("active_challenge_score_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("current_score_text").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("active_challenge_difficulty_badge")
+            .assertIsDisplayed()
+            .assertTextContains("Hard", substring = true)
+        // 4. Step indicator dots are HIDDEN because targetScore (30) > 7
+        composeTestRule.onNodeWithTag("sequence_step_indicator").assertDoesNotExist()
+    }
 }
+
 
 
 
