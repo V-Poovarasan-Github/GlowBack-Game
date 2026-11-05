@@ -756,6 +756,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var activeDialog by remember {
         mutableStateOf(if (ChallengeStorage.getPendingShare(context) != null) ActiveDialog.DID_YOU_SHARE else ActiveDialog.NONE)
     }
+    var isShareFromGameOver by remember { mutableStateOf(false) }
     var pendingReplyAfterNameSetup by remember { mutableStateOf(false) }
     var awaitingChallengeForDialog by remember {
         mutableStateOf(ChallengeStorage.getPendingShare(context))
@@ -816,6 +817,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var isChallengeTied by remember { mutableStateOf(false) }
     var isChallengeLost by remember { mutableStateOf(false) }
     var hasRecordedChallengeOutcome by remember { mutableStateOf(false) }
+    var hasSentChallengeReply by remember { mutableStateOf(false) }
+    var isChallengeReadyGateVisible by remember { mutableStateOf(false) }
     var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
     var currentRivalChainId by remember { mutableStateOf<String?>(null) }
     var isRevengeRun by remember { mutableStateOf(false) }
@@ -876,6 +879,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun requestShareChallenge(fromGameOver: Boolean = false) {
+        isShareFromGameOver = fromGameOver
         if (fromGameOver) {
             if (isRevengeRun && currentScore <= revengeTargetScore) {
                 val rivalLabel = (currentRivalNameForShare ?: "Rival").uppercase()
@@ -906,11 +910,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
     fun executeReplyToRival(senderName: String) {
         val ch = activeChallenge ?: return
+        if (hasSentChallengeReply) return
         val bestAttemptScore = maxOf(currentScore, ch.bestScore)
         ch.bestScore = bestAttemptScore
         finalizePendingChallengeOutcomeIfNeeded()
         // Reply-Code Exemption: Responder's reply code bypasses the score-5 minimum gate at any score (>= 1)
-        // and embeds the responder's own name, bestScore across tries, seed, chainId, and R-prefixed revenge token.
+        // and embeds the responder's own name, bestScore across tries, seed, chainId, and R-prefixed revenge token
+        // with tries GRANTED (ch.maxTries, Stage B #5).
         val replyChainId = ch.chainId.ifEmpty { ChallengeSeed.generateChainId() }
         val replyCode = ChallengeSeed.formatChallengeCode(
             gridTag = ch.gridSizeTag,
@@ -924,6 +930,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         )
         ChallengeStorage.recordCreatedCode(context, replyCode)
         ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
+        hasSentChallengeReply = true
         runCatching {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCode))
@@ -997,6 +1004,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         playerStepIndex = 0
         sequence.clear()
         isHandoffVisible = false
+        isChallengeReadyGateVisible = false
         isRedemptionTurnActive = false
         eliminatedBannerText = null
         showChallengeNudge = false
@@ -1004,6 +1012,22 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
     fun saveActiveRun() {
         if (gameState != GameState.WATCHING && gameState != GameState.PLAYING) return
+        // PASS 5.19 Invariant (e) & Stage A Audit #9:
+        // Never write activeChallenge or Revenge runs into Solo's Continue RunStateStorage!
+        // Challenge runs persist exclusively via ChallengeStorage.saveInProgressChallenge.
+        if (activeChallenge != null) {
+            val ch = activeChallenge!!
+            if (currentScore > ch.bestScore) {
+                ch.bestScore = currentScore
+            }
+            ch.attemptsLeft = challengeAttemptsLeft
+            ChallengeStorage.saveInProgressChallenge(context, ch)
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+            return
+        }
+        if (isRevengeRun) {
+            return
+        }
         val currentAlive = if (players.isNotEmpty()) players.map { it.isAlive } else listOf(true)
         val currentRounds = if (players.isNotEmpty()) players.map { it.roundsSurvived } else listOf(currentScore)
         val state = SerializedRunState(
@@ -1015,9 +1039,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             activePlayerIndex = activePlayerIndex,
             alivePlayers = currentAlive,
             roundsSurvived = currentRounds,
-            activeChallengeCode = activeChallenge?.code,
-            challengeTriesLeft = if (activeChallenge != null) challengeAttemptsLeft else null,
-            challengeBestScore = activeChallenge?.bestScore,
+            activeChallengeCode = null,
+            challengeTriesLeft = null,
+            challengeBestScore = null,
             soloRunSeed = if (gameMode == GameMode.SOLO) currentRunSeed else null,
             difficultyMode = difficultyMode.name
         )
@@ -1187,6 +1211,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         allPadsConfettiFlash = false
                         isRoundClearCelebration = false
                         resumedBannerNote = "Round replayed - you were away."
+                        if (activeChallenge != null || isRevengeRun) {
+                            isChallengeReadyGateVisible = true
+                        }
                         gameState = GameState.WATCHING
                         roundTrigger++
                     } else {
@@ -1249,7 +1276,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun startChallenge(item: ChallengeItem) {
-        discardActiveRun()
         resetRunState()
         isRevengeRun = false
         revengeTargetScore = 0
@@ -1257,7 +1283,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             context = context,
             code = item.code,
             chainId = item.chainId,
-            rivalName = item.rivalName
+            rivalName = item.rivalName,
+            seedInt = item.seed
         )
         val resolvedItem = if (existingInProgress != null && item.attemptsLeft == item.maxTries && existingInProgress.attemptsLeft < item.maxTries) {
             existingInProgress.copy(rivalName = item.rivalName)
@@ -1275,6 +1302,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         isChallengeTied = false
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
+        hasSentChallengeReply = false
         gameMode = GameMode.SOLO
 
         val targetGrid = when (resolvedItem.gridSizeTag.lowercase()) {
@@ -1284,6 +1312,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             else -> GridSize.TWO_BY_TWO
         }
         gridSize = targetGrid
+        // PASS 5.19 Stage B #2: Force Classic pace for all async challenges
         paceMode = PaceMode.CLASSIC
 
         val rng = java.util.Random(resolvedItem.seed.toLong())
@@ -1292,17 +1321,18 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         soloRng = rng
         val pads = padsForGridSize(targetGrid)
         sequence.add(pads[rng.nextInt(pads.size)])
+        isChallengeReadyGateVisible = true
         roundTrigger++
         gameState = GameState.WATCHING
         saveActiveRun()
     }
 
     fun startRevengeGame(rival: RivalRecord) {
-        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3:
+        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3 + PASS 5.19 Stage B #2:
         // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rival.lastTarget; must beat rival.lastTarget to share).
         // - "👑 Send Challenge" (WON): Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
         // - Preserve rival.lastChainId in currentRivalChainId so all rally matches stack on the same Rival Card.
-        discardActiveRun()
+        // - Force Classic pace for all revenge runs.
         resetRunState()
         val targetGrid = when (rival.lastGrid.lowercase()) {
             "3x3" -> GridSize.THREE_BY_THREE
@@ -1324,6 +1354,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         isChallengeTied = false
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
+        hasSentChallengeReply = false
         gameMode = GameMode.SOLO
         selectedShareTries = 3
         val seed = ChallengeSeed.generateRandomSeed()
@@ -1332,13 +1363,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         soloRng = rng
         val pads = padsForGridSize(targetGrid)
         sequence.add(pads[rng.nextInt(pads.size)])
+        isChallengeReadyGateVisible = true
         roundTrigger++
         gameState = GameState.WATCHING
         saveActiveRun()
     }
 
     fun actuallyStartNewGame() {
-        discardActiveRun()
+        if (activeChallenge == null && !isRevengeRun) {
+            discardActiveRun()
+        }
         resetRunState()
         isMatchComplete = false
         matchStandings = emptyList()
@@ -1347,6 +1381,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             isChallengeWon = false
             isChallengeTied = false
             isChallengeLost = false
+            hasSentChallengeReply = false
             val targetGrid = when (challenge.gridSizeTag.lowercase()) {
                 "3x3" -> GridSize.THREE_BY_THREE
                 "4x4" -> GridSize.FOUR_BY_FOUR
@@ -1354,18 +1389,25 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 else -> GridSize.TWO_BY_TWO
             }
             gridSize = targetGrid
+            paceMode = PaceMode.CLASSIC
             currentRunSeed = challenge.seed
             val rng = java.util.Random(challenge.seed.toLong())
             challengeRng = rng
             soloRng = rng
             val pads = padsForGridSize(targetGrid)
             sequence.add(pads[rng.nextInt(pads.size)])
+            isChallengeReadyGateVisible = true
             roundTrigger++
             gameState = GameState.WATCHING
         } else if (gameMode == GameMode.SOLO) {
             isChallengeWon = false
             isChallengeTied = false
             isChallengeLost = false
+            hasSentChallengeReply = false
+            if (isRevengeRun) {
+                paceMode = PaceMode.CLASSIC
+                isChallengeReadyGateVisible = true
+            }
             val newSeed = ChallengeSeed.generateRandomSeed()
             currentRunSeed = newSeed
             selectedShareTries = 3
@@ -1423,13 +1465,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         }
     }
 
-    LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible) {
-        if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible) {
+    LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible, isChallengeReadyGateVisible) {
+        if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible && !isChallengeReadyGateVisible) {
             activePadId = null
             wrongShakePadId = null
             delay(450L)
             for (pad in sequence) {
-                if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible) return@LaunchedEffect
+                if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible || isChallengeReadyGateVisible) return@LaunchedEffect
                 activePadId = pad.id
                 if (feedbackEnabled && effectiveVolume > 0f) {
                     audioSynth.playPadSpecTone(pad, effectiveVolume)
@@ -1438,7 +1480,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 activePadId = null
                 delay(gapDurationMs)
             }
-            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible) {
+            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible && !isChallengeReadyGateVisible) {
                 playerStepIndex = 0
                 gameState = GameState.PLAYING
             }
@@ -1446,6 +1488,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun onPadTapped(tappedPad: PadSpec) {
+        if (isChallengeReadyGateVisible && gameState == GameState.WATCHING) {
+            isChallengeReadyGateVisible = false
+            roundTrigger++
+            return
+        }
         if (gameState == GameState.IDLE) {
             if (isLifecyclePaused || isHandoffVisible) return
             if (!hasDismissedInstrumentInvite) {
@@ -1464,7 +1511,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             }
             return
         }
-        if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible) return
+        if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible || isChallengeReadyGateVisible) return
         // 45ms multi-touch guard: ignore simultaneous multi-finger pad slams during active gameplay
         if (isMultiTouchGuardActive) return
         isMultiTouchGuardActive = true
@@ -1658,7 +1705,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     sharedPrefs.edit().putBoolean(KEY_CHALLENGE_NUDGE_SEEN, true).apply()
                 }
                 gameState = GameState.GAME_OVER
-                discardActiveRun()
+                if (activeChallenge == null && !isRevengeRun) {
+                    discardActiveRun()
+                }
             } else {
                 val eliminatedPlayer = players[activePlayerIndex]
                 players[activePlayerIndex] = eliminatedPlayer.copy(isAlive = false)
@@ -1784,6 +1833,24 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     onClick = {
                         if (gameState == GameState.PLAYING || gameState == GameState.WATCHING) {
                             isPausedMidGame = true
+                        } else if (gameState == GameState.GAME_OVER) {
+                            // PASS 5.19 Part 1 Bug 1: Reset stale GAME_OVER state when switching to Leaderboard
+                            // so tapping "Share Challenge" in the Rivalry tab never leaks the previous Game Over run.
+                            persistOrFinalizeActiveChallengeOnExit()
+                            activeChallenge = null
+                            challengeRng = null
+                            clearRevengeState()
+                            soloRng = null
+                            isChallengeWon = false
+                            isChallengeTied = false
+                            isChallengeLost = false
+                            hasRecordedChallengeOutcome = false
+                            hasSentChallengeReply = false
+                            isShareFromGameOver = false
+                            isMatchComplete = false
+                            matchStandings = emptyList()
+                            resetRunState()
+                            gameState = GameState.IDLE
                         }
                         currentScreen = AppScreen.LEADERBOARD
                     },
@@ -1868,7 +1935,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     targetScore = activeChallenge!!.targetScore,
                                     triesLeft = challengeAttemptsLeft,
                                     isRevenge = activeChallenge!!.isRevenge,
-                                    maxTries = activeChallenge!!.maxTries
+                                    maxTries = activeChallenge!!.maxTries,
+                                    isRevengeRunMode = false,
+                                    gridLabel = gridSize.label,
+                                    paceLabel = "CLASSIC",
+                                    currentScore = currentScore,
+                                    difficulty = difficultyMode,
+                                    showSecondRow = true
                                 )
                             } else if (isRevengeRun && !currentRivalNameForShare.isNullOrBlank()) {
                                 InGameChallengeBanner(
@@ -1877,13 +1950,18 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     triesLeft = 1,
                                     isRevenge = true,
                                     maxTries = 0,
-                                    isRevengeRunMode = true
+                                    isRevengeRunMode = true,
+                                    gridLabel = gridSize.label,
+                                    paceLabel = "CLASSIC",
+                                    currentScore = currentScore,
+                                    difficulty = difficultyMode,
+                                    showSecondRow = true
                                 )
                             }
                             if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
                                 if (gameMode == GameMode.SOLO) {
-                                    // PASS 5.18 Part 2: Remove large Current/Best score cards during active challenges
-                                    if (activeChallenge == null) {
+                                    // PASS 5.18 & 5.19: Remove large Current/Best score cards during active challenges & revenge runs
+                                    if (activeChallenge == null && !isRevengeRun) {
                                         ScoreboardRow(
                                             currentScore = currentScore,
                                             bestScore = bestScore,
@@ -1902,7 +1980,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     }
 
                     AnimatedVisibility(
-                        visible = gameState != GameState.GAME_OVER,
+                        visible = gameState != GameState.GAME_OVER && (gameState == GameState.IDLE || (activeChallenge == null && !isRevengeRun)),
                         enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                         exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                     ) {
@@ -1919,16 +1997,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                 )
                             }
 
-                            if (activeChallenge != null && gameState != GameState.IDLE) {
-                                // PASS 5.18 Part 2: Compact inline bar for Active Challenges ONLY:
-                                // [5×4 · Classic] [⚡ Score: 1] [Easy/Hard]
-                                ActiveChallengeCompactBar(
-                                    gridSize = gridSize,
-                                    paceMode = paceMode,
-                                    currentScore = currentScore,
-                                    difficultyMode = difficultyMode
-                                )
-                            } else {
+                            if (activeChallenge == null && !isRevengeRun) {
                                 // ROW B: Left = ONE Board pill ("2×2 · Classic"), Right = Segmented [Easy | Hard] slider
                                 BoardAndContextRow(
                                     gridSize = gridSize,
@@ -2047,6 +2116,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             isRevengeRun = isRevengeRun,
                             revengeTargetScore = revengeTargetScore,
                             revengeRivalName = currentRivalNameForShare,
+                            isChallengeReadyGateVisible = isChallengeReadyGateVisible,
+                            onConfirmChallengeReady = {
+                                isChallengeReadyGateVisible = false
+                                roundTrigger++
+                            },
                             onWatchMyRound = ::startWatchMyRoundReplay
                         )
                     }
@@ -2104,6 +2178,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             label = "animatedGridHeight"
                         )
                         val isInstrumentArmed = gameState == GameState.IDLE
+                        val isChallengeReadyTapArmed = isChallengeReadyGateVisible && gameState == GameState.WATCHING
                         SimonPadGrid(
                             modifier = Modifier.size(width = animatedGridWidth, height = animatedGridHeight),
                             gridSize = gridSize,
@@ -2112,7 +2187,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             allPadsConfettiFlash = allPadsConfettiFlash,
                             wrongShakePadId = wrongShakePadId,
                             wrongShakeOffsetPx = wrongPadShakeOffset.value,
-                            inputEnabled = (gameState == GameState.PLAYING || isInstrumentArmed) && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible,
+                            inputEnabled = (gameState == GameState.PLAYING || isInstrumentArmed || isChallengeReadyTapArmed) && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible,
                             onPadClick = ::onPadTapped
                         )
 
@@ -2188,6 +2263,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         isChallengeWon = isChallengeWon,
                         isChallengeTied = isChallengeTied,
                         isChallengeLost = isChallengeLost,
+                        hasSentChallengeReply = hasSentChallengeReply,
                         isRevengeRun = isRevengeRun,
                         revengeTargetScore = revengeTargetScore,
                         showChallengeNudge = showChallengeNudge,
@@ -2225,7 +2301,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
                             val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
                             val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
-                            ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore)
+                            ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore, seedInt = parsed?.seedInt ?: currentRunSeed)
                             val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
                             if (!shareRival.isNullOrBlank()) {
                                 ChallengeStorage.setLastSharedRivalName(context, shareRival)
@@ -2237,7 +2313,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                 gridSizeTag = gridTag,
                                 targetScore = currentScore,
                                 difficulty = difficultyMode,
-                                paceName = paceMode.shortLabel,
+                                paceName = "Classic",
                                 tries = selectedShareTries
                             )
                             ChallengeStorage.savePendingShare(context, awaiting)
@@ -2251,7 +2327,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         },
                         onReturnHome = {
                             persistOrFinalizeActiveChallengeOnExit()
-                            discardActiveRun()
+                            if (activeChallenge == null && !isRevengeRun) {
+                                discardActiveRun()
+                            }
                             activeChallenge = null
                             challengeRng = null
                             clearRevengeState()
@@ -2260,10 +2338,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             isChallengeTied = false
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
+                            hasSentChallengeReply = false
+                            isShareFromGameOver = false
                             isMatchComplete = false
                             matchStandings = emptyList()
                             resetRunState()
-                            activeRunState = null
                             gameState = GameState.IDLE
                         },
                         onReplyToRival = {
@@ -2276,9 +2355,33 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                 }
                             }
                         },
+                        onSendTieEarly = {
+                            // PASS 5.19 Clarifying Answer #3:
+                            // Tapping Send Tie on Try 1 with tries remaining FINALIZES the match immediately as TIED,
+                            // forfeits remaining tries, consumes the challenge, and sends the R-code.
+                            val ch = activeChallenge
+                            if (ch != null) {
+                                challengeAttemptsLeft = 0
+                                ch.attemptsLeft = 0
+                                isChallengeTied = true
+                                finalizePendingChallengeOutcomeIfNeeded()
+                                if (!ChallengeStorage.hasConfiguredName(context)) {
+                                    pendingReplyAfterNameSetup = true
+                                    activeDialog = ActiveDialog.NAME_SETUP
+                                } else {
+                                    executeReplyToRival(ChallengeStorage.getMyName(context))
+                                }
+                            }
+                        },
                         onExitChallenge = {
+                            val ch = activeChallenge
+                            val isFinished = ch == null ||
+                                isChallengeWon ||
+                                isChallengeLost ||
+                                hasRecordedChallengeOutcome ||
+                                (!ch.isFreeTries && challengeAttemptsLeft <= 0) ||
+                                (ch.isFreeTries && isChallengeTied)
                             persistOrFinalizeActiveChallengeOnExit()
-                            discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
                             clearRevengeState()
@@ -2287,10 +2390,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             isChallengeTied = false
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
+                            hasSentChallengeReply = false
+                            isShareFromGameOver = false
                             resetRunState()
-                            activeRunState = null
                             gameState = GameState.IDLE
-                            currentScreen = AppScreen.LEADERBOARD
+                            // PASS 5.19 Stage A #3: Exiting a FINISHED challenge navigates to Leaderboard -> Rivalry tab;
+                            // exiting an unfinished challenge returns to Home.
+                            currentScreen = if (isFinished) AppScreen.LEADERBOARD else AppScreen.HOME
                         }
                     )
                 }
@@ -2384,10 +2490,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             )
         }
         ActiveDialog.TRIES_SELECTOR -> {
-            val isFromGameOver = gameState == GameState.GAME_OVER
+            // PASS 5.19 Part 1 Bug 1: Explicitly require isShareFromGameOver AND currentScreen == HOME AND gameState == GAME_OVER
+            val isFromGameOver = isShareFromGameOver && currentScreen == AppScreen.HOME && gameState == GameState.GAME_OVER
             val diffLabel = if (difficultyMode == GameDifficulty.HARD) "Hard" else "Easy"
             val lockedSummary = if (isFromGameOver) {
-                "This challenge: ${gridSize.label} ${paceMode.shortLabel} $diffLabel - your score $currentScore"
+                "This challenge: ${gridSize.label} Classic $diffLabel - your score $currentScore"
             } else null
 
             ShareTriesSelectorDialog(
@@ -2397,18 +2504,71 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 currentScoreToShare = currentScore.coerceAtLeast(1),
                 requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
                 awaitingChallengeForDialog = awaitingChallengeForDialog,
-                onDismiss = { activeDialog = ActiveDialog.NONE },
+                onDismiss = {
+                    isShareFromGameOver = false
+                    activeDialog = ActiveDialog.NONE
+                },
                 onDismissDidYouShare = {
                     ChallengeStorage.clearPendingShare(context)
                     awaitingChallengeForDialog = null
+                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
                 },
                 onConfirmDidYouShare = { confirmedItem ->
                     ChallengeStorage.saveAwaitingChallenge(context, confirmedItem)
                     ChallengeStorage.clearPendingShare(context)
                     awaitingChallengeForDialog = null
+                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
                     Toast.makeText(context, "Challenge saved! Waiting for rival...", Toast.LENGTH_SHORT).show()
+                },
+                onCopyOnly = { chosenTries, senderName, chosenBoard ->
+                    selectedShareTries = chosenTries
+                    val gridTag = if (isFromGameOver) gridSize.keyPrefix else (chosenBoard?.gridTag ?: gridSize.keyPrefix)
+                    val scoreToShare = if (isFromGameOver) {
+                        currentScore
+                    } else {
+                        chosenBoard?.score ?: currentScore
+                    }
+                    if (scoreToShare < 5) {
+                        isShareFromGameOver = false
+                        activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
+                        Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
+                        return@ShareTriesSelectorDialog
+                    }
+                    val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
+                    val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
+                    val chainId = activeChallenge?.chainId?.ifEmpty { null }
+                        ?: currentRivalChainId?.ifEmpty { null }
+                        ?: ChallengeSeed.generateChainId()
+                    val code = ChallengeSeed.formatChallengeCode(
+                        gridTag = gridTag,
+                        targetScore = scoreToShare,
+                        tries = chosenTries,
+                        difficulty = chosenDiff,
+                        seed = seedToUse,
+                        senderName = senderName,
+                        chainId = chainId,
+                        isRevenge = false
+                    )
+                    ChallengeStorage.recordCreatedCode(context, code)
+                    runCatching {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", code))
+                    }
+                    Toast.makeText(context, "Challenge code copied: $code", Toast.LENGTH_SHORT).show()
+                    val awaiting = AwaitingChallenge(
+                        chainId = chainId,
+                        code = code,
+                        gridSizeTag = gridTag,
+                        targetScore = scoreToShare,
+                        difficulty = chosenDiff,
+                        paceName = "Classic",
+                        tries = chosenTries
+                    )
+                    ChallengeStorage.savePendingShare(context, awaiting)
+                    awaitingChallengeForDialog = awaiting
+                    activeDialog = ActiveDialog.DID_YOU_SHARE
                 },
                 onGenerateCard = { chosenTries, senderName, chosenBoard ->
                     selectedShareTries = chosenTries
@@ -2419,12 +2579,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         chosenBoard?.score ?: currentScore
                     }
                     if (scoreToShare < 5) {
+                        isShareFromGameOver = false
                         activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
                         Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
                         return@ShareTriesSelectorDialog
                     }
                     val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
-                    val chosenPace = if (isFromGameOver) paceMode.shortLabel else (chosenBoard?.paceName ?: paceMode.shortLabel)
+                    // PASS 5.19 Stage B #2: Force Classic pace for all async challenges
+                    val chosenPace = "Classic"
                     val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
                     val chainId = activeChallenge?.chainId?.ifEmpty { null }
                         ?: currentRivalChainId?.ifEmpty { null }
@@ -2455,6 +2617,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     // Requirement 2: Close dialog so NOTHING renders while system share sheet is open.
                     // "Did you share it?" will trigger on ON_RESUME after user returns from the chooser.
                     awaitingChallengeForDialog = null
+                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
 
                     val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
@@ -4484,9 +4647,21 @@ private fun StatusBanner(
     isRevengeRun: Boolean = false,
     revengeTargetScore: Int = 0,
     revengeRivalName: String? = null,
+    isChallengeReadyGateVisible: Boolean = false,
+    onConfirmChallengeReady: () -> Unit = {},
     onWatchMyRound: () -> Unit
 ) {
     val isMulti = gameMode != GameMode.SOLO
+    val effectiveTarget = when {
+        activeChallenge != null -> activeChallenge.targetScore
+        isRevengeRun && revengeTargetScore > 0 -> revengeTargetScore
+        else -> 0
+    }
+    val effectiveRivalName = when {
+        activeChallenge != null -> activeChallenge.rivalName
+        isRevengeRun && !revengeRivalName.isNullOrBlank() -> revengeRivalName
+        else -> "Rival"
+    }
     val bannerScale by animateFloatAsState(
         targetValue = if (isRoundClearCelebration) 1.04f else 1.0f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
@@ -4494,10 +4669,13 @@ private fun StatusBanner(
     )
     val bannerAccentColor by animateColorAsState(
         targetValue = when {
+            isChallengeReadyGateVisible -> Color(0xFF00E5FF)
             activeChallenge != null && isChallengeWon -> Color(0xFF00E676)
             activeChallenge != null && isChallengeTied -> Color(0xFFFFD600)
             activeChallenge != null && isChallengeLost -> Color(0xFFEF4444)
             activeChallenge != null && gameState == GameState.GAME_OVER -> Color(0xFFF59E0B)
+            effectiveTarget > 0 && currentScore > effectiveTarget && (gameState == GameState.WATCHING || gameState == GameState.PLAYING) -> Color(0xFF00E676)
+            effectiveTarget > 0 && currentScore == effectiveTarget && (gameState == GameState.WATCHING || gameState == GameState.PLAYING) -> Color(0xFFFFD600)
             eliminatedBannerText != null -> Color(0xFFEF4444)
             isRedemptionTurn -> Color(0xFFF59E0B)
             isRoundClearCelebration -> Color(0xFF34D399)
@@ -4511,39 +4689,83 @@ private fun StatusBanner(
         label = "bannerAccentColor"
     )
     val statusTitle = when {
+        isChallengeReadyGateVisible -> "Ready vs $effectiveRivalName?"
         activeChallenge != null && isChallengeWon -> "Challenge Won! 🎉"
         activeChallenge != null && isChallengeTied -> "Challenge Tied! 🤝"
         activeChallenge != null && isChallengeLost -> "Challenge Lost"
         activeChallenge != null && gameState == GameState.GAME_OVER -> "Try Failed!"
         eliminatedBannerText != null -> "Player Out!"
         isRedemptionTurn -> "Redemption Turn!"
-        isRoundClearCelebration -> if (isMulti && activePlayer != null) "${activePlayer.name} Cleared Round!" else "Round $clearedRoundNumber cleared!"
+        isRoundClearCelebration -> when {
+            isMulti && activePlayer != null -> "${activePlayer.name} Cleared Round!"
+            effectiveTarget > 0 && currentScore > effectiveTarget -> "🏆 Target Beaten! ($currentScore vs $effectiveTarget)"
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "🤝 Target Tied! ($currentScore/$effectiveTarget)"
+            else -> "Round $clearedRoundNumber cleared!"
+        }
         gameState == GameState.IDLE -> "Ready to Play?"
-        gameState == GameState.WATCHING -> if (isMulti && activePlayer != null) "${activePlayer.name} • Watch" else "Watch Carefully!"
-        gameState == GameState.PLAYING -> if (isMulti && activePlayer != null) "${activePlayer.name}'s Turn!" else "Your Turn!"
+        gameState == GameState.WATCHING -> when {
+            isMulti && activePlayer != null -> "${activePlayer.name} • Watch"
+            effectiveTarget > 0 && currentScore > effectiveTarget -> "🏆 Target Beaten! ($currentScore vs $effectiveTarget)"
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "🤝 Target Tied! ($currentScore/$effectiveTarget)"
+            else -> "Watch Carefully!"
+        }
+        gameState == GameState.PLAYING -> when {
+            isMulti && activePlayer != null -> "${activePlayer.name}'s Turn!"
+            effectiveTarget > 0 && currentScore > effectiveTarget -> "🏆 Target Beaten! ($currentScore vs $effectiveTarget)"
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "🤝 Target Tied! ($currentScore/$effectiveTarget)"
+            else -> "Your Turn!"
+        }
         else -> "Game Over!"
     }
     val statusSubtitle = when {
+        isChallengeReadyGateVisible -> {
+            if (effectiveTarget > 0) {
+                "Target: $effectiveTarget • Tap Ready when you're set to watch Round ${sequenceSize.coerceAtLeast(1)}"
+            } else {
+                "Tap Ready when you're set to watch Round ${sequenceSize.coerceAtLeast(1)}"
+            }
+        }
         activeChallenge != null && isChallengeWon -> {
             val best = maxOf(currentScore, activeChallenge.bestScore)
             "You beat ${activeChallenge.rivalName}'s target of ${activeChallenge.targetScore} with score $best!"
         }
         activeChallenge != null && isChallengeTied -> {
+            val best = maxOf(currentScore, activeChallenge.bestScore)
             if (challengeAttemptsLeft > 0 && !activeChallenge.isFreeTries) {
-                "You matched ${activeChallenge.rivalName}'s target of ${activeChallenge.targetScore}! ($challengeAttemptsLeft tries left to win outright)"
+                "Target tied (Best: $best)! Retry to beat it for the WIN, or send the tie now."
             } else {
                 "You matched ${activeChallenge.rivalName}'s target of ${activeChallenge.targetScore}!"
             }
         }
         activeChallenge != null && isChallengeLost -> "Out of tries! Target was ${activeChallenge.targetScore} (Best: ${activeChallenge.bestScore})"
-        activeChallenge != null && gameState == GameState.GAME_OVER -> "$challengeAttemptsLeft tries remaining to beat target of ${activeChallenge.targetScore}"
+        activeChallenge != null && gameState == GameState.GAME_OVER -> {
+            if (failedStepNumber > 0) {
+                "Missed step $failedStepNumber of Round $sequenceSize (Score: $currentScore vs Target: ${activeChallenge.targetScore}) • $challengeAttemptsLeft tries left"
+            } else {
+                "$challengeAttemptsLeft tries remaining to beat target of ${activeChallenge.targetScore}"
+            }
+        }
         eliminatedBannerText != null -> eliminatedBannerText
         isRedemptionTurn -> "${activePlayer?.name ?: "Survivor"} must repeat $sequenceSize steps to win outright!"
-        isRoundClearCelebration -> if (isMulti) "Next player up..." else "Get ready for Round ${clearedRoundNumber + 1}..."
+        isRoundClearCelebration -> when {
+            isMulti -> "Next player up..."
+            effectiveTarget > 0 && currentScore > effectiveTarget -> "Victory locked in! Get ready for Round ${clearedRoundNumber + 1}..."
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "Clear Round ${clearedRoundNumber + 1} to WIN outright!"
+            else -> "Get ready for Round ${clearedRoundNumber + 1}..."
+        }
         resumedBannerNote != null && (gameState == GameState.WATCHING || gameState == GameState.PLAYING) -> resumedBannerNote
         gameState == GameState.IDLE -> if (isMulti) "Pass the phone between turns • Last player standing wins" else "Memorize the glowing neon sequence and repeat it."
-        gameState == GameState.WATCHING -> "Round ${sequenceSize.coerceAtLeast(1)} • Pace ${flashDurationMs}ms • Input Locked"
-        gameState == GameState.PLAYING -> "Step ${playerStepIndex + 1} of $sequenceSize • Tap the matching pads"
+        gameState == GameState.WATCHING -> when {
+            effectiveTarget > 0 && currentScore > effectiveTarget -> "Round ${sequenceSize.coerceAtLeast(1)} • Victory locked in — keep going to push your score!"
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "Round ${sequenceSize.coerceAtLeast(1)} • Clear this round to WIN ($sequenceSize vs $effectiveTarget)!"
+            effectiveTarget > 0 && sequenceSize == effectiveTarget -> "Round $sequenceSize (Score: $currentScore) • Clear this round to TIE Target ($effectiveTarget)!"
+            else -> "Round ${sequenceSize.coerceAtLeast(1)} • Pace ${flashDurationMs}ms • Input Locked"
+        }
+        gameState == GameState.PLAYING -> when {
+            effectiveTarget > 0 && currentScore == effectiveTarget -> "Step ${playerStepIndex + 1} of $sequenceSize • Clear this round to WIN ($sequenceSize vs $effectiveTarget)!"
+            effectiveTarget > 0 && sequenceSize == effectiveTarget -> "Step ${playerStepIndex + 1} of $sequenceSize • Clear this round to TIE Target ($effectiveTarget)!"
+            else -> "Step ${playerStepIndex + 1} of $sequenceSize • Tap the matching pads"
+        }
         isReplayingLostRound -> "Replaying Round $sequenceSize (Step $ghostReplayStep of $sequenceSize) • Input Locked"
         failedExpectedPad != null && failedTappedPad != null && failedStepNumber > 0 -> {
             val exp = if (gridSize == GridSize.TWO_BY_TWO) failedExpectedPad.colorName.uppercase() else failedExpectedPad.glyph.displayName.uppercase()
@@ -4575,7 +4797,25 @@ private fun StatusBanner(
                 text = statusSubtitle, color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center, modifier = Modifier.testTag("status_subtitle_text")
             )
-            if (gameState == GameState.GAME_OVER && sequenceSize > 0) {
+            if (isChallengeReadyGateVisible && gameState == GameState.WATCHING) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Button(
+                    onClick = onConfirmChallengeReady,
+                    modifier = Modifier
+                        .heightIn(min = 38.dp)
+                        .testTag("challenge_ready_gate_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color(0xFF090D16)
+                    )
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Tap When Ready", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            } else if (gameState == GameState.GAME_OVER && sequenceSize > 0) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(text = "Final Score: $currentScore", color = Color(0xFF94A3B8), fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -4891,6 +5131,7 @@ private fun BottomActionSection(
     isChallengeWon: Boolean = false,
     isChallengeTied: Boolean = false,
     isChallengeLost: Boolean = false,
+    hasSentChallengeReply: Boolean = false,
     isRevengeRun: Boolean = false,
     revengeTargetScore: Int = 0,
     showChallengeNudge: Boolean = false,
@@ -4901,6 +5142,7 @@ private fun BottomActionSection(
     onCopyFlashFinished: () -> Unit = {},
     onReturnHome: () -> Unit = {},
     onReplyToRival: () -> Unit = {},
+    onSendTieEarly: () -> Unit = {},
     onExitChallenge: () -> Unit = {}
 ) {
     if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
@@ -4913,13 +5155,13 @@ private fun BottomActionSection(
 
     if (activeChallenge != null && gameState == GameState.GAME_OVER) {
         var isReplyFlashing by remember { mutableStateOf(false) }
-        val triggerReplyWithFlash: () -> Unit = {
-            if (!isReplyFlashing) {
+        val triggerReplyWithFlash: (() -> Unit) -> Unit = { callback ->
+            if (!isReplyFlashing && !hasSentChallengeReply) {
                 isReplyFlashing = true
                 actionScope.launch {
                     flashDelayMs(150L)
                     isReplyFlashing = false
-                    onReplyToRival()
+                    callback()
                 }
             }
         }
@@ -4929,6 +5171,7 @@ private fun BottomActionSection(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (challengeAttemptsLeft > 0 && !isChallengeWon) {
+                // Primary: Retry Turn (X tries left)
                 Button(
                     onClick = onStartOrRetry,
                     modifier = Modifier
@@ -4942,104 +5185,99 @@ private fun BottomActionSection(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(text = "Retry Turn ($challengeAttemptsLeft tries left)", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
-            } else if (isChallengeWon) {
-                Button(
-                    onClick = triggerReplyWithFlash,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .testTag("challenge_reply_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isReplyFlashing) Color(0xFF10B981) else Color(0xFF00E676),
-                        contentColor = Color.Black
-                    )
-                ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isReplyFlashing) "✓ Sending..." else "Send Victory to Rival!",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            } else if (isChallengeTied) {
-                Button(
-                    onClick = triggerReplyWithFlash,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .testTag("challenge_reply_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isReplyFlashing) Color(0xFF10B981) else Color(0xFFFFD600),
-                        contentColor = Color.Black
-                    )
-                ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isReplyFlashing) "✓ Sending..." else "Send Tie to Rival! 🤝",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            } else {
-                Button(
-                    onClick = triggerReplyWithFlash,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .testTag("challenge_reply_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isReplyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
-                        contentColor = Color.Black
-                    )
-                ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isReplyFlashing) "✓ Sending..." else "Send Result to Rival",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (challengeAttemptsLeft > 0 && !isChallengeWon) {
-                    val secondaryAccent = if (isChallengeTied) Color(0xFFFFD600) else Color(0xFF38BDF8)
+                // PASS 5.19 Part 2 Bug 3 & Clarifying Answer #3:
+                // - When tied on Try 1 with tries remaining: Show Secondary "Send Tie to Rival" + Tertiary "Exit Challenge"
+                // - When failed (< targetScore) with tries remaining: HIDE "Share Score", show ONLY "Exit Challenge"
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isChallengeTied) {
+                        val tieColor = if (hasSentChallengeReply) Color(0xFF10B981) else Color(0xFFFFD600)
+                        OutlinedButton(
+                            onClick = { triggerReplyWithFlash(onSendTieEarly) },
+                            enabled = !hasSentChallengeReply,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .testTag("challenge_reply_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isReplyFlashing) Color(0xFF10B981) else tieColor
+                            ),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (isReplyFlashing) Color(0xFF10B981).copy(alpha = 0.22f) else Color.Transparent
+                            )
+                        ) {
+                            Text(
+                                text = when {
+                                    hasSentChallengeReply -> "✓ Tie Sent"
+                                    isReplyFlashing -> "✓ Sending..."
+                                    else -> "Send Tie to Rival"
+                                },
+                                color = if (isReplyFlashing || hasSentChallengeReply) Color(0xFF34D399) else tieColor,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                     OutlinedButton(
-                        onClick = triggerReplyWithFlash,
+                        onClick = onExitChallenge,
                         modifier = Modifier
                             .weight(1f)
                             .height(40.dp)
-                            .testTag("challenge_reply_button"),
+                            .testTag("exit_challenge_button"),
                         shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            if (isReplyFlashing) Color(0xFF10B981) else secondaryAccent
-                        ),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = if (isReplyFlashing) Color(0xFF10B981).copy(alpha = 0.22f) else Color.Transparent
-                        )
+                        border = BorderStroke(1.dp, Color(0xFF64748B))
                     ) {
-                        Text(
-                            text = if (isReplyFlashing) "✓ Sending..." else if (isChallengeTied) "Share Tie 🤝" else "Share Score",
-                            color = if (isReplyFlashing) Color(0xFF34D399) else secondaryAccent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Text(text = "Exit Challenge", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
+            } else {
+                // Challenge is FINISHED (Won, Tied with 0 tries left, or Lost with 0 tries left)
+                val primaryColor = when {
+                    hasSentChallengeReply || isReplyFlashing -> Color(0xFF10B981)
+                    isChallengeWon -> Color(0xFF00E676)
+                    isChallengeTied -> Color(0xFFFFD600)
+                    else -> Color(0xFF38BDF8)
+                }
+                val primaryLabel = when {
+                    hasSentChallengeReply -> "✓ Reply Sent"
+                    isReplyFlashing -> "✓ Sending..."
+                    isChallengeWon -> "Send Victory to Rival!"
+                    isChallengeTied -> "Send Tie to Rival! 🤝"
+                    else -> "Send Result to Rival"
+                }
+                Button(
+                    onClick = { triggerReplyWithFlash(onReplyToRival) },
+                    enabled = !hasSentChallengeReply,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .testTag("challenge_reply_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryColor,
+                        contentColor = Color.Black,
+                        disabledContainerColor = Color(0xFF10B981).copy(alpha = 0.28f),
+                        disabledContentColor = Color(0xFF34D399)
+                    )
+                ) {
+                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = primaryLabel,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
                 OutlinedButton(
                     onClick = onExitChallenge,
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .height(40.dp)
                         .testTag("exit_challenge_button"),
                     shape = RoundedCornerShape(12.dp),
@@ -5050,12 +5288,12 @@ private fun BottomActionSection(
             }
         }
     } else if (gameState == GameState.GAME_OVER && gameMode == GameMode.SOLO) {
-        // PASS 2J Item 1: Solo Game Over 2x2 Grid with 12dp gaps
-        // Top-Left: "Play Again" (Primary Green) | Top-Right: "Home" (Dark Slate)
-        // Bottom-Left: "Share Challenge" (Dark Slate) | Bottom-Right: "Copy Challenge" (Dark Slate)
+        // PASS 5.19 Stage A #2:
+        // Remove standalone "Copy Challenge" button from Solo Game Over screen.
+        // Row 1: "Play Again" | "Home"
+        // Row 2: Full-width "Share Challenge" button (opens ShareTriesSelectorDialog which offers both Share Card and Copy Code).
         val gridButtonShape = RoundedCornerShape(14.dp)
         val gridButtonHeight = 48.dp
-        var isCopyFlashing by remember { mutableStateOf(false) }
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -5107,81 +5345,25 @@ private fun BottomActionSection(
             val isShareUnlocked = if (isRevengeRun) (currentScore > revengeTargetScore && currentScore >= 5) else (currentScore >= 5)
             val shareAccent = if (isShareUnlocked) Color(0xFF00E5FF) else Color(0xFF64748B)
             val shareBorder = if (isShareUnlocked) Color(0xFF00E5FF) else Color(0xFF334155)
-            val copyAccent = when {
-                isCopyFlashing -> Color(0xFF0F172A)
-                isShareUnlocked -> Color(0xFF38BDF8)
-                else -> Color(0xFF64748B)
-            }
-            val copyBorder = when {
-                isCopyFlashing -> Color(0xFF10B981)
-                isShareUnlocked -> Color(0xFF38BDF8)
-                else -> Color(0xFF334155)
-            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Button(
+                onClick = onShareChallenge,
+                enabled = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(gridButtonHeight)
+                    .testTag("share_challenge_button"),
+                shape = gridButtonShape,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1E293B),
+                    contentColor = shareAccent
+                ),
+                border = BorderStroke(1.5.dp, shareBorder)
             ) {
-                Button(
-                    onClick = onShareChallenge,
-                    enabled = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(gridButtonHeight)
-                        .testTag("share_challenge_button"),
-                    shape = gridButtonShape,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1E293B),
-                        contentColor = shareAccent
-                    ),
-                    border = BorderStroke(1.5.dp, shareBorder)
-                ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = shareAccent, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Share Challenge", color = shareAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-
-                Button(
-                    onClick = {
-                        if (!isShareUnlocked) {
-                            // Score < 5 gate is 0ms instant (no flash)
-                            onCopyCode()
-                            return@Button
-                        }
-                        if (isCopyFlashing) return@Button
-                        // Lock 2: Clipboard write + pending-share save at 0ms immediately on tap
-                        onCopyCode()
-                        isCopyFlashing = true
-                        actionScope.launch {
-                            flashDelayMs(150L)
-                            isCopyFlashing = false
-                            onCopyFlashFinished()
-                        }
-                    },
-                    enabled = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(gridButtonHeight)
-                        .testTag("copy_challenge_code_button"),
-                    shape = gridButtonShape,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isCopyFlashing) Color(0xFF10B981) else Color(0xFF1E293B),
-                        contentColor = copyAccent
-                    ),
-                    border = BorderStroke(1.5.dp, copyBorder)
-                ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = copyAccent, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isCopyFlashing) "✓ Copied!" else "Copy Challenge",
-                        color = copyAccent,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
+                Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = shareAccent, modifier = Modifier.size(17.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = "Share Challenge", color = shareAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
     } else {

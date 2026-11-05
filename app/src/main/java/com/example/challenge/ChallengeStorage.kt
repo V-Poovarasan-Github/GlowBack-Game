@@ -22,9 +22,24 @@ object ChallengeStorage {
     private const val KEY_MY_NAME = "glowback_player_name"
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
 
-    const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours)
+    const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours) UI nudge TTL
+    const val CHAIN_TARGET_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days hard expiry for outbound chain targets
+    const val MAX_CHAIN_TARGETS_CAP = 100
     const val MAX_RIVALS_CAP = 50
     const val MAX_CODES_CAP = 200
+    const val MAX_CONSUMED_CODES_CAP = 500
+
+    enum class ChainLookupStatus {
+        VALID,
+        EXPIRED,
+        NOT_FOUND
+    }
+
+    data class ChainLookupResult(
+        val status: ChainLookupStatus,
+        val targetScore: Int = 0,
+        val repliedRivals: List<String> = emptyList()
+    )
 
     // ==========================================
     // PLAYER NAME ("My Name")
@@ -76,18 +91,49 @@ object ChallengeStorage {
     }
 
     // ==========================================
-    // OUTBOUND CHAIN -> TARGET SCORE MAP (72h TTL)
+    // OUTBOUND CHAIN -> TARGET SCORE MAP (30d Hard Expiry, 100 FIFO, chainId:seedInt Sub-Chain Forking)
     // ==========================================
 
+    private fun buildChainTargetKey(chainId: String, seedInt: Int): String {
+        val cleanChain = chainId.trim().uppercase()
+        return if (seedInt != 0) "$cleanChain:$seedInt" else cleanChain
+    }
+
+    private fun resolveChainEntryKey(mapObj: JSONObject, cleanChain: String, seedInt: Int): String? {
+        if (cleanChain.isEmpty()) return null
+        if (seedInt != 0) {
+            val compositeKey = "$cleanChain:$seedInt"
+            if (mapObj.has(compositeKey)) return compositeKey
+        }
+        if (mapObj.has(cleanChain)) return cleanChain
+        // Fallback: if caller did not specify seedInt (e.g. seedInt == 0), locate newest sub-chain entry for cleanChain
+        val prefix = "$cleanChain:"
+        var bestKey: String? = null
+        var bestTime = Long.MIN_VALUE
+        val keys = mapObj.keys().asSequence().toList()
+        for (k in keys) {
+            if (k.startsWith(prefix, ignoreCase = true)) {
+                val t = mapObj.optJSONObject(k)?.optLong("createdAt", 0L) ?: 0L
+                if (t >= bestTime) {
+                    bestTime = t
+                    bestKey = k
+                }
+            }
+        }
+        return bestKey
+    }
+
     /**
-     * Saves a 72-hour background mapping of chainId -> targetScore whenever a T-code is generated.
-     * Supports 1-to-many WhatsApp group replies even after the first reply prunes the awaiting UI card.
+     * PASS 5.19 Stage B #3 & Mandatory Sub-Chain Forking:
+     * Saves a 30-day background mapping of (chainId:seedInt) -> targetScore (capped at 100 entries, FIFO)
+     * whenever a T-code is generated. Supports 1-to-many group broadcasts and simultaneous per-rival revenge rallies.
      */
     fun saveOutboundChainTarget(
         context: Context,
         chainId: String,
         targetScore: Int,
-        createdAt: Long = System.currentTimeMillis()
+        createdAt: Long = System.currentTimeMillis(),
+        seedInt: Int = 0
     ) {
         val cleanChain = chainId.trim().uppercase()
         if (cleanChain.isEmpty() || targetScore <= 0) return
@@ -99,60 +145,154 @@ object ChallengeStorage {
             JSONObject()
         }
 
-        // Prune expired (> 72h) entries
-        val keys = mapObj.keys().asSequence().toList()
-        for (key in keys) {
-            val entry = mapObj.optJSONObject(key)
-            val entryTime = entry?.optLong("createdAt", 0L) ?: 0L
-            if (createdAt - entryTime > AWAITING_TTL_MS) {
-                mapObj.remove(key)
-            }
-        }
+        val entryKey = buildChainTargetKey(cleanChain, seedInt)
+        val existingEntry = mapObj.optJSONObject(entryKey)
+        val existingReplied = existingEntry?.optJSONArray("repliedRivals") ?: JSONArray()
 
         val newEntry = JSONObject().apply {
             put("targetScore", targetScore)
             put("createdAt", createdAt)
+            put("chainId", cleanChain)
+            put("seedInt", seedInt)
+            put("repliedRivals", existingReplied)
         }
-        mapObj.put(cleanChain, newEntry)
+        mapObj.put(entryKey, newEntry)
+
+        // Enforce 100-entry FIFO cap by createdAt
+        val allKeys = mapObj.keys().asSequence().toList()
+        if (allKeys.size > MAX_CHAIN_TARGETS_CAP) {
+            val sortedByAge = allKeys.sortedBy { k ->
+                mapObj.optJSONObject(k)?.optLong("createdAt", 0L) ?: 0L
+            }
+            val toEvict = sortedByAge.take(allKeys.size - MAX_CHAIN_TARGETS_CAP)
+            for (k in toEvict) {
+                mapObj.remove(k)
+            }
+        }
+
         prefs.edit().putString(KEY_CHAIN_TARGETS, mapObj.toString()).apply()
     }
 
     /**
-     * Looks up the original targetScore for a given chainId if within the 72-hour TTL window.
-     * Prunes expired entries (> 72h) automatically.
+     * Inspects the outbound chain target map for (chainId, seedInt), distinguishing between:
+     * - VALID (<= 30 days)
+     * - EXPIRED (> 30 days -> "This reply has expired.")
+     * - NOT_FOUND (never issued by this device -> "This reply is for a challenge you didn't issue.")
+     */
+    fun inspectOutboundChainTarget(
+        context: Context,
+        chainId: String,
+        seedInt: Int = 0,
+        now: Long = System.currentTimeMillis()
+    ): ChainLookupResult {
+        val cleanChain = chainId.trim().uppercase()
+        if (cleanChain.isEmpty()) return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_CHAIN_TARGETS, null) ?: return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+        val mapObj = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+        }
+
+        val matchedKey = resolveChainEntryKey(mapObj, cleanChain, seedInt)
+            ?: return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+        val matched = mapObj.optJSONObject(matchedKey)
+            ?: return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+
+        val entryTime = matched.optLong("createdAt", 0L)
+        if (now - entryTime > CHAIN_TARGET_TTL_MS) {
+            return ChainLookupResult(ChainLookupStatus.EXPIRED)
+        }
+
+        val score = matched.optInt("targetScore", -1)
+        if (score <= 0) return ChainLookupResult(ChainLookupStatus.NOT_FOUND)
+
+        val repliedList = mutableListOf<String>()
+        val arr = matched.optJSONArray("repliedRivals")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val r = arr.optString(i, "").trim().uppercase()
+                if (r.isNotEmpty()) repliedList.add(r)
+            }
+        }
+        return ChainLookupResult(
+            status = ChainLookupStatus.VALID,
+            targetScore = score,
+            repliedRivals = repliedList
+        )
+    }
+
+    /**
+     * Looks up the original targetScore for a given chainId (and optional seedInt) if within the 30-day TTL window.
      */
     fun lookupOutboundChainTarget(
         context: Context,
         chainId: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        seedInt: Int = 0
     ): Int? {
+        val res = inspectOutboundChainTarget(context, chainId, seedInt, now)
+        return if (res.status == ChainLookupStatus.VALID && res.targetScore > 0) res.targetScore else null
+    }
+
+    /**
+     * Records that a rival name has replied to a specific outbound (chainId, seedInt) challenge.
+     * Used to detect when two group members with the same display name reply to the same challenge.
+     */
+    fun recordChainReplyRival(
+        context: Context,
+        chainId: String,
+        seedInt: Int,
+        rivalName: String
+    ) {
         val cleanChain = chainId.trim().uppercase()
-        if (cleanChain.isEmpty()) return null
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanChain.isEmpty() || cleanName.isEmpty()) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_CHAIN_TARGETS, null) ?: return null
+        val raw = prefs.getString(KEY_CHAIN_TARGETS, null) ?: return
         val mapObj = try {
             JSONObject(raw)
         } catch (_: Exception) {
-            return null
+            return
         }
-
-        var hadExpired = false
-        val keys = mapObj.keys().asSequence().toList()
-        for (key in keys) {
-            val entry = mapObj.optJSONObject(key)
-            val entryTime = entry?.optLong("createdAt", 0L) ?: 0L
-            if (now - entryTime > AWAITING_TTL_MS) {
-                mapObj.remove(key)
-                hadExpired = true
+        val matchedKey = resolveChainEntryKey(mapObj, cleanChain, seedInt) ?: return
+        val matched = mapObj.optJSONObject(matchedKey) ?: return
+        val arr = matched.optJSONArray("repliedRivals") ?: JSONArray()
+        var exists = false
+        for (i in 0 until arr.length()) {
+            if (arr.optString(i, "").equals(cleanName, ignoreCase = true)) {
+                exists = true
+                break
             }
         }
-        if (hadExpired) {
+        if (!exists) {
+            arr.put(cleanName)
+            matched.put("repliedRivals", arr)
+            mapObj.put(matchedKey, matched)
             prefs.edit().putString(KEY_CHAIN_TARGETS, mapObj.toString()).apply()
         }
+    }
 
-        val matched = mapObj.optJSONObject(cleanChain) ?: return null
-        val score = matched.optInt("targetScore", -1)
-        return if (score > 0) score else null
+    /**
+     * Returns true if an inbound R-code's senderName matches an existing RivalRecord AND that rival
+     * already has a recorded outcome for this exact challenge (chainId + seedInt).
+     */
+    fun hasSameNameSecondReplyForChallenge(
+        context: Context,
+        chainId: String,
+        seedInt: Int,
+        senderName: String
+    ): Boolean {
+        val cleanName = ChallengeSeed.sanitizePlayerName(senderName)
+        val existingRival = findRivalByName(context, cleanName) ?: return false
+        val inspect = inspectOutboundChainTarget(context, chainId, seedInt)
+        if (inspect.status == ChainLookupStatus.VALID &&
+            inspect.repliedRivals.any { it.equals(cleanName, ignoreCase = true) }
+        ) {
+            return true
+        }
+        return false
     }
 
     // ==========================================
@@ -160,7 +300,14 @@ object ChallengeStorage {
     // ==========================================
 
     fun savePendingShare(context: Context, awaiting: AwaitingChallenge) {
-        saveOutboundChainTarget(context, awaiting.chainId, awaiting.targetScore, awaiting.createdAt)
+        val parsed = ChallengeSeed.parseChallengeCode(awaiting.code)
+        saveOutboundChainTarget(
+            context = context,
+            chainId = awaiting.chainId,
+            targetScore = awaiting.targetScore,
+            createdAt = awaiting.createdAt,
+            seedInt = parsed?.seedInt ?: 0
+        )
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val obj = JSONObject().apply {
             put("chainId", awaiting.chainId)
@@ -436,14 +583,55 @@ object ChallengeStorage {
     }
 
     /**
-     * PASS 5.15 Item 1 & 2:
+     * Returns true if the given rival currently has an unfinished (IN_PROGRESS) challenge
+     * whose code and seed differ from the newly pasted T-code.
+     */
+    fun hasUnfinishedChallengeToReplace(
+        context: Context,
+        rivalName: String,
+        newCode: String,
+        newSeed: Int
+    ): Boolean {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        val cleanCode = ChallengeSeed.sanitizeCodeText(newCode).uppercase()
+        val existingRival = findRivalByName(context, cleanName)
+        if (existingRival != null && existingRival.lastStatus == "IN_PROGRESS") {
+            val sameCode = cleanCode.isNotEmpty() && existingRival.inProgressCode.equals(cleanCode, ignoreCase = true)
+            val sameSeed = newSeed != 0 && existingRival.inProgressSeed == newSeed
+            if (!sameCode && !sameSeed) {
+                return true
+            }
+        }
+        val saved = loadChallenges(context)
+        return saved.any { ch ->
+            !ch.isCompleted &&
+                ch.rivalName.equals(cleanName, ignoreCase = true) &&
+                !(cleanCode.isNotEmpty() && ch.code.equals(cleanCode, ignoreCase = true)) &&
+                !(newSeed != 0 && ch.seed == newSeed)
+        }
+    }
+
+    /**
+     * PASS 5.15 Item 1 & 2 + PASS 5.19 Stage A #1 & Invariant (d):
      * Persists an active/in-progress challenge both in KEY_CHALLENGES and as an "IN_PROGRESS"
-     * RivalRecord in the Rivalry tab so exiting mid-tries preserves remaining tries and bestScore.
+     * RivalRecord in the Rivalry tab. Never sets IN_PROGRESS for a consumed code, and replaces
+     * any older unfinished challenge from the same rival.
      */
     fun saveInProgressChallenge(context: Context, item: ChallengeItem): RivalRecord {
-        saveChallenge(context, item)
         val cleanName = ChallengeSeed.sanitizePlayerName(item.rivalName)
         val existing = findRivalByName(context, cleanName)
+        if (item.code.isNotBlank() && isCodeConsumed(context, item.code)) {
+            return existing ?: RivalRecord(name = cleanName)
+        }
+        // Remove any older unfinished challenge from the same rival before saving the new one
+        val currentChallenges = loadChallenges(context).toMutableList()
+        currentChallenges.removeAll { ch ->
+            ch.rivalName.equals(cleanName, ignoreCase = true) &&
+                !ch.code.equals(item.code, ignoreCase = true)
+        }
+        persistChallenges(context, currentChallenges)
+
+        saveChallenge(context, item.copy(rivalName = cleanName))
         val record = RivalRecord(
             name = cleanName,
             wins = existing?.wins ?: 0,
@@ -470,37 +658,40 @@ object ChallengeStorage {
     }
 
     /**
-     * PASS 5.15 Item 3:
-     * Looks up an existing "IN_PROGRESS" challenge by exact code or chainId so re-pasting the same
-     * T-code resumes from the saved state (correct triesRemaining & bestScore) instead of resetting to fresh tries.
+     * PASS 5.19 Stage A #1:
+     * Looks up an existing "IN_PROGRESS" challenge strictly by exact code string or seedInt ONLY,
+     * NEVER by chainId (since chainId is permanent across all matches with a rival).
      */
     fun findInProgressChallenge(
         context: Context,
         code: String,
-        chainId: String,
-        rivalName: String? = null
+        chainId: String = "",
+        rivalName: String? = null,
+        seedInt: Int = 0
     ): ChallengeItem? {
         val cleanCode = ChallengeSeed.sanitizeCodeText(code).uppercase()
-        val cleanChain = chainId.trim().uppercase()
+        if (cleanCode.isNotEmpty() && isCodeConsumed(context, cleanCode)) return null
+        val parsed = if (cleanCode.isNotEmpty()) ChallengeSeed.parseChallengeCode(cleanCode) else null
+        val targetSeed = if (seedInt != 0) seedInt else (parsed?.seedInt ?: 0)
 
-        // 1. Check RivalRecords with lastStatus == "IN_PROGRESS"
+        // 1. Check RivalRecords with lastStatus == "IN_PROGRESS" by exact code or seedInt ONLY
         val rivals = loadRivals(context)
         val matchedRival = rivals.firstOrNull { r ->
             r.lastStatus == "IN_PROGRESS" && (
                 (cleanCode.isNotEmpty() && r.inProgressCode.equals(cleanCode, ignoreCase = true)) ||
-                (cleanChain.isNotEmpty() && r.lastChainId.equals(cleanChain, ignoreCase = true))
+                (targetSeed != 0 && r.inProgressSeed == targetSeed)
             )
         }
         if (matchedRival != null) {
             return getInProgressChallengeForRival(context, matchedRival)
         }
 
-        // 2. Check saved ChallengeItems in KEY_CHALLENGES
+        // 2. Check saved ChallengeItems in KEY_CHALLENGES by exact code or seedInt ONLY
         val saved = loadChallenges(context)
         val matchedSaved = saved.firstOrNull { ch ->
             !ch.isCompleted && (
                 (cleanCode.isNotEmpty() && ch.code.equals(cleanCode, ignoreCase = true)) ||
-                (cleanChain.isNotEmpty() && ch.chainId.equals(cleanChain, ignoreCase = true))
+                (targetSeed != 0 && ch.seed == targetSeed)
             )
         }
         if (matchedSaved != null) {
@@ -516,9 +707,10 @@ object ChallengeStorage {
      */
     fun getInProgressChallengeForRival(context: Context, rival: RivalRecord): ChallengeItem? {
         if (rival.lastStatus != "IN_PROGRESS") return null
+        if (rival.inProgressCode.isNotBlank() && isCodeConsumed(context, rival.inProgressCode)) return null
         val saved = loadChallenges(context).firstOrNull { ch ->
             (rival.inProgressCode.isNotEmpty() && ch.code.equals(rival.inProgressCode, ignoreCase = true)) ||
-            (rival.lastChainId.isNotEmpty() && ch.chainId.equals(rival.lastChainId, ignoreCase = true))
+            (rival.inProgressSeed != 0 && ch.seed == rival.inProgressSeed)
         }
         if (saved != null) {
             return saved.copy(
@@ -676,7 +868,8 @@ object ChallengeStorage {
         gridSize: String,
         difficulty: GameDifficulty,
         chainId: String,
-        maxTries: Int = 3
+        maxTries: Int = 3,
+        seed: Int = 0
     ): RivalRecord {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName)
@@ -695,6 +888,11 @@ object ChallengeStorage {
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
         val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLost, isTie)
+        val resolvedChain = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
+
+        if (resolvedChain.isNotEmpty()) {
+            recordChainReplyRival(context, resolvedChain, seed, cleanName)
+        }
 
         val record = RivalRecord(
             name = cleanName,
@@ -707,7 +905,7 @@ object ChallengeStorage {
             lastTarget = responderScore,
             lastUserScore = myOriginalTarget,
             lastStatus = status,
-            lastChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() },
+            lastChainId = resolvedChain,
             updatedAt = System.currentTimeMillis(),
             inProgressCode = "",
             inProgressTriesLeft = 0,
@@ -790,7 +988,14 @@ object ChallengeStorage {
     }
 
     fun saveAwaitingChallenge(context: Context, awaiting: AwaitingChallenge) {
-        saveOutboundChainTarget(context, awaiting.chainId, awaiting.targetScore, awaiting.createdAt)
+        val parsed = ChallengeSeed.parseChallengeCode(awaiting.code)
+        saveOutboundChainTarget(
+            context = context,
+            chainId = awaiting.chainId,
+            targetScore = awaiting.targetScore,
+            createdAt = awaiting.createdAt,
+            seedInt = parsed?.seedInt ?: 0
+        )
         val existing = loadAwaitingChallenges(context).toMutableList()
         val index = existing.indexOfFirst { it.chainId.equals(awaiting.chainId, ignoreCase = true) }
         if (index >= 0) {
@@ -846,10 +1051,15 @@ object ChallengeStorage {
     }
 
     // ==========================================
-    // FIFO 200-CAP CODE SETS (MY_CODES & CONSUMED_CODES)
+    // FIFO CODE SETS (MY_CODES = 200 CAP, CONSUMED_CODES = 500 CAP)
     // ==========================================
 
-    private fun loadFifoCodes(context: Context, fifoKey: String, setKey: String): MutableList<String> {
+    private fun loadFifoCodes(
+        context: Context,
+        fifoKey: String,
+        setKey: String,
+        maxCap: Int = MAX_CODES_CAP
+    ): MutableList<String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val rawFifo = prefs.getString(fifoKey, null)
         val result = mutableListOf<String>()
@@ -869,16 +1079,22 @@ object ChallengeStorage {
                 result.add(clean)
             }
         }
-        return if (result.size > MAX_CODES_CAP) {
-            result.takeLast(MAX_CODES_CAP).toMutableList()
+        return if (result.size > maxCap) {
+            result.takeLast(maxCap).toMutableList()
         } else {
             result
         }
     }
 
-    private fun saveFifoCodes(context: Context, fifoKey: String, setKey: String, codes: List<String>) {
+    private fun saveFifoCodes(
+        context: Context,
+        fifoKey: String,
+        setKey: String,
+        codes: List<String>,
+        maxCap: Int = MAX_CODES_CAP
+    ) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val capped = if (codes.size > MAX_CODES_CAP) codes.takeLast(MAX_CODES_CAP) else codes
+        val capped = if (codes.size > maxCap) codes.takeLast(maxCap) else codes
         val arr = JSONArray()
         for (c in capped) {
             arr.put(c)
@@ -890,15 +1106,15 @@ object ChallengeStorage {
     }
 
     fun getMyCreatedCodes(context: Context): List<String> =
-        loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES)
+        loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES, MAX_CODES_CAP)
 
     fun getConsumedCodes(context: Context): List<String> =
-        loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+        loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, MAX_CONSUMED_CODES_CAP)
 
     fun recordCreatedCode(context: Context, code: String) {
         val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
         if (clean.isEmpty()) return
-        val list = loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES)
+        val list = loadFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES, MAX_CODES_CAP)
         list.removeAll { it.equals(clean, ignoreCase = true) }
         list.add(clean)
         val parsed = ChallengeSeed.parseChallengeCode(clean)
@@ -907,16 +1123,21 @@ object ChallengeStorage {
             list.removeAll { it.equals(fullUpper, ignoreCase = true) }
             list.add(fullUpper)
             if (!parsed.isRevenge && parsed.chainId.isNotEmpty()) {
-                saveOutboundChainTarget(context, parsed.chainId, parsed.targetScore)
+                saveOutboundChainTarget(
+                    context = context,
+                    chainId = parsed.chainId,
+                    targetScore = parsed.targetScore,
+                    seedInt = parsed.seedInt
+                )
             }
         }
-        saveFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES, list)
+        saveFifoCodes(context, KEY_MY_CODES_FIFO, KEY_MY_CODES, list, MAX_CODES_CAP)
     }
 
     fun markCodeConsumed(context: Context, code: String) {
         val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
         if (clean.isEmpty()) return
-        val list = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+        val list = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, MAX_CONSUMED_CODES_CAP)
         list.removeAll { it.equals(clean, ignoreCase = true) }
         list.add(clean)
         val parsed = ChallengeSeed.parseChallengeCode(clean)
@@ -925,17 +1146,38 @@ object ChallengeStorage {
             list.removeAll { it.equals(fullUpper, ignoreCase = true) }
             list.add(fullUpper)
         }
-        saveFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, list)
+        saveFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, list, MAX_CONSUMED_CODES_CAP)
     }
 
+    /**
+     * PASS 5.19 Run-Signature Consumption Check:
+     * Checks both the exact 7-segment code string AND, for playable T-codes, the canonical
+     * run signature (senderName + gridTag + targetScore + seedInt). Even if the same run is
+     * re-shared with different tries or a different chainId, it is recognized as already completed.
+     */
     fun isCodeConsumed(context: Context, code: String): Boolean {
         val clean = ChallengeSeed.sanitizeCodeText(code).uppercase()
         if (clean.isEmpty()) return false
-        val consumed = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES)
+        val consumed = loadFifoCodes(context, KEY_CONSUMED_CODES_FIFO, KEY_CONSUMED_CODES, MAX_CONSUMED_CODES_CAP)
         if (consumed.any { it.equals(clean, ignoreCase = true) }) return true
-        val parsed = ChallengeSeed.parseChallengeCode(clean)
-        if (parsed != null && consumed.any { it.equals(parsed.fullCode, ignoreCase = true) }) {
+        val parsed = ChallengeSeed.parseChallengeCode(clean) ?: return false
+        if (consumed.any { it.equals(parsed.fullCode, ignoreCase = true) }) {
             return true
+        }
+        if (!parsed.isRevenge && !parsed.isLegacy && parsed.seedInt != 0) {
+            for (stored in consumed) {
+                val cParsed = ChallengeSeed.parseChallengeCode(stored)
+                if (cParsed != null &&
+                    !cParsed.isRevenge &&
+                    !cParsed.isLegacy &&
+                    cParsed.seedInt == parsed.seedInt &&
+                    cParsed.targetScore == parsed.targetScore &&
+                    cParsed.gridTag.equals(parsed.gridTag, ignoreCase = true) &&
+                    cParsed.senderName.equals(parsed.senderName, ignoreCase = true)
+                ) {
+                    return true
+                }
+            }
         }
         return false
     }

@@ -494,13 +494,13 @@ class ExampleRobolectricTest {
         composeTestRule.mainClock.advanceTimeBy(400)
         assertTrue(prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
 
-        // 6. PASS 2H & PASS 2J: Verify 2x2 Solo Game Over grid (Play Again, Home, Share Challenge, Copy Challenge), no floating nudge chip, and Tries Selector Sheet
+        // 6. PASS 2H, PASS 2J & PASS 5.19 Stage A #2: Verify Solo Game Over buttons (Play Again, Home, Share Challenge; standalone Copy Challenge removed)
         composeTestRule.mainClock.autoAdvance = true
         composeTestRule.onNodeWithTag("challenge_nudge_chip").assertDoesNotExist()
         composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("game_over_home_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("copy_challenge_code_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("copy_challenge_code_button").assertDoesNotExist()
 
         // Clear any score from round 1 if the random first pad happened to be green, then verify FirstTimeShareGateDialog -> ChallengerNameSetupDialog -> ShareTriesSelectorDialog
         prefs.edit().remove(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY)).apply()
@@ -1341,9 +1341,9 @@ class ExampleRobolectricTest {
         val createdSetBeforeClick = createdCodesPrefs.getStringSet("my_created_codes_v1", emptySet()) ?: emptySet()
         assertTrue("Recomposition on Game Over must NOT record any created code", createdSetBeforeClick.isEmpty())
 
-        // 6. Verify grayed-out Share Challenge & Copy Challenge buttons remain clickable at score < 5 and show Score-5 Gate
+        // 6. Verify grayed-out Share Challenge button remains clickable at score < 5 and shows Score-5 Gate (standalone Copy button removed per PASS 5.19 Stage A #2)
         composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed().assertIsEnabled()
-        composeTestRule.onNodeWithTag("copy_challenge_code_button").assertIsDisplayed().assertIsEnabled()
+        composeTestRule.onNodeWithTag("copy_challenge_code_button").assertDoesNotExist()
 
         composeTestRule.onNodeWithTag("share_challenge_button").performClick()
         composeTestRule.waitForIdle()
@@ -1442,7 +1442,8 @@ class ExampleRobolectricTest {
         assertTrue("Rival NOVA must be created from matched reply code", rivalsAfterMerge.any { it.name == "NOVA" })
 
         // 9. Post-Expiry Reply Code Paste: Even when NO awaiting card exists (expired > 72h),
-        // pasting an R-token reply code still creates/merges the rival card from the NAME segment.
+        // pasting an R-token reply code still creates/merges the rival card while the 30d chain->target entry lives.
+        ChallengeStorage.saveOutboundChainTarget(context, "EXP", 6, seedInt = 31337)
         val postExpiryReplyCode = ChallengeSeed.formatChallengeCode(
             gridTag = "4x4",
             targetScore = 7,
@@ -1712,14 +1713,14 @@ class ExampleRobolectricTest {
         ChallengeStorage.markCodeConsumed(context, friendReplyCode)
         assertTrue(ChallengeStorage.isCodeConsumed(context, friendReplyCode))
 
-        // Verify 200 FIFO cap on KEY_CONSUMED_CODES
-        for (i in 1..210) {
+        // Verify 500 FIFO cap on KEY_CONSUMED_CODES (PASS 5.19 Stage B #7)
+        for (i in 1..510) {
             ChallengeStorage.markCodeConsumed(context, "DUMMY-CODE-$i")
         }
         val consumedSet = ChallengeStorage.getConsumedCodes(context)
-        assertEquals(200, consumedSet.size)
+        assertEquals(500, consumedSet.size)
         assertFalse("Oldest consumed entry must be evicted (FIFO)", consumedSet.contains("DUMMY-CODE-1"))
-        assertTrue("Newest consumed entry must be retained", consumedSet.contains("DUMMY-CODE-210"))
+        assertTrue("Newest consumed entry must be retained", consumedSet.contains("DUMMY-CODE-510"))
 
         // 3. Unicode dashes & zero-width char sanitization in extractCodeFromText / parseChallengeCode
         val baseValidCode = ChallengeSeed.formatChallengeCode(
@@ -2311,6 +2312,223 @@ class ExampleRobolectricTest {
             .assertTextContains("Hard", substring = true)
         // 4. Step indicator dots are HIDDEN because targetScore (30) > 7
         composeTestRule.onNodeWithTag("sequence_step_indicator").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_19_asyncChallengeRobustness_and_4PlayerMesh() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        // 1. Stage A #1: findInProgressChallenge matches strictly by exact code or seedInt ONLY, never by chainId!
+        //    And pasting a new T-code from the same rival replaces the old unfinished challenge.
+        val tCode1 = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 11111,
+            senderName = "BOB",
+            chainId = "CH1",
+            isRevenge = false
+        )
+        val tCode2SameChainDifferentSeed = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 8,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 22222,
+            senderName = "BOB",
+            chainId = "CH1",
+            isRevenge = false
+        )
+        val inProg1 = ChallengeItem(
+            code = tCode1,
+            rivalName = "BOB",
+            gridSizeTag = "3x3",
+            targetScore = 6,
+            maxTries = 3,
+            attemptsLeft = 2,
+            bestScore = 4,
+            seed = 11111,
+            difficulty = GameDifficulty.EASY,
+            chainId = "CH1",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(context, inProg1)
+        assertNotNull(
+            "Exact code/seed must find in-progress challenge",
+            ChallengeStorage.findInProgressChallenge(context, tCode1, "CH1", "BOB", seedInt = 11111)
+        )
+        assertTrue(
+            "Different code/seed on the SAME chainId must NOT match old in-progress challenge",
+            ChallengeStorage.findInProgressChallenge(context, tCode2SameChainDifferentSeed, "CH1", "BOB", seedInt = 22222) == null
+        )
+        assertTrue(
+            "hasUnfinishedChallengeToReplace must detect existing unfinished challenge from BOB when new T-code arrives",
+            ChallengeStorage.hasUnfinishedChallengeToReplace(context, "BOB", tCode2SameChainDifferentSeed, 22222)
+        )
+        val inProg2 = ChallengeItem(
+            code = tCode2SameChainDifferentSeed,
+            rivalName = "BOB",
+            gridSizeTag = "3x3",
+            targetScore = 8,
+            maxTries = 3,
+            attemptsLeft = 3,
+            bestScore = 0,
+            seed = 22222,
+            difficulty = GameDifficulty.EASY,
+            chainId = "CH1",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(context, inProg2)
+        assertTrue(
+            "Old unfinished challenge from BOB must be replaced when new T-code is saved",
+            ChallengeStorage.findInProgressChallenge(context, tCode1, "CH1", "BOB", seedInt = 11111) == null
+        )
+        assertNotNull(
+            "New unfinished challenge from BOB must be active",
+            ChallengeStorage.findInProgressChallenge(context, tCode2SameChainDifferentSeed, "CH1", "BOB", seedInt = 22222)
+        )
+
+        // 2. Run-Signature Consumption (Part 1 Bug 2):
+        //    Once a T-code is consumed, re-sharing the same run (same senderName + gridTag + targetScore + seedInt)
+        //    with a different chainId or different tries is ALSO blocked as consumed!
+        ChallengeStorage.markCodeConsumed(context, tCode2SameChainDifferentSeed)
+        val resharedDifferentChainAndTries = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 8,
+            tries = 5,
+            difficulty = GameDifficulty.EASY,
+            seed = 22222,
+            senderName = "BOB",
+            chainId = "NEW",
+            isRevenge = false
+        )
+        assertTrue(
+            "Run-signature consumption must block re-shared T-code with same sender+grid+target+seed even if chainId/tries changed",
+            ChallengeStorage.isCodeConsumed(context, resharedDifferentChainAndTries)
+        )
+
+        // 3. Mandatory Per-Rival Sub-Chain Forking (chainId + ":" + seedInt) & 30-Day Retention:
+        //    Running simultaneous revenge rallies on the same chainId "K7Q" with different seeds (50001 vs 50002)
+        //    must NOT overwrite each other's target scores!
+        ChallengeStorage.saveOutboundChainTarget(context, "K7Q", targetScore = 9, seedInt = 50001)
+        ChallengeStorage.saveOutboundChainTarget(context, "K7Q", targetScore = 14, seedInt = 50002)
+        assertEquals(
+            "Sub-chain forking (K7Q:50001) must preserve target 9",
+            9,
+            ChallengeStorage.lookupOutboundChainTarget(context, "K7Q", seedInt = 50001)
+        )
+        assertEquals(
+            "Sub-chain forking (K7Q:50002) must preserve target 14",
+            14,
+            ChallengeStorage.lookupOutboundChainTarget(context, "K7Q", seedInt = 50002)
+        )
+
+        // 4. 30-Day Expiry Status (EXPIRED vs NOT_FOUND):
+        val expiredTimestamp = System.currentTimeMillis() - (31L * 24L * 3600_000L)
+        ChallengeStorage.saveOutboundChainTarget(context, "OLD", targetScore = 10, createdAt = expiredTimestamp, seedInt = 77777)
+        val expiredLookup = ChallengeStorage.inspectOutboundChainTarget(context, "OLD", seedInt = 77777)
+        assertEquals(ChallengeStorage.ChainLookupStatus.EXPIRED, expiredLookup.status)
+
+        val unknownLookup = ChallengeStorage.inspectOutboundChainTarget(context, "UNK", seedInt = 99999)
+        assertEquals(ChallengeStorage.ChainLookupStatus.NOT_FOUND, unknownLookup.status)
+
+        // 5. Same-Name Second Reply Detection (Clarifying Answer #2: Cat1 vs Cat2 in group):
+        ChallengeStorage.saveOutboundChainTarget(context, "GRP2", targetScore = 7, seedInt = 60001)
+        ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "CAT",
+            responderScore = 8,
+            myOriginalTarget = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "GRP2",
+            maxTries = 3,
+            seed = 60001
+        )
+        assertTrue(
+            "Second reply from CAT for the same challenge (GRP2:60001) must trigger Same-Name Second Reply prompt",
+            ChallengeStorage.hasSameNameSecondReplyForChallenge(context, "GRP2", 60001, "CAT")
+        )
+        assertFalse(
+            "First reply from DAN for the same challenge must NOT trigger Same-Name Second Reply prompt",
+            ChallengeStorage.hasSameNameSecondReplyForChallenge(context, "GRP2", 60001, "DAN")
+        )
+
+        // 6. Stage B #5: R-Code Tries Semantics — R-token encodes tries GRANTED (maxTries = 3 -> R3E), not tries used.
+        val finishedMatchWith3Tries = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "DAN",
+            userScore = 11,
+            targetScore = 9,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "D99",
+            maxTries = 3,
+            seed = 44444
+        )
+        assertNotNull(finishedMatchWith3Tries)
+        assertTrue(
+            "R-code must encode tries GRANTED (R3E for maxTries=3)",
+            finishedMatchWith3Tries!!.lastReplyCode.contains("-R3E-")
+        )
+
+        // 7. UI Verification: Non-Originator R-Code Rejection (Eve pastes Dan's R-code for a challenge Eve didn't issue)
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val foreignRCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 8,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 88881,
+            senderName = "DAN",
+            chainId = "FRN",
+            isRevenge = true
+        )
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(foreignRCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_code_error_text")
+            .assertIsDisplayed()
+            .assertTextContains("This reply is for a challenge you didn't issue.", substring = true)
+        composeTestRule.onNodeWithTag("close_challenge_dialog_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 8. UI Verification: Accept a playable T-code -> verify Unified 2-Row Challenge Header & Ready Consent Gate
+        val playableTCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.HARD,
+            seed = 33333,
+            senderName = "DAN",
+            chainId = "D77",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(playableTCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Unified 2-row banner + Ready Consent Gate button displayed before sequence starts
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("active_challenge_compact_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Ready vs DAN?", substring = true).assertIsDisplayed()
     }
 }
 
