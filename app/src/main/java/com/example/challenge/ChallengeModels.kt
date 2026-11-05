@@ -64,6 +64,12 @@ data class ParsedChallenge(
     val isRevenge: Boolean = false
 )
 
+data class GridStat(
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val ties: Int = 0
+)
+
 /**
  * Record for head-to-head rivalry history with a named rival.
  */
@@ -76,10 +82,15 @@ data class RivalRecord(
     val lastGrid: String = "2x2",      // e.g. "4x4"
     val lastDifficulty: GameDifficulty = GameDifficulty.EASY,
     val lastTarget: Int = 0,           // Rival's score or target
-    val lastUserScore: Int = 0,        // Player's score in last match
-    val lastStatus: String = "WON",    // "WON", "LOST", "TIED"
+    val lastUserScore: Int = 0,        // Player's score in last match (or bestScore when IN_PROGRESS)
+    val lastStatus: String = "WON",    // "WON", "LOST", "TIED", or "IN_PROGRESS"
     val lastChainId: String = "",      // Chain ID for revenge/counter-challenges
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val inProgressCode: String = "",   // Full challenge code when lastStatus == "IN_PROGRESS"
+    val inProgressTriesLeft: Int = 0,  // Remaining tries when lastStatus == "IN_PROGRESS"
+    val inProgressMaxTries: Int = 3,   // Max tries (0 = Free tries) when lastStatus == "IN_PROGRESS"
+    val inProgressSeed: Int = 0,       // Challenge seed when lastStatus == "IN_PROGRESS"
+    val gridStats: Map<String, GridStat> = emptyMap() // Per-grid breakdown (e.g. "2x2" -> GridStat(1, 1, 0))
 )
 
 /**

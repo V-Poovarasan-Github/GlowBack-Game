@@ -68,16 +68,11 @@ object ChallengeStorage {
     }
 
     /**
-     * Smart Share Optimization:
-     * - Solo games with no rival (currentRivalName is null/blank) -> Always generate full card (image + text).
-     * - If currentRivalName != lastSharedRivalName -> Generate full card (image + text).
-     * - If currentRivalName == lastSharedRivalName -> Share/copy code text only (no card).
+     * Always share full PNG trophy card + 7-segment code caption on ALL challenge shares
+     * to provide visual proof of the target score and prevent text-editing forgery.
      */
     fun shouldShareTextOnly(context: Context, currentRivalName: String?): Boolean {
-        val cleanCurrent = currentRivalName?.trim()?.uppercase() ?: ""
-        if (cleanCurrent.isEmpty()) return false
-        val lastRival = getLastSharedRivalName(context) ?: return false
-        return cleanCurrent.equals(lastRival, ignoreCase = true)
+        return false
     }
 
     // ==========================================
@@ -312,6 +307,21 @@ object ChallengeStorage {
                 val obj = jsonArray.getJSONObject(i)
                 val diffName = obj.optString("lastDifficulty", "EASY")
                 val difficulty = try { GameDifficulty.valueOf(diffName) } catch (_: Exception) { GameDifficulty.EASY }
+                val parsedGridStats = mutableMapOf<String, GridStat>()
+                val gridObj = obj.optJSONObject("gridStats")
+                if (gridObj != null) {
+                    val keys = gridObj.keys().asSequence().toList()
+                    for (k in keys) {
+                        val sObj = gridObj.optJSONObject(k)
+                        if (sObj != null) {
+                            parsedGridStats[k.lowercase()] = GridStat(
+                                wins = sObj.optInt("wins", 0),
+                                losses = sObj.optInt("losses", 0),
+                                ties = sObj.optInt("ties", 0)
+                            )
+                        }
+                    }
+                }
                 list.add(
                     RivalRecord(
                         name = obj.getString("name"),
@@ -325,7 +335,12 @@ object ChallengeStorage {
                         lastUserScore = obj.optInt("lastUserScore", 0),
                         lastStatus = obj.optString("lastStatus", "WON"),
                         lastChainId = obj.optString("lastChainId", ""),
-                        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
+                        inProgressCode = obj.optString("inProgressCode", ""),
+                        inProgressTriesLeft = obj.optInt("inProgressTriesLeft", 0),
+                        inProgressMaxTries = obj.optInt("inProgressMaxTries", 3),
+                        inProgressSeed = obj.optInt("inProgressSeed", 0),
+                        gridStats = parsedGridStats
                     )
                 )
             }
@@ -340,6 +355,15 @@ object ChallengeStorage {
         val capped = list.sortedByDescending { it.updatedAt }.take(MAX_RIVALS_CAP)
         val jsonArray = JSONArray()
         for (item in capped) {
+            val gridObj = JSONObject()
+            for ((gridKey, stat) in item.gridStats) {
+                val sObj = JSONObject().apply {
+                    put("wins", stat.wins)
+                    put("losses", stat.losses)
+                    put("ties", stat.ties)
+                }
+                gridObj.put(gridKey.lowercase(), sObj)
+            }
             val obj = JSONObject().apply {
                 put("name", item.name)
                 put("wins", item.wins)
@@ -353,6 +377,11 @@ object ChallengeStorage {
                 put("lastStatus", item.lastStatus)
                 put("lastChainId", item.lastChainId)
                 put("updatedAt", item.updatedAt)
+                put("inProgressCode", item.inProgressCode)
+                put("inProgressTriesLeft", item.inProgressTriesLeft)
+                put("inProgressMaxTries", item.inProgressMaxTries)
+                put("inProgressSeed", item.inProgressSeed)
+                put("gridStats", gridObj)
             }
             jsonArray.put(obj)
         }
@@ -376,10 +405,150 @@ object ChallengeStorage {
         if (removed) {
             persistRivals(context, existing)
         }
+        val challenges = loadChallenges(context).toMutableList()
+        if (challenges.removeAll { it.rivalName.equals(name, ignoreCase = true) }) {
+            persistChallenges(context, challenges)
+        }
     }
 
     fun findRivalByName(context: Context, name: String): RivalRecord? {
         return loadRivals(context).firstOrNull { it.name.equals(name, ignoreCase = true) }
+    }
+
+    /**
+     * PASS 5.15 Item 1 & 2:
+     * Persists an active/in-progress challenge both in KEY_CHALLENGES and as an "IN_PROGRESS"
+     * RivalRecord in the Rivalry tab so exiting mid-tries preserves remaining tries and bestScore.
+     */
+    fun saveInProgressChallenge(context: Context, item: ChallengeItem): RivalRecord {
+        saveChallenge(context, item)
+        val cleanName = ChallengeSeed.sanitizePlayerName(item.rivalName)
+        val existing = findRivalByName(context, cleanName)
+        val record = RivalRecord(
+            name = cleanName,
+            wins = existing?.wins ?: 0,
+            losses = existing?.losses ?: 0,
+            ties = existing?.ties ?: 0,
+            matches = existing?.matches ?: 0,
+            lastGrid = item.gridSizeTag,
+            lastDifficulty = item.difficulty,
+            lastTarget = item.targetScore,
+            lastUserScore = item.bestScore,
+            lastStatus = "IN_PROGRESS",
+            lastChainId = item.chainId.ifEmpty { existing?.lastChainId ?: "" },
+            updatedAt = System.currentTimeMillis(),
+            inProgressCode = item.code,
+            inProgressTriesLeft = item.attemptsLeft,
+            inProgressMaxTries = item.maxTries,
+            inProgressSeed = item.seed,
+            gridStats = existing?.gridStats ?: emptyMap()
+        )
+        saveRival(context, record)
+        return record
+    }
+
+    /**
+     * PASS 5.15 Item 3:
+     * Looks up an existing "IN_PROGRESS" challenge by exact code or chainId so re-pasting the same
+     * T-code resumes from the saved state (correct triesRemaining & bestScore) instead of resetting to fresh tries.
+     */
+    fun findInProgressChallenge(
+        context: Context,
+        code: String,
+        chainId: String,
+        rivalName: String? = null
+    ): ChallengeItem? {
+        val cleanCode = ChallengeSeed.sanitizeCodeText(code).uppercase()
+        val cleanChain = chainId.trim().uppercase()
+
+        // 1. Check RivalRecords with lastStatus == "IN_PROGRESS"
+        val rivals = loadRivals(context)
+        val matchedRival = rivals.firstOrNull { r ->
+            r.lastStatus == "IN_PROGRESS" && (
+                (cleanCode.isNotEmpty() && r.inProgressCode.equals(cleanCode, ignoreCase = true)) ||
+                (cleanChain.isNotEmpty() && r.lastChainId.equals(cleanChain, ignoreCase = true))
+            )
+        }
+        if (matchedRival != null) {
+            return getInProgressChallengeForRival(context, matchedRival)
+        }
+
+        // 2. Check saved ChallengeItems in KEY_CHALLENGES
+        val saved = loadChallenges(context)
+        val matchedSaved = saved.firstOrNull { ch ->
+            !ch.isCompleted && (
+                (cleanCode.isNotEmpty() && ch.code.equals(cleanCode, ignoreCase = true)) ||
+                (cleanChain.isNotEmpty() && ch.chainId.equals(cleanChain, ignoreCase = true))
+            )
+        }
+        if (matchedSaved != null) {
+            val resolvedName = if (!rivalName.isNullOrBlank()) ChallengeSeed.sanitizePlayerName(rivalName) else matchedSaved.rivalName
+            return matchedSaved.copy(rivalName = resolvedName)
+        }
+
+        return null
+    }
+
+    /**
+     * Reconstructs the persisted ChallengeItem for a RivalRecord whose lastStatus == "IN_PROGRESS".
+     */
+    fun getInProgressChallengeForRival(context: Context, rival: RivalRecord): ChallengeItem? {
+        if (rival.lastStatus != "IN_PROGRESS") return null
+        val saved = loadChallenges(context).firstOrNull { ch ->
+            (rival.inProgressCode.isNotEmpty() && ch.code.equals(rival.inProgressCode, ignoreCase = true)) ||
+            (rival.lastChainId.isNotEmpty() && ch.chainId.equals(rival.lastChainId, ignoreCase = true))
+        }
+        if (saved != null) {
+            return saved.copy(
+                rivalName = rival.name,
+                attemptsLeft = rival.inProgressTriesLeft,
+                bestScore = maxOf(saved.bestScore, rival.lastUserScore)
+            )
+        }
+        val parsed = if (rival.inProgressCode.isNotEmpty()) ChallengeSeed.parseChallengeCode(rival.inProgressCode) else null
+        val seedToUse = if (rival.inProgressSeed != 0) rival.inProgressSeed else (parsed?.seedInt ?: 0)
+        return ChallengeItem(
+            code = rival.inProgressCode,
+            rivalName = rival.name,
+            gridSizeTag = rival.lastGrid,
+            targetScore = rival.lastTarget,
+            maxTries = rival.inProgressMaxTries,
+            attemptsLeft = rival.inProgressTriesLeft,
+            bestScore = rival.lastUserScore,
+            seed = seedToUse,
+            difficulty = rival.lastDifficulty,
+            chainId = rival.lastChainId,
+            isRevenge = parsed?.isRevenge ?: false
+        )
+    }
+
+    private fun clearInProgressChallengeStorage(context: Context, rivalName: String, chainId: String) {
+        val existing = loadChallenges(context).toMutableList()
+        val removed = existing.removeAll { ch ->
+            (chainId.isNotBlank() && ch.chainId.equals(chainId, ignoreCase = true)) ||
+            ch.rivalName.equals(rivalName, ignoreCase = true)
+        }
+        if (removed) {
+            persistChallenges(context, existing)
+        }
+    }
+
+    private fun updateGridStatsMap(
+        existingStats: Map<String, GridStat>,
+        gridSize: String,
+        isWon: Boolean,
+        isLoss: Boolean,
+        isTie: Boolean
+    ): Map<String, GridStat> {
+        val key = gridSize.trim().lowercase()
+        val mutable = existingStats.toMutableMap()
+        val prev = mutable[key] ?: GridStat()
+        mutable[key] = GridStat(
+            wins = prev.wins + (if (isWon) 1 else 0),
+            losses = prev.losses + (if (isLoss) 1 else 0),
+            ties = prev.ties + (if (isTie) 1 else 0)
+        )
+        return mutable
     }
 
     fun recordMatchOutcome(
@@ -419,6 +588,7 @@ object ChallengeStorage {
         val updatedLosses = (existing?.losses ?: 0) + (if (isLoss) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
+        val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLoss, isTie)
 
         val record = RivalRecord(
             name = cleanName,
@@ -432,9 +602,15 @@ object ChallengeStorage {
             lastUserScore = userScore,
             lastStatus = status,
             lastChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() },
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            inProgressCode = "",
+            inProgressTriesLeft = 0,
+            inProgressMaxTries = 0,
+            inProgressSeed = 0,
+            gridStats = updatedGridStats
         )
 
+        clearInProgressChallengeStorage(context, cleanName, chainId)
         saveRival(context, record)
         return record
     }
@@ -472,6 +648,7 @@ object ChallengeStorage {
         val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
+        val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLost, isTie)
 
         val record = RivalRecord(
             name = cleanName,
@@ -485,9 +662,15 @@ object ChallengeStorage {
             lastUserScore = myOriginalTarget,
             lastStatus = status,
             lastChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() },
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            inProgressCode = "",
+            inProgressTriesLeft = 0,
+            inProgressMaxTries = 0,
+            inProgressSeed = 0,
+            gridStats = updatedGridStats
         )
 
+        clearInProgressChallengeStorage(context, cleanName, chainId)
         saveRival(context, record)
         return record
     }

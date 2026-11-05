@@ -278,8 +278,8 @@ object ChallengeShareHelper {
     }
 
     /**
-     * Writes the bitmap to app cache and launches the system share sheet with both image and copyable text,
-     * or shares text-only if consecutive share is to the same rival (PASS 5.11 Smart Share).
+     * Writes the bitmap to app cache and launches the system share sheet with both the PNG trophy card
+     * and the 7-segment code text caption on ALL shares (prevents text-editing forgery).
      */
     suspend fun shareChallenge(
         context: Context,
@@ -292,13 +292,8 @@ object ChallengeShareHelper {
         difficulty: GameDifficulty = GameDifficulty.EASY,
         rivalName: String? = null
     ) = withContext(Dispatchers.IO) {
-        val useTextOnly = ChallengeStorage.shouldShareTextOnly(context, rivalName)
         if (!rivalName.isNullOrBlank()) {
             ChallengeStorage.setLastSharedRivalName(context, rivalName)
-        }
-        if (useTextOnly) {
-            shareTextOnly(context, code, "Share Glowback Challenge")
-            return@withContext
         }
 
         val bitmap = createChallengeBitmap(
@@ -309,7 +304,8 @@ object ChallengeShareHelper {
             tries = tries,
             paceName = paceName,
             difficulty = difficulty,
-            isReply = false
+            isReply = false,
+            rivalName = rivalName
         )
 
         val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
@@ -344,7 +340,7 @@ object ChallengeShareHelper {
     }
 
     /**
-     * Shares a response card back to a rival (or text-only if consecutive share to same rival).
+     * Always shares the PNG response card + 7-segment code caption back to a rival (prevents text-editing forgery).
      */
     suspend fun shareReplyResult(
         context: Context,
@@ -356,13 +352,8 @@ object ChallengeShareHelper {
         won: Boolean,
         tied: Boolean = myScore == targetScore
     ) = withContext(Dispatchers.IO) {
-        val useTextOnly = ChallengeStorage.shouldShareTextOnly(context, rivalName)
         if (rivalName.isNotBlank()) {
             ChallengeStorage.setLastSharedRivalName(context, rivalName)
-        }
-        if (useTextOnly) {
-            shareTextOnly(context, code, "Send Result to Rival")
-            return@withContext
         }
 
         val bitmap = createChallengeBitmap(

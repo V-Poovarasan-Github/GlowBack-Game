@@ -817,6 +817,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var isChallengeLost by remember { mutableStateOf(false) }
     var hasRecordedChallengeOutcome by remember { mutableStateOf(false) }
     var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
+    var currentRivalChainId by remember { mutableStateOf<String?>(null) }
     var isRevengeRun by remember { mutableStateOf(false) }
     var revengeTargetScore by remember { mutableIntStateOf(0) }
     var isMultiTouchGuardActive by remember { mutableStateOf(false) }
@@ -830,6 +831,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
     fun clearRevengeState() {
         currentRivalNameForShare = null
+        currentRivalChainId = null
         isRevengeRun = false
         revengeTargetScore = 0
     }
@@ -854,6 +856,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 chainId = ch.chainId,
                 maxTries = ch.maxTries
             )
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+        }
+    }
+
+    fun persistOrFinalizeActiveChallengeOnExit() {
+        val ch = activeChallenge ?: return
+        if (hasRecordedChallengeOutcome) return
+        val bestAttemptScore = maxOf(currentScore, ch.bestScore)
+        ch.bestScore = bestAttemptScore
+        ch.attemptsLeft = challengeAttemptsLeft
+        if (bestAttemptScore > ch.targetScore || (!ch.isFreeTries && challengeAttemptsLeft <= 0) || (ch.isFreeTries && bestAttemptScore == ch.targetScore)) {
+            finalizePendingChallengeOutcomeIfNeeded()
+        } else {
+            ChallengeStorage.saveInProgressChallenge(context, ch)
+            savedChallenges = ChallengeStorage.loadChallenges(context)
         }
     }
 
@@ -1099,7 +1116,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun resetToIdleForConfigChange(newGridSize: GridSize, newPaceMode: PaceMode) {
-        finalizePendingChallengeOutcomeIfNeeded()
+        persistOrFinalizeActiveChallengeOnExit()
         resetRunState()
         activeChallenge = null
         challengeRng = null
@@ -1117,7 +1134,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun resetToIdleForMode(newMode: GameMode) {
-        finalizePendingChallengeOutcomeIfNeeded()
+        persistOrFinalizeActiveChallengeOnExit()
         resetRunState()
         activeChallenge = null
         challengeRng = null
@@ -1230,17 +1247,31 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         resetRunState()
         isRevengeRun = false
         revengeTargetScore = 0
-        activeChallenge = item
-        currentRivalNameForShare = item.rivalName
-        difficultyMode = item.difficulty
-        challengeAttemptsLeft = item.attemptsLeft
+        val existingInProgress = ChallengeStorage.findInProgressChallenge(
+            context = context,
+            code = item.code,
+            chainId = item.chainId,
+            rivalName = item.rivalName
+        )
+        val resolvedItem = if (existingInProgress != null && item.attemptsLeft == item.maxTries && existingInProgress.attemptsLeft < item.maxTries) {
+            existingInProgress.copy(rivalName = item.rivalName)
+        } else {
+            item
+        }
+        ChallengeStorage.saveInProgressChallenge(context, resolvedItem)
+        savedChallenges = ChallengeStorage.loadChallenges(context)
+        activeChallenge = resolvedItem
+        currentRivalNameForShare = resolvedItem.rivalName
+        currentRivalChainId = resolvedItem.chainId.ifEmpty { null }
+        difficultyMode = resolvedItem.difficulty
+        challengeAttemptsLeft = resolvedItem.attemptsLeft
         isChallengeWon = false
         isChallengeTied = false
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
         gameMode = GameMode.SOLO
 
-        val targetGrid = when (item.gridSizeTag.lowercase()) {
+        val targetGrid = when (resolvedItem.gridSizeTag.lowercase()) {
             "3x3" -> GridSize.THREE_BY_THREE
             "4x4" -> GridSize.FOUR_BY_FOUR
             "5x4" -> GridSize.FIVE_BY_FOUR
@@ -1249,8 +1280,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         gridSize = targetGrid
         paceMode = PaceMode.CLASSIC
 
-        val rng = java.util.Random(item.seed.toLong())
-        currentRunSeed = item.seed
+        val rng = java.util.Random(resolvedItem.seed.toLong())
+        currentRunSeed = resolvedItem.seed
         challengeRng = rng
         soloRng = rng
         val pads = padsForGridSize(targetGrid)
@@ -1261,9 +1292,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun startRevengeGame(rival: RivalRecord) {
-        // PASS 5.13 Item 3 & 8:
+        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3:
         // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rival.lastTarget; must beat rival.lastTarget to share).
         // - "👑 Send Challenge" (WON): Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
+        // - Preserve rival.lastChainId in currentRivalChainId so all rally matches stack on the same Rival Card.
         discardActiveRun()
         resetRunState()
         val targetGrid = when (rival.lastGrid.lowercase()) {
@@ -1278,6 +1310,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         activeChallenge = null
         challengeRng = null
         currentRivalNameForShare = rival.name
+        currentRivalChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }
         val needsRevengeGate = rival.lastStatus == "LOST" || rival.lastStatus == "TIED"
         isRevengeRun = needsRevengeGate
         revengeTargetScore = if (needsRevengeGate) rival.lastTarget else 0
@@ -1349,6 +1382,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun startNewGame() {
+        if (gameState == GameState.IDLE) {
+            clearRevengeState()
+        }
         if (activeRunState != null && activeRunState!!.modeName != GameMode.SOLO.name) {
             activeDialog = ActiveDialog.DISCARD_CONFIRM
         } else {
@@ -1602,6 +1638,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             chainId = ch.chainId,
                             maxTries = ch.maxTries
                         )
+                        savedChallenges = ChallengeStorage.loadChallenges(context)
+                    } else if (!hasRecordedChallengeOutcome) {
+                        // PASS 5.15: Persist updated triesRemaining and bestScore to IN_PROGRESS
+                        ChallengeStorage.saveInProgressChallenge(context, ch)
+                        savedChallenges = ChallengeStorage.loadChallenges(context)
                     }
                     showChallengeNudge = false
                 } else if (!hasSeenChallengeNudge) {
@@ -1683,7 +1724,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 activeDialog = ActiveDialog.SETTINGS_SHEET
             }
             GameState.GAME_OVER -> {
-                finalizePendingChallengeOutcomeIfNeeded()
+                persistOrFinalizeActiveChallengeOnExit()
                 discardActiveRun()
                 activeChallenge = null
                 challengeRng = null
@@ -1759,7 +1800,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 onNavigateBack = { currentScreen = AppScreen.HOME },
                 onStartRevenge = { rival ->
                     currentScreen = AppScreen.HOME
-                    startRevengeGame(rival)
+                    val inProgress = ChallengeStorage.getInProgressChallengeForRival(context, rival)
+                    if (inProgress != null) {
+                        startChallenge(inProgress)
+                    } else {
+                        startRevengeGame(rival)
+                    }
                 },
                 onPlayAwaiting = { _ ->
                     currentScreen = AppScreen.HOME
@@ -1775,7 +1821,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     startChallenge(item)
                 },
                 sharedPrefs = sharedPrefs,
-                refreshTrigger = activeDialog,
+                refreshTrigger = Pair(activeDialog, gameState),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
@@ -2091,11 +2137,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
 
                 if (gameMode == GameMode.SOLO || !isMatchComplete) {
                     val myName = remember(activeDialog) { ChallengeStorage.getMyName(context) }
-                    val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode, myName, isRevengeRun) {
+                    val generatedCode = remember(currentScore, gridSize, currentRunSeed, selectedShareTries, difficultyMode, myName, isRevengeRun, currentRivalChainId) {
                         val gridTag = gridSize.keyPrefix
                         val scoreToShare = currentScore.coerceAtLeast(1)
-                        val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
-                        // Pure computation only; recordCreatedCode is invoked strictly inside explicit click handlers
+                        val chainId = activeChallenge?.chainId?.ifEmpty { null }
+                            ?: currentRivalChainId?.ifEmpty { null }
+                            ?: ChallengeSeed.generateChainId()
+                        // PASS 5.17 Item 1 & 3: Share/Copy from Solo or Revenge ALWAYS generates a T-code (isRevenge = false)
+                        // and preserves currentRivalChainId when rallying with an existing rival.
                         ChallengeSeed.formatChallengeCode(
                             gridTag = gridTag,
                             targetScore = scoreToShare,
@@ -2104,7 +2153,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             seed = currentRunSeed,
                             senderName = myName,
                             chainId = chainId,
-                            isRevenge = activeChallenge?.isRevenge == true || isRevengeRun
+                            isRevenge = false
                         )
                     }
                     BottomActionSection(
@@ -2180,7 +2229,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                         },
                         onReturnHome = {
-                            finalizePendingChallengeOutcomeIfNeeded()
+                            persistOrFinalizeActiveChallengeOnExit()
                             discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
@@ -2207,7 +2256,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                         },
                         onExitChallenge = {
-                            finalizePendingChallengeOutcomeIfNeeded()
+                            persistOrFinalizeActiveChallengeOnExit()
                             discardActiveRun()
                             activeChallenge = null
                             challengeRng = null
@@ -2220,6 +2269,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             resetRunState()
                             activeRunState = null
                             gameState = GameState.IDLE
+                            currentScreen = AppScreen.LEADERBOARD
                         }
                     )
                 }
@@ -2355,7 +2405,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
                     val chosenPace = if (isFromGameOver) paceMode.shortLabel else (chosenBoard?.paceName ?: paceMode.shortLabel)
                     val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
-                    val chainId = activeChallenge?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
+                    val chainId = activeChallenge?.chainId?.ifEmpty { null }
+                        ?: currentRivalChainId?.ifEmpty { null }
+                        ?: ChallengeSeed.generateChainId()
+                    // PASS 5.17 Item 1 & 3: Sharing a new challenge (including Get Revenge, Tie-Breaker, Send Challenge)
+                    // ALWAYS generates a playable T-code (isRevenge = false) and preserves the rival's chainId.
                     val code = ChallengeSeed.formatChallengeCode(
                         gridTag = gridTag,
                         targetScore = scoreToShare,
@@ -2364,7 +2418,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         seed = seedToUse,
                         senderName = senderName,
                         chainId = chainId,
-                        isRevenge = activeChallenge?.isRevenge == true || isRevengeRun
+                        isRevenge = false
                     )
                     ChallengeStorage.recordCreatedCode(context, code)
                     val awaiting = AwaitingChallenge(
@@ -2463,7 +2517,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     activeDialog = ActiveDialog.NONE
                 },
                 onQuitToHome = {
-                    finalizePendingChallengeOutcomeIfNeeded()
+                    persistOrFinalizeActiveChallengeOnExit()
                     discardActiveRun()
                     activeChallenge = null
                     challengeRng = null

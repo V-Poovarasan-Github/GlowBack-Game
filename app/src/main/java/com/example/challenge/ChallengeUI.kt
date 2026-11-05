@@ -478,7 +478,8 @@ fun EnterChallengeDialog(
             ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
         } else null
 
-        if (matchedAwaiting != null || parsed.isRevenge) {
+        // PASS 5.17 Item 2: R-Code = Receipt Only (No Game Start); T-Code = Always Playable Challenge
+        if (parsed.isRevenge) {
             val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
             val fallbackBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
             val myOriginalTarget = matchedAwaiting?.targetScore
@@ -514,7 +515,13 @@ fun EnterChallengeDialog(
                 onDismiss()
             }
         } else {
-            val item = ChallengeItem(
+            val existingInProgress = ChallengeStorage.findInProgressChallenge(
+                context = context,
+                code = parsed.fullCode,
+                chainId = parsed.chainId,
+                rivalName = finalRival
+            )
+            val item = existingInProgress?.copy(rivalName = finalRival) ?: ChallengeItem(
                 code = parsed.fullCode,
                 rivalName = finalRival,
                 gridSizeTag = parsed.gridTag,
@@ -527,6 +534,7 @@ fun EnterChallengeDialog(
                 chainId = parsed.chainId,
                 isRevenge = parsed.isRevenge
             )
+            ChallengeStorage.saveInProgressChallenge(context, item)
             isSubmitFlashing = true
             scope.launch {
                 flashDelayMs(150L)
@@ -564,7 +572,13 @@ fun EnterChallengeDialog(
                     val parsed = pendingLegacyChallenge!!
                     pendingLegacyChallenge = null
                     val finalName = ChallengeSeed.sanitizePlayerName(enteredName)
-                    val item = ChallengeItem(
+                    val existingInProgress = ChallengeStorage.findInProgressChallenge(
+                        context = context,
+                        code = parsed.fullCode,
+                        chainId = parsed.chainId,
+                        rivalName = finalName
+                    )
+                    val item = existingInProgress?.copy(rivalName = finalName) ?: ChallengeItem(
                         code = parsed.fullCode,
                         rivalName = finalName,
                         gridSizeTag = parsed.gridTag,
@@ -576,6 +590,7 @@ fun EnterChallengeDialog(
                         difficulty = parsed.difficulty,
                         chainId = parsed.chainId
                     )
+                    ChallengeStorage.saveInProgressChallenge(context, item)
                     onSubmit(item)
                 }
             )
@@ -1138,7 +1153,8 @@ fun PasteRivalCodeDialog(
             ChallengeStorage.findAwaitingMatch(context, parsed.chainId, parsed.gridTag)
         } else null
 
-        if (matchedAwaiting != null || parsed.isRevenge) {
+        // PASS 5.17 Item 2: R-Code = Receipt Only (No Game Start); T-Code = Always Playable Challenge
+        if (parsed.isRevenge) {
             val mainPrefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
             val fallbackBest = mainPrefs.getInt("best_${parsed.gridTag.lowercase()}_classic_${parsed.difficulty.name}", 5).coerceAtLeast(5)
             val myOriginalTarget = matchedAwaiting?.targetScore
@@ -1174,7 +1190,13 @@ fun PasteRivalCodeDialog(
                 onDismiss()
             }
         } else {
-            val item = ChallengeItem(
+            val existingInProgress = ChallengeStorage.findInProgressChallenge(
+                context = context,
+                code = parsed.fullCode,
+                chainId = parsed.chainId,
+                rivalName = rivalName
+            )
+            val item = existingInProgress?.copy(rivalName = rivalName) ?: ChallengeItem(
                 code = parsed.fullCode,
                 rivalName = rivalName,
                 gridSizeTag = parsed.gridTag,
@@ -1187,6 +1209,7 @@ fun PasteRivalCodeDialog(
                 chainId = parsed.chainId,
                 isRevenge = parsed.isRevenge
             )
+            ChallengeStorage.saveInProgressChallenge(context, item)
             isPasteRivalFlashing = true
             scope.launch {
                 flashDelayMs(150L)
@@ -2421,6 +2444,7 @@ fun RivalCard(
     val statusColor = when (rival.lastStatus) {
         "WON" -> Color(0xFF00E676)
         "LOST" -> Color(0xFFFF5252)
+        "IN_PROGRESS" -> Color(0xFF00E5FF)
         else -> Color(0xFFFFD600)
     }
 
@@ -2493,10 +2517,12 @@ fun RivalCard(
         }
     }
 
+    val cardBorderColor = if (rival.lastStatus == "IN_PROGRESS") Color(0xFF00E5FF).copy(alpha = 0.65f) else Color(0xFF1E293B)
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .border(1.5.dp, Color(0xFF1E293B), RoundedCornerShape(16.dp))
+            .border(1.5.dp, cardBorderColor, RoundedCornerShape(16.dp))
             .testTag("rival_card_${rival.name}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
@@ -2551,9 +2577,52 @@ fun RivalCard(
                 )
             }
 
+            // PASS 5.17 Item 4: Optional Per-Grid Breakdown Chips ([2×2: 1W - 1L], etc.)
+            val orderedGridKeys = listOf("2x2", "3x3", "4x4", "5x4")
+            val activeGridEntries = orderedGridKeys.mapNotNull { key ->
+                val stat = rival.gridStats[key]
+                if (stat != null && (stat.wins + stat.losses + stat.ties) > 0) {
+                    key to stat
+                } else null
+            }
+            if (activeGridEntries.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rival_grid_chips_row_${rival.name}"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    activeGridEntries.forEach { (gridKey, stat) ->
+                        val displayGrid = gridKey.replace('x', '×')
+                        val chipText = if (stat.ties > 0) {
+                            "$displayGrid: ${stat.wins}W - ${stat.losses}L - ${stat.ties}T"
+                        } else {
+                            "$displayGrid: ${stat.wins}W - ${stat.losses}L"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = chipText,
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.testTag("rival_grid_chip_${rival.name}_$gridKey")
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Last Match Info
+            // Last Match / In-Progress Info
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2566,16 +2635,33 @@ fun RivalCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                        "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                    } else {
+                        "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                    }
+                    val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                        val triesPhrase = if (rival.inProgressMaxTries == 0) {
+                            "Free tries"
+                        } else {
+                            "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                        }
+                        "Target: ${rival.lastTarget} • In Progress: $triesPhrase"
+                    } else {
+                        "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]"
+                    }
+
                     Text(
-                        text = "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}",
+                        text = leftMetaLabel,
                         color = Color(0xFF94A3B8),
                         fontSize = 11.sp
                     )
                     Text(
-                        text = "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]",
+                        text = rightStatusLabel,
                         color = statusColor,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.testTag("rival_status_text_${rival.name}")
                     )
                 }
             }
@@ -2589,6 +2675,14 @@ fun RivalCard(
             ) {
                 // Dynamic Button
                 val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
+                    "IN_PROGRESS" -> {
+                        val resumeText = if (rival.inProgressMaxTries == 0) {
+                            "▶ Resume Challenge"
+                        } else {
+                            "▶ Resume (${rival.inProgressTriesLeft} left)"
+                        }
+                        Triple(resumeText, Color(0xFF00E5FF), Color.Black)
+                    }
                     "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
                     "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
                     else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)

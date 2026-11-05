@@ -1740,11 +1740,11 @@ class ExampleRobolectricTest {
         assertNotNull("WhatsApp mangled code must parse cleanly", parsedClean)
         assertEquals("CHARLIE", parsedClean!!.senderName)
 
-        // 4. Smart Share Optimization (Solo vs First-time Rival vs Repeat Rival)
+        // 4. Anti-Forgery Image Card Sharing: All shares (including consecutive shares with same rival) always generate full PNG trophy card
         assertFalse("Solo game with no rival must always generate full card", ChallengeStorage.shouldShareTextOnly(context, null))
         assertFalse("First share with rival BRAVO must generate full card", ChallengeStorage.shouldShareTextOnly(context, "BRAVO"))
         ChallengeStorage.setLastSharedRivalName(context, "BRAVO")
-        assertTrue("Consecutive share with same rival BRAVO must share text only", ChallengeStorage.shouldShareTextOnly(context, "BRAVO"))
+        assertFalse("Consecutive share with same rival BRAVO must ALSO generate full PNG trophy card to prevent text forgery", ChallengeStorage.shouldShareTextOnly(context, "BRAVO"))
         assertFalse("Sharing with different rival DELTA must generate full card", ChallengeStorage.shouldShareTextOnly(context, "DELTA"))
 
         // 5. Same Name Soft Block (Tier 2) in EnterChallengeDialog
@@ -1976,7 +1976,255 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("legacy_code_dialog").assertDoesNotExist()
         composeTestRule.onNodeWithTag("challenge_code_error_text").assertIsDisplayed()
     }
+
+    @Test
+    fun pass5_15_challengeResumeAndPersistence() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 12,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 12345,
+            senderName = "ALEX",
+            chainId = "R55",
+            isRevenge = false
+        )
+
+        // 1. Storage test: saveInProgressChallenge creates IN_PROGRESS RivalRecord and persists tries/bestScore
+        val initialItem = ChallengeItem(
+            code = tCode,
+            rivalName = "ALEX",
+            gridSizeTag = "2x2",
+            targetScore = 12,
+            maxTries = 3,
+            attemptsLeft = 3,
+            bestScore = 0,
+            seed = 12345,
+            difficulty = GameDifficulty.EASY,
+            chainId = "R55",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(context, initialItem)
+
+        val rivalInitial = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull("Accepting T-code must create IN_PROGRESS RivalRecord", rivalInitial)
+        assertEquals("IN_PROGRESS", rivalInitial!!.lastStatus)
+        assertEquals(3, rivalInitial.inProgressTriesLeft)
+
+        // 2. Simulate failing Try 1 at score 7 (2 tries remaining)
+        val afterTry1Item = initialItem.copy(attemptsLeft = 2, bestScore = 7)
+        ChallengeStorage.saveInProgressChallenge(context, afterTry1Item)
+
+        val rivalAfterTry1 = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        assertEquals("IN_PROGRESS", rivalAfterTry1.lastStatus)
+        assertEquals(2, rivalAfterTry1.inProgressTriesLeft)
+        assertEquals(7, rivalAfterTry1.lastUserScore)
+
+        // 3. Re-pasting the same T-code (same chainId "R55") must return the saved state (attemptsLeft == 2, bestScore == 7), NOT 3 tries!
+        val foundOnRepaste = ChallengeStorage.findInProgressChallenge(context, tCode, "R55", "ALEX")
+        assertNotNull("findInProgressChallenge must locate existing IN_PROGRESS challenge by chainId/code", foundOnRepaste)
+        assertEquals("Re-pasting same code must resume with 2 tries left, not 3", 2, foundOnRepaste!!.attemptsLeft)
+        assertEquals("Re-pasting same code must preserve bestScore of 7", 7, foundOnRepaste.bestScore)
+
+        // 4. UI verification: Rivalry tab shows "In Progress: 2 tries left" & "▶ Resume (2 left)" button, and tapping it resumes with TRIES: 2
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_status_text_ALEX")
+            .assertIsDisplayed()
+            .assertTextContains("In Progress: 2 tries left", substring = true)
+
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX")
+            .assertIsDisplayed()
+            .assertTextContains("Resume (2 left)", substring = true)
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify game screen resumed challenge with TRIES: 2 (not 3)
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TRIES: 2", substring = true).assertIsDisplayed()
+
+        // 5. Completing the challenge clears IN_PROGRESS and sets final status (e.g. WON when scoring 13 > 12)
+        val finalRecord = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 13,
+            targetScore = 12,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "R55",
+            maxTries = 3
+        )
+        assertNotNull(finalRecord)
+        assertEquals("WON", finalRecord!!.lastStatus)
+        assertEquals(0, finalRecord.inProgressTriesLeft)
+        assertTrue(
+            "IN_PROGRESS challenge must be cleared after completion",
+            ChallengeStorage.findInProgressChallenge(context, tCode, "R55", "ALEX") == null
+        )
+    }
+
+    @Test
+    fun pass5_17_finalRallyLoopFix_tCodeRevenge_rCodeReceipt_and_gridChips() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Simulate Match 1 on 2x2: ALEX sends T-code (target 12, chainId "K7Q"). User loses at 9.
+        val match1 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 9,
+            targetScore = 12,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "K7Q",
+            maxTries = 3
+        )
+        assertNotNull(match1)
+        assertEquals(0, match1!!.wins)
+        assertEquals(1, match1.losses)
+        assertEquals("K7Q", match1.lastChainId)
+        assertEquals(0, match1.gridStats["2x2"]?.wins)
+        assertEquals(1, match1.gridStats["2x2"]?.losses)
+
+        // 2. Simulate Match 2 (Revenge) on 2x2: User scores 14 -> generates T-code (isRevenge=false) with preserved chainId "K7Q",
+        //    and ALEX replies with an R-code (targetScore = 10, failing to beat 14).
+        val revengeTCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 14,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 77777,
+            senderName = "HERO",
+            chainId = match1.lastChainId,
+            isRevenge = false
+        )
+        val parsedRevengeTCode = ChallengeSeed.parseChallengeCode(revengeTCode)
+        assertNotNull(parsedRevengeTCode)
+        assertFalse("Get Revenge must generate a playable T-code (isRevenge = false)", parsedRevengeTCode!!.isRevenge)
+        assertEquals("Get Revenge must preserve the rival's chainId", "K7Q", parsedRevengeTCode.chainId)
+
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "K7Q",
+                code = revengeTCode,
+                gridSizeTag = "2x2",
+                targetScore = 14,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+
+        // ALEX replies with R-code (score 10 on 2x2) -> User wins Match 2!
+        val match2 = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "ALEX",
+            responderScore = 10,
+            myOriginalTarget = 14,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "K7Q",
+            maxTries = 3
+        )
+        assertNotNull(match2)
+        assertEquals("One card per rival: Wins should stack on ALEX", 1, match2!!.wins)
+        assertEquals("One card per rival: Losses should stay 1 on ALEX", 1, match2.losses)
+        assertEquals("R-code receipt must update lastTarget to responder's score", 10, match2.lastTarget)
+        assertEquals(1, match2.gridStats["2x2"]?.wins)
+        assertEquals(1, match2.gridStats["2x2"]?.losses)
+
+        // 3. Simulate Match 3 on 4x4: User plays a 4x4 challenge from ALEX (chainId "K7Q") and wins (15 vs 11).
+        val match3 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 15,
+            targetScore = 11,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.HARD,
+            chainId = "K7Q",
+            maxTries = 1
+        )
+        assertNotNull(match3)
+        assertEquals(2, match3!!.wins)
+        assertEquals(1, match3.losses)
+        assertEquals(1, match3.gridStats["2x2"]?.wins)
+        assertEquals(1, match3.gridStats["2x2"]?.losses)
+        assertEquals(1, match3.gridStats["4x4"]?.wins)
+        assertEquals(0, match3.gridStats["4x4"]?.losses)
+
+        // Verify only 1 RivalCard exists for ALEX
+        val allRivals = ChallengeStorage.loadRivals(context).filter { it.name == "ALEX" }
+        assertEquals("All rally matches with same chainId must stack on 1 RivalCard", 1, allRivals.size)
+
+        // 4. Verify UI displays Per-Grid Breakdown Chips on ALEX's RivalCard: [2×2: 1W - 1L] and [4×4: 1W - 0L]
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_grid_chip_ALEX_2x2")
+            .assertIsDisplayed()
+            .assertTextContains("2×2: 1W - 1L", substring = true)
+
+        composeTestRule.onNodeWithTag("rival_grid_chip_ALEX_4x4")
+            .assertIsDisplayed()
+            .assertTextContains("4×4: 1W - 0L", substring = true)
+
+        // 5. Verify T-Code vs R-Code Paste Catch:
+        // Even if an AwaitingChallenge exists with chainId "K7Q", pasting a T-code from ALEX with chainId "K7Q"
+        // MUST launch a playable game (NOT swallow it as a reply receipt).
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "K7Q",
+                code = revengeTCode,
+                gridSizeTag = "2x2",
+                targetScore = 14,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        val incomingPlayableTCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 16,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 88888,
+            senderName = "ALEX",
+            chainId = "K7Q",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(incomingPlayableTCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must launch the game with TARGET: 16!
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TARGET: 16", substring = true).assertIsDisplayed()
+    }
 }
+
 
 
 
