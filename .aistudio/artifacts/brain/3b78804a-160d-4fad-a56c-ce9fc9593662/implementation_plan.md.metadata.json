@@ -1,6 +1,6 @@
 {
-  "summary": "Updated PASS 5.19 implementation plan promoting Per-Rival Sub-Chain Forking (chainId:seedInt composite key in KEY_CHAIN_TARGETS) into active implementation scope.",
-  "updatedAt": "2026-11-05T11:06:30.275053356Z",
+  "summary": "PASS 5.21 Implementation Plan finalized with the micro-caution to display effectiveBest = maxOf(currentScore, ch.bestScore) in VictoryDecisionDialog body copy and finalize WON with effectiveBest.",
+  "updatedAt": "2026-11-05T13:50:45.442563530Z",
   "requestFeedback": true,
   "userFacing": true
 }

@@ -111,7 +111,8 @@ enum class ActiveDialog {
     SETTINGS_SHEET,
     NOTIFICATION_PERM,
     DISCARD_CONFIRM,
-    DID_YOU_SHARE
+    DID_YOU_SHARE,
+    EXIT_CHALLENGE_CONFIRM
 }
 
 enum class GameMode(val playerCount: Int, val label: String, val tagId: String) {
@@ -819,6 +820,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var hasRecordedChallengeOutcome by remember { mutableStateOf(false) }
     var hasSentChallengeReply by remember { mutableStateOf(false) }
     var isChallengeReadyGateVisible by remember { mutableStateOf(false) }
+    var isVictoryDecisionVisible by remember { mutableStateOf(false) }
+    var hasShownVictoryDecisionThisTry by remember { mutableStateOf(false) }
     var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
     var currentRivalChainId by remember { mutableStateOf<String?>(null) }
     var isRevengeRun by remember { mutableStateOf(false) }
@@ -831,6 +834,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var playerStepIndex by remember { mutableIntStateOf(0) }
     var currentScore by remember { mutableIntStateOf(0) }
     var bestScore by remember(gridSize, paceMode, difficultyMode) { mutableIntStateOf(readMigratedBestScore(sharedPrefs, gridSize, paceMode, difficultyMode)) }
+
+    // PASS 5.20 Guard A: Reconcile any orphaned final-try IN_PROGRESS challenge from a prior force-close
+    remember(context) {
+        ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
+        true
+    }
 
     fun clearRevengeState() {
         currentRivalNameForShare = null
@@ -869,7 +878,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         if (hasRecordedChallengeOutcome) return
         val bestAttemptScore = maxOf(currentScore, ch.bestScore)
         ch.bestScore = bestAttemptScore
-        ch.attemptsLeft = challengeAttemptsLeft
+        ch.attemptsLeft = if (ch.isFreeTries) 0 else challengeAttemptsLeft
         if (bestAttemptScore > ch.targetScore || (!ch.isFreeTries && challengeAttemptsLeft <= 0) || (ch.isFreeTries && bestAttemptScore == ch.targetScore)) {
             finalizePendingChallengeOutcomeIfNeeded()
         } else {
@@ -979,6 +988,26 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var roundTrigger by remember { mutableIntStateOf(0) }
     var tapFlashJob by remember { mutableStateOf<Job?>(null) }
 
+    fun onChallengeReadyGateDismissed() {
+        if (!isChallengeReadyGateVisible) return
+        isChallengeReadyGateVisible = false
+        val ch = activeChallenge
+        if (ch != null) {
+            // PASS 5.20 Rule 7 & Caution 1:
+            // When maxTries == 0 (isFreeTries), NEVER pre-deduct or persist attemptsLeft - 1.
+            // When finite tries (maxTries > 0), immediately persist (challengeAttemptsLeft - 1) to SharedPreferences
+            // as force-close anti-cheat, while keeping challengeAttemptsLeft in memory for the live run.
+            val persistedTries = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+            val bestSoFar = maxOf(currentScore, ch.bestScore)
+            ChallengeStorage.saveInProgressChallenge(
+                context,
+                ch.copy(attemptsLeft = persistedTries, bestScore = bestSoFar)
+            )
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+        }
+        roundTrigger++
+    }
+
     val audioSynth = remember { GlowAudioSynthesizer() }
     DisposableEffect(Unit) { onDispose { audioSynth.release() } }
 
@@ -1005,6 +1034,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         sequence.clear()
         isHandoffVisible = false
         isChallengeReadyGateVisible = false
+        isVictoryDecisionVisible = false
+        hasShownVictoryDecisionThisTry = false
         isRedemptionTurnActive = false
         eliminatedBannerText = null
         showChallengeNudge = false
@@ -1020,8 +1051,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             if (currentScore > ch.bestScore) {
                 ch.bestScore = currentScore
             }
-            ch.attemptsLeft = challengeAttemptsLeft
-            ChallengeStorage.saveInProgressChallenge(context, ch)
+            // PASS 5.20 Rule 7 & Caution 1:
+            // If the "Ready?" gate has already been dismissed (live attempt in progress), keep (challengeAttemptsLeft - 1)
+            // persisted in SharedPreferences so backgrounding/force-killing the app mid-round never restores the try.
+            val persistedTries = when {
+                ch.isFreeTries -> 0
+                isChallengeReadyGateVisible -> challengeAttemptsLeft
+                else -> (challengeAttemptsLeft - 1).coerceAtLeast(0)
+            }
+            ChallengeStorage.saveInProgressChallenge(context, ch.copy(attemptsLeft = persistedTries))
             savedChallenges = ChallengeStorage.loadChallenges(context)
             return
         }
@@ -1211,7 +1249,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         allPadsConfettiFlash = false
                         isRoundClearCelebration = false
                         resumedBannerNote = "Round replayed - you were away."
-                        if (activeChallenge != null || isRevengeRun) {
+                        if ((activeChallenge != null || isRevengeRun) && !isVictoryDecisionVisible) {
                             isChallengeReadyGateVisible = true
                         }
                         gameState = GameState.WATCHING
@@ -1465,13 +1503,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         }
     }
 
-    LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible, isChallengeReadyGateVisible) {
-        if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible && !isChallengeReadyGateVisible) {
+    LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible, isChallengeReadyGateVisible, isVictoryDecisionVisible) {
+        if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible && !isChallengeReadyGateVisible && !isVictoryDecisionVisible) {
             activePadId = null
             wrongShakePadId = null
             delay(450L)
             for (pad in sequence) {
-                if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible || isChallengeReadyGateVisible) return@LaunchedEffect
+                if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible || isChallengeReadyGateVisible || isVictoryDecisionVisible) return@LaunchedEffect
                 activePadId = pad.id
                 if (feedbackEnabled && effectiveVolume > 0f) {
                     audioSynth.playPadSpecTone(pad, effectiveVolume)
@@ -1480,7 +1518,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 activePadId = null
                 delay(gapDurationMs)
             }
-            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible && !isChallengeReadyGateVisible) {
+            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible && !isChallengeReadyGateVisible && !isVictoryDecisionVisible) {
                 playerStepIndex = 0
                 gameState = GameState.PLAYING
             }
@@ -1488,9 +1526,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun onPadTapped(tappedPad: PadSpec) {
+        if (isVictoryDecisionVisible) return
         if (isChallengeReadyGateVisible && gameState == GameState.WATCHING) {
-            isChallengeReadyGateVisible = false
-            roundTrigger++
+            onChallengeReadyGateDismissed()
             return
         }
         if (gameState == GameState.IDLE) {
@@ -1511,7 +1549,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             }
             return
         }
-        if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible || isChallengeReadyGateVisible) return
+        if (gameState != GameState.PLAYING || sequence.isEmpty() || isLifecyclePaused || isHandoffVisible || isChallengeReadyGateVisible || isVictoryDecisionVisible) return
         // 45ms multi-touch guard: ignore simultaneous multi-finger pad slams during active gameplay
         if (isMultiTouchGuardActive) return
         isMultiTouchGuardActive = true
@@ -1539,14 +1577,29 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 if (gameMode == GameMode.SOLO) {
                     currentScore += 1
                     updateBestScoreIfNeeded(currentScore)
-                    // PASS 5.13 Item 2: Remove ALL auto-stop logic!
-                    // Keep tracking bestScore, and allow the player to push past the target (e.g., score 8, 9, 10) until they miss a step.
+                    // PASS 5.13 Item 2 + PASS 5.20 Rule 7 & Caution 1:
+                    // Keep tracking bestScore, allow pushing past target, and persist pre-deducted tries during the live attempt.
                     if (activeChallenge != null) {
                         val ch = activeChallenge!!
                         if (currentScore > ch.bestScore) {
                             ch.bestScore = currentScore
                         }
-                        ChallengeStorage.updateChallenge(context, ch)
+                        val persistedTries = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                        ChallengeStorage.saveInProgressChallenge(
+                            context,
+                            ch.copy(attemptsLeft = persistedTries, bestScore = ch.bestScore)
+                        )
+                        savedChallenges = ChallengeStorage.loadChallenges(context)
+                    }
+                    // PASS 5.21: Trigger Victory Decision Pause ONCE per try when currentScore FIRST exceeds targetScore (or revengeTargetScore)
+                    val effectiveTargetForDecision = when {
+                        activeChallenge != null -> activeChallenge!!.targetScore
+                        isRevengeRun && revengeTargetScore > 0 -> revengeTargetScore
+                        else -> 0
+                    }
+                    if (!hasShownVictoryDecisionThisTry && effectiveTargetForDecision > 0 && currentScore > effectiveTargetForDecision) {
+                        hasShownVictoryDecisionThisTry = true
+                        isVictoryDecisionVisible = true
                     }
                     clearedRoundNumber = completedRound
                     isRoundClearCelebration = true
@@ -1772,29 +1825,112 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     val maxContentWidth = if (isLargeScreen) 680.dp else 560.dp
     val showConfigRow = gameState == GameState.IDLE
 
-    // PASS 2H Item 4: Back gesture routing
-    // GAME_OVER and MATCH_COMPLETE -> Home (IDLE); WATCHING/PLAYING -> pause dialog; IDLE -> system exit.
+    fun exitChallengeAndNavigateToRivalry() {
+        activeChallenge = null
+        challengeRng = null
+        clearRevengeState()
+        soloRng = null
+        isChallengeWon = false
+        isChallengeTied = false
+        isChallengeLost = false
+        hasRecordedChallengeOutcome = false
+        hasSentChallengeReply = false
+        isShareFromGameOver = false
+        isPausedMidGame = false
+        isMatchComplete = false
+        matchStandings = emptyList()
+        activeDialog = ActiveDialog.NONE
+        resetRunState()
+        gameState = GameState.IDLE
+        currentScreen = AppScreen.LEADERBOARD
+    }
+
+    fun requestExitChallenge() {
+        val ch = activeChallenge
+        if (ch == null) {
+            if (isRevengeRun) {
+                exitChallengeAndNavigateToRivalry()
+            }
+            return
+        }
+        val effectiveBest = maxOf(currentScore, ch.bestScore)
+        val isMidRound = (gameState == GameState.WATCHING || gameState == GameState.PLAYING)
+
+        // PASS 5.20 Rule 4: "Ready?" Gate Exit (before Pad 1 flashes)
+        // Exit cleanly to Leaderboard -> Rivalry WITHOUT deducting a try and without showing a forfeit dialog.
+        if (isMidRound && isChallengeReadyGateVisible) {
+            val safeTries = if (ch.isFreeTries) 0 else challengeAttemptsLeft
+            ch.bestScore = effectiveBest
+            ch.attemptsLeft = safeTries
+            ChallengeStorage.saveInProgressChallenge(context, ch.copy(attemptsLeft = safeTries, bestScore = effectiveBest))
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+            exitChallengeAndNavigateToRivalry()
+            return
+        }
+
+        // Already finished on GAME_OVER (Won, Lost, or 0 tries left): finalize if needed and navigate to Rivalry
+        val isAlreadyFinishedOnGameOver = gameState == GameState.GAME_OVER && (
+            isChallengeWon ||
+            isChallengeLost ||
+            hasRecordedChallengeOutcome ||
+            (!ch.isFreeTries && challengeAttemptsLeft <= 0) ||
+            (ch.isFreeTries && isChallengeTied)
+        )
+        if (isAlreadyFinishedOnGameOver) {
+            finalizePendingChallengeOutcomeIfNeeded()
+            exitChallengeAndNavigateToRivalry()
+            return
+        }
+
+        // PASS 5.20 Rule 2: No Double-Deduction on GAME_OVER (Try Failed) when effectiveBest < targetScore
+        // Missing a pad already deducted 1 try when entering GAME_OVER. Save remaining tries and go to Rivalry.
+        if (gameState == GameState.GAME_OVER && effectiveBest < ch.targetScore) {
+            val safeTries = if (ch.isFreeTries) 0 else challengeAttemptsLeft
+            ch.bestScore = effectiveBest
+            ch.attemptsLeft = safeTries
+            ChallengeStorage.saveInProgressChallenge(context, ch.copy(attemptsLeft = safeTries, bestScore = effectiveBest))
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+            exitChallengeAndNavigateToRivalry()
+            return
+        }
+
+        // Otherwise:
+        // - Mid-round (WATCHING/PLAYING after "Ready?" gate dismissed), OR
+        // - On GAME_OVER with effectiveBest >= targetScore and tries remaining
+        // -> Open Exit Challenge Confirmation Dialog (Scenario A or Scenario B)
+        activeDialog = ActiveDialog.EXIT_CHALLENGE_CONFIRM
+    }
+
+    // PASS 2H Item 4 + PASS 5.20 Rule 1: Back gesture routing
     BackHandler(enabled = gameState != GameState.IDLE) {
         when (gameState) {
             GameState.WATCHING, GameState.PLAYING -> {
-                activeDialog = ActiveDialog.SETTINGS_SHEET
+                if (activeChallenge != null) {
+                    requestExitChallenge()
+                } else {
+                    activeDialog = ActiveDialog.SETTINGS_SHEET
+                }
             }
             GameState.GAME_OVER -> {
-                persistOrFinalizeActiveChallengeOnExit()
-                discardActiveRun()
-                activeChallenge = null
-                challengeRng = null
-                clearRevengeState()
-                soloRng = null
-                isChallengeWon = false
-                isChallengeTied = false
-                isChallengeLost = false
-                hasRecordedChallengeOutcome = false
-                isMatchComplete = false
-                matchStandings = emptyList()
-                resetRunState()
-                activeRunState = null
-                gameState = GameState.IDLE
+                if (activeChallenge != null || isRevengeRun) {
+                    requestExitChallenge()
+                } else {
+                    persistOrFinalizeActiveChallengeOnExit()
+                    discardActiveRun()
+                    activeChallenge = null
+                    challengeRng = null
+                    clearRevengeState()
+                    soloRng = null
+                    isChallengeWon = false
+                    isChallengeTied = false
+                    isChallengeLost = false
+                    hasRecordedChallengeOutcome = false
+                    isMatchComplete = false
+                    matchStandings = emptyList()
+                    resetRunState()
+                    activeRunState = null
+                    gameState = GameState.IDLE
+                }
             }
             GameState.IDLE -> Unit
         }
@@ -1831,6 +1967,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 NavigationBarItem(
                     selected = currentScreen == AppScreen.LEADERBOARD,
                     onClick = {
+                        if (activeChallenge != null) {
+                            // PASS 5.20 Rule 1: Tapping the Leaderboard tab mid-challenge triggers the Exit Challenge flow
+                            requestExitChallenge()
+                            return@NavigationBarItem
+                        }
                         if (gameState == GameState.PLAYING || gameState == GameState.WATCHING) {
                             isPausedMidGame = true
                         } else if (gameState == GameState.GAME_OVER) {
@@ -1852,6 +1993,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             resetRunState()
                             gameState = GameState.IDLE
                         }
+                        ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
                         currentScreen = AppScreen.LEADERBOARD
                     },
                     icon = { Icon(imageVector = Icons.Default.EmojiEvents, contentDescription = "Leaderboard") },
@@ -2117,10 +2259,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             revengeTargetScore = revengeTargetScore,
                             revengeRivalName = currentRivalNameForShare,
                             isChallengeReadyGateVisible = isChallengeReadyGateVisible,
-                            onConfirmChallengeReady = {
-                                isChallengeReadyGateVisible = false
-                                roundTrigger++
-                            },
+                            onConfirmChallengeReady = ::onChallengeReadyGateDismissed,
                             onWatchMyRound = ::startWatchMyRoundReplay
                         )
                     }
@@ -2187,7 +2326,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             allPadsConfettiFlash = allPadsConfettiFlash,
                             wrongShakePadId = wrongShakePadId,
                             wrongShakeOffsetPx = wrongPadShakeOffset.value,
-                            inputEnabled = (gameState == GameState.PLAYING || isInstrumentArmed || isChallengeReadyTapArmed) && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible,
+                            inputEnabled = (gameState == GameState.PLAYING || isInstrumentArmed || isChallengeReadyTapArmed) && !isReplayingLostRound && !isLifecyclePaused && !isHandoffVisible && !isVictoryDecisionVisible,
                             onPadClick = ::onPadTapped
                         )
 
@@ -2374,29 +2513,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                         },
                         onExitChallenge = {
-                            val ch = activeChallenge
-                            val isFinished = ch == null ||
-                                isChallengeWon ||
-                                isChallengeLost ||
-                                hasRecordedChallengeOutcome ||
-                                (!ch.isFreeTries && challengeAttemptsLeft <= 0) ||
-                                (ch.isFreeTries && isChallengeTied)
-                            persistOrFinalizeActiveChallengeOnExit()
-                            activeChallenge = null
-                            challengeRng = null
-                            clearRevengeState()
-                            soloRng = null
-                            isChallengeWon = false
-                            isChallengeTied = false
-                            isChallengeLost = false
-                            hasRecordedChallengeOutcome = false
-                            hasSentChallengeReply = false
-                            isShareFromGameOver = false
-                            resetRunState()
-                            gameState = GameState.IDLE
-                            // PASS 5.19 Stage A #3: Exiting a FINISHED challenge navigates to Leaderboard -> Rivalry tab;
-                            // exiting an unfinished challenge returns to Home.
-                            currentScreen = if (isFinished) AppScreen.LEADERBOARD else AppScreen.HOME
+                            requestExitChallenge()
                         }
                     )
                 }
@@ -2451,6 +2568,59 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             )
                         }
                     }
+                }
+            }
+
+            if (isVictoryDecisionVisible && activeDialog == ActiveDialog.NONE) {
+                val ch = activeChallenge
+                if (ch != null) {
+                    val effectiveBest = maxOf(currentScore, ch.bestScore)
+                    VictoryDecisionDialog(
+                        rivalName = ch.rivalName,
+                        targetScore = ch.targetScore,
+                        effectiveBestScore = effectiveBest,
+                        isRevengeRunMode = false,
+                        onLockAndExit = {
+                            tapFlashJob?.cancel()
+                            isVictoryDecisionVisible = false
+                            challengeAttemptsLeft = 0
+                            ch.attemptsLeft = 0
+                            ch.bestScore = effectiveBest
+                            finalizePendingChallengeOutcomeIfNeeded()
+                            exitChallengeAndNavigateToRivalry()
+                        },
+                        onKeepPlaying = {
+                            isVictoryDecisionVisible = false
+                            roundTrigger++
+                        }
+                    )
+                } else if (isRevengeRun && revengeTargetScore > 0) {
+                    val rivalLabel = currentRivalNameForShare ?: "Rival"
+                    VictoryDecisionDialog(
+                        rivalName = rivalLabel,
+                        targetScore = revengeTargetScore,
+                        effectiveBestScore = currentScore,
+                        isRevengeRunMode = true,
+                        onLockAndExit = {
+                            tapFlashJob?.cancel()
+                            isVictoryDecisionVisible = false
+                            isRoundClearCelebration = false
+                            allPadsConfettiFlash = false
+                            activePadId = null
+                            wrongShakePadId = null
+                            failedStepNumber = 0
+                            failedExpectedPad = null
+                            failedTappedPad = null
+                            updateBestScoreIfNeeded(currentScore)
+                            gameState = GameState.GAME_OVER
+                        },
+                        onKeepPlaying = {
+                            isVictoryDecisionVisible = false
+                            roundTrigger++
+                        }
+                    )
+                } else {
+                    isVictoryDecisionVisible = false
                 }
             }
         }
@@ -2652,6 +2822,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 currentGridSize = gridSize,
                 currentPaceMode = paceMode,
                 isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
+                isChallengeMode = activeChallenge != null,
+                isRevengeMode = isRevengeRun && activeChallenge == null,
                 onSelectGridSize = { if (it != gridSize) resetToIdleForConfigChange(it, paceMode) },
                 onSelectPaceMode = { if (it != paceMode) resetToIdleForConfigChange(gridSize, it) },
                 onResetMultiplayerWins = {
@@ -2701,22 +2873,29 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     activeDialog = ActiveDialog.NONE
                 },
                 onQuitToHome = {
-                    persistOrFinalizeActiveChallengeOnExit()
-                    discardActiveRun()
-                    activeChallenge = null
-                    challengeRng = null
-                    clearRevengeState()
-                    soloRng = null
-                    isChallengeWon = false
-                    isChallengeTied = false
-                    isChallengeLost = false
-                    hasRecordedChallengeOutcome = false
-                    isMatchComplete = false
-                    matchStandings = emptyList()
-                    resetRunState()
-                    activeRunState = null
-                    gameState = GameState.IDLE
-                    activeDialog = ActiveDialog.NONE
+                    if (isRevengeRun && activeChallenge == null) {
+                        exitChallengeAndNavigateToRivalry()
+                    } else {
+                        persistOrFinalizeActiveChallengeOnExit()
+                        discardActiveRun()
+                        activeChallenge = null
+                        challengeRng = null
+                        clearRevengeState()
+                        soloRng = null
+                        isChallengeWon = false
+                        isChallengeTied = false
+                        isChallengeLost = false
+                        hasRecordedChallengeOutcome = false
+                        isMatchComplete = false
+                        matchStandings = emptyList()
+                        resetRunState()
+                        activeRunState = null
+                        gameState = GameState.IDLE
+                        activeDialog = ActiveDialog.NONE
+                    }
+                },
+                onExitChallenge = {
+                    requestExitChallenge()
                 },
                 onRestartRun = {
                     discardActiveRun()
@@ -2813,6 +2992,55 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         awaitingChallengeForDialog = null
                         activeDialog = ActiveDialog.NONE
                         Toast.makeText(context, "Challenge saved! Waiting for rival...", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            } else {
+                activeDialog = ActiveDialog.NONE
+            }
+        }
+        ActiveDialog.EXIT_CHALLENGE_CONFIRM -> {
+            val ch = activeChallenge
+            if (ch != null) {
+                val effectiveBest = maxOf(currentScore, ch.bestScore)
+                val isMidRound = (gameState == GameState.WATCHING || gameState == GameState.PLAYING)
+                ExitChallengeConfirmDialog(
+                    challenge = ch,
+                    effectiveBestScore = effectiveBest,
+                    challengeAttemptsLeft = challengeAttemptsLeft,
+                    isMidRound = isMidRound,
+                    onKeepPlaying = {
+                        activeDialog = ActiveDialog.NONE
+                    },
+                    onConfirmForfeit = {
+                        val remainingAfterForfeit = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                        val isFinalTryForfeit = !ch.isFreeTries && remainingAfterForfeit <= 0
+                        if (isFinalTryForfeit) {
+                            // PASS 5.20 Rule 3: Final Try Forfeit -> immediately finalize as LOST with unsent R-code
+                            challengeAttemptsLeft = 0
+                            ch.attemptsLeft = 0
+                            ch.bestScore = effectiveBest
+                            finalizePendingChallengeOutcomeIfNeeded()
+                        } else {
+                            // PASS 5.20 Scenario A & Rule 6: Preserve bestScore, decrement finite attemptsLeft by 1, save IN_PROGRESS
+                            val nextTries = if (ch.isFreeTries) 0 else remainingAfterForfeit
+                            challengeAttemptsLeft = nextTries
+                            ch.attemptsLeft = nextTries
+                            ch.bestScore = effectiveBest
+                            ChallengeStorage.saveInProgressChallenge(
+                                context,
+                                ch.copy(attemptsLeft = nextTries, bestScore = effectiveBest)
+                            )
+                            savedChallenges = ChallengeStorage.loadChallenges(context)
+                        }
+                        exitChallengeAndNavigateToRivalry()
+                    },
+                    onConfirmLockScore = {
+                        // PASS 5.20 Scenario B & Rule 5: Finalize immediately as WON or TIED with unsent R-code
+                        challengeAttemptsLeft = 0
+                        ch.attemptsLeft = 0
+                        ch.bestScore = effectiveBest
+                        finalizePendingChallengeOutcomeIfNeeded()
+                        exitChallengeAndNavigateToRivalry()
                     }
                 )
             } else {
@@ -4070,6 +4298,8 @@ private fun SettingsSheetDialog(
     currentGridSize: GridSize,
     currentPaceMode: PaceMode,
     isMidRun: Boolean,
+    isChallengeMode: Boolean = false,
+    isRevengeMode: Boolean = false,
     onSelectGridSize: (GridSize) -> Unit,
     onSelectPaceMode: (PaceMode) -> Unit,
     onResetMultiplayerWins: () -> Unit,
@@ -4078,6 +4308,7 @@ private fun SettingsSheetDialog(
     onResumeRun: () -> Unit = {},
     onSaveAndExit: () -> Unit = {},
     onQuitToHome: () -> Unit = {},
+    onExitChallenge: () -> Unit = {},
     onRestartRun: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -4135,58 +4366,87 @@ private fun SettingsSheetDialog(
                             Text("Resume", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
                         }
 
-                        Button(
-                            onClick = onSaveAndExit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("pause_save_exit_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0F172A),
-                                contentColor = Color(0xFF38BDF8)
-                            ),
-                            border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
-                        ) {
-                            Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Save & Exit", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
+                        if (isChallengeMode) {
+                            // PASS 5.20 Rule 1: During an active challenge, replace "Save & Exit", "Quit to Home", and "Restart"
+                            // with ONLY [Resume] and [Exit Challenge].
+                            Button(
+                                onClick = onExitChallenge,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("pause_exit_challenge_button"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0F172A),
+                                    contentColor = Color(0xFFEF4444)
+                                ),
+                                border = BorderStroke(1.5.dp, Color(0xFFEF4444))
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Exit Challenge", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        } else {
+                            // PASS 5.20 Guard B: Hide "Save & Exit" during Revenge runs (since Revenge runs do not write to Solo Continue)
+                            if (!isRevengeMode) {
+                                Button(
+                                    onClick = onSaveAndExit,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("pause_save_exit_button"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0F172A),
+                                        contentColor = Color(0xFF38BDF8)
+                                    ),
+                                    border = BorderStroke(1.5.dp, Color(0xFF38BDF8))
+                                ) {
+                                    Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Save & Exit", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                            }
 
-                        Button(
-                            onClick = onQuitToHome,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("pause_quit_home_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0F172A),
-                                contentColor = Color(0xFFEF4444)
-                            ),
-                            border = BorderStroke(1.5.dp, Color(0xFFEF4444))
-                        ) {
-                            Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Quit to Home", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
+                            Button(
+                                onClick = onQuitToHome,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .testTag("pause_quit_home_button"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0F172A),
+                                    contentColor = Color(0xFFEF4444)
+                                ),
+                                border = BorderStroke(1.5.dp, Color(0xFFEF4444))
+                            ) {
+                                Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    if (isRevengeMode) "Exit to Rivalry" else "Quit to Home",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
 
-                        Button(
-                            onClick = onRestartRun,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("pause_restart_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF0F172A),
-                                contentColor = Color(0xFFFBBF24)
-                            ),
-                            border = BorderStroke(1.5.dp, Color(0xFFF59E0B).copy(alpha = 0.8f))
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Restart", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Button(
+                                onClick = onRestartRun,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .testTag("pause_restart_button"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF0F172A),
+                                    contentColor = Color(0xFFFBBF24)
+                                ),
+                                border = BorderStroke(1.5.dp, Color(0xFFF59E0B).copy(alpha = 0.8f))
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Restart", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
                         }
                     }
                 } else {
@@ -4462,6 +4722,249 @@ private fun NotificationPermissionDialog(
                     )
                 ) {
                     Text("Not Now", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExitChallengeConfirmDialog(
+    challenge: ChallengeItem,
+    effectiveBestScore: Int,
+    challengeAttemptsLeft: Int,
+    isMidRound: Boolean,
+    onKeepPlaying: () -> Unit,
+    onConfirmForfeit: () -> Unit,
+    onConfirmLockScore: () -> Unit
+) {
+    val isScenarioB = effectiveBestScore >= challenge.targetScore
+    val isBeat = effectiveBestScore > challenge.targetScore
+    val remainingAfterForfeit = if (challenge.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+    val isFinalTryForfeit = !challenge.isFreeTries && remainingAfterForfeit <= 0
+    val remainingTriesForTie = if (isMidRound) remainingAfterForfeit else challengeAttemptsLeft
+
+    val titleText = when {
+        !isScenarioB -> "Exit Challenge?"
+        isBeat -> "Lock Score & Exit?"
+        else -> "Lock Tie & Exit?"
+    }
+    val bodyText = when {
+        !isScenarioB -> {
+            when {
+                challenge.isFreeTries -> "Leaving now will forfeit your current attempt. You have Free (unlimited) tries when you resume."
+                isFinalTryForfeit -> "Leaving now will forfeit your final attempt and end the challenge as a LOSS (Best: $effectiveBestScore)."
+                else -> "Leaving now will forfeit your current attempt. You will have $remainingAfterForfeit tries remaining when you resume."
+            }
+        }
+        isBeat -> {
+            // PASS 5.20 Rule 5 & Caution 3:
+            if (isMidRound) {
+                "You've already beaten the target! If you exit now, your score of $effectiveBestScore will be locked in as your final result. Keep playing to push your score even higher?"
+            } else {
+                "You've already beaten the target! If you exit now, your current score of $effectiveBestScore will be locked in as your final result."
+            }
+        }
+        else -> {
+            // PASS 5.20 Rule 5 (TIED):
+            when {
+                challenge.isFreeTries -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Keep playing to push for a higher score?"
+                remainingTriesForTie > 0 -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Do you want to use your remaining $remainingTriesForTie tries to push for a higher score?"
+                else -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Keep playing to push for a higher score?"
+            }
+        }
+    }
+
+    val accentColor = when {
+        !isScenarioB -> Color(0xFFEF4444)
+        isBeat -> Color(0xFF00E676)
+        else -> Color(0xFFFFD600)
+    }
+
+    Dialog(
+        onDismissRequest = onKeepPlaying,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 420.dp)
+                .testTag("exit_challenge_confirm_dialog"),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.5.dp, accentColor.copy(alpha = 0.75f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = titleText,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("exit_challenge_dialog_title")
+                )
+
+                Text(
+                    text = bodyText,
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("exit_challenge_dialog_body")
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Button(
+                    onClick = onKeepPlaying,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("exit_challenge_keep_playing_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color(0xFF090D16)
+                    )
+                ) {
+                    Text("Keep Playing", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                }
+
+                if (!isScenarioB) {
+                    OutlinedButton(
+                        onClick = onConfirmForfeit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("exit_challenge_forfeit_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.5.dp, Color(0xFFEF4444)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color(0xFF0F172A),
+                            contentColor = Color(0xFFEF4444)
+                        )
+                    ) {
+                        Text("Exit & Forfeit", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = onConfirmLockScore,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("exit_challenge_lock_score_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.5.dp, accentColor),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color(0xFF0F172A),
+                            contentColor = accentColor
+                        )
+                    ) {
+                        Text(
+                            if (isBeat) "Exit & Lock Score" else "Exit & Lock Tie",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VictoryDecisionDialog(
+    rivalName: String,
+    targetScore: Int,
+    effectiveBestScore: Int,
+    isRevengeRunMode: Boolean,
+    onLockAndExit: () -> Unit,
+    onKeepPlaying: () -> Unit
+) {
+    val bodyText = if (isRevengeRunMode) {
+        "You beat ${rivalName}'s score of $targetScore! Lock this to unlock your Revenge share, or keep playing to set an even higher target?"
+    } else {
+        "You beat ${rivalName}'s target of $targetScore with score $effectiveBestScore! Lock this as your winning result, or keep playing to set an even higher score?"
+    }
+    val emeraldAccent = Color(0xFF00E676)
+
+    Dialog(
+        onDismissRequest = onKeepPlaying,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 420.dp)
+                .testTag("victory_decision_dialog"),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            border = BorderStroke(1.5.dp, emeraldAccent.copy(alpha = 0.85f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "🏆 Target Beaten!",
+                    color = emeraldAccent,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("victory_decision_title")
+                )
+
+                Text(
+                    text = bodyText,
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("victory_decision_body")
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Button(
+                    onClick = onLockAndExit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("victory_decision_lock_exit_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = emeraldAccent,
+                        contentColor = Color(0xFF090D16)
+                    )
+                ) {
+                    Text("🔒 Lock & Exit", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onKeepPlaying,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("victory_decision_keep_playing_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color(0xFF0F172A),
+                        contentColor = Color(0xFF38BDF8)
+                    )
+                ) {
+                    Text("▶ Keep Playing", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }

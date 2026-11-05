@@ -623,38 +623,83 @@ object ChallengeStorage {
         if (item.code.isNotBlank() && isCodeConsumed(context, item.code)) {
             return existing ?: RivalRecord(name = cleanName)
         }
+        // PASS 5.20 Caution 1: Free Tries Pre-Deduction Write Guard
+        // When maxTries == 0 (isFreeTries), never persist negative or finite tries.
+        val safeMaxTries = item.maxTries.coerceAtLeast(0)
+        val safeTriesLeft = if (safeMaxTries == 0) 0 else item.attemptsLeft.coerceAtLeast(0)
+        val sanitizedItem = item.copy(
+            rivalName = cleanName,
+            maxTries = safeMaxTries,
+            attemptsLeft = safeTriesLeft
+        )
+
         // Remove any older unfinished challenge from the same rival before saving the new one
         val currentChallenges = loadChallenges(context).toMutableList()
         currentChallenges.removeAll { ch ->
             ch.rivalName.equals(cleanName, ignoreCase = true) &&
-                !ch.code.equals(item.code, ignoreCase = true)
+                !ch.code.equals(sanitizedItem.code, ignoreCase = true)
         }
         persistChallenges(context, currentChallenges)
 
-        saveChallenge(context, item.copy(rivalName = cleanName))
+        saveChallenge(context, sanitizedItem)
         val record = RivalRecord(
             name = cleanName,
             wins = existing?.wins ?: 0,
             losses = existing?.losses ?: 0,
             ties = existing?.ties ?: 0,
             matches = existing?.matches ?: 0,
-            lastGrid = item.gridSizeTag,
-            lastDifficulty = item.difficulty,
-            lastTarget = item.targetScore,
-            lastUserScore = item.bestScore,
+            lastGrid = sanitizedItem.gridSizeTag,
+            lastDifficulty = sanitizedItem.difficulty,
+            lastTarget = sanitizedItem.targetScore,
+            lastUserScore = sanitizedItem.bestScore,
             lastStatus = "IN_PROGRESS",
-            lastChainId = item.chainId.ifEmpty { existing?.lastChainId ?: "" },
+            lastChainId = sanitizedItem.chainId.ifEmpty { existing?.lastChainId ?: "" },
             updatedAt = System.currentTimeMillis(),
-            inProgressCode = item.code,
-            inProgressTriesLeft = item.attemptsLeft,
-            inProgressMaxTries = item.maxTries,
-            inProgressSeed = item.seed,
+            inProgressCode = sanitizedItem.code,
+            inProgressTriesLeft = safeTriesLeft,
+            inProgressMaxTries = safeMaxTries,
+            inProgressSeed = sanitizedItem.seed,
             gridStats = existing?.gridStats ?: emptyMap(),
             lastReplyCode = existing?.lastReplyCode ?: "",
             isReplySent = existing?.isReplySent ?: true
         )
         saveRival(context, record)
         return record
+    }
+
+    /**
+     * PASS 5.20 Rule 7 & Guard A:
+     * Reconciles any orphaned IN_PROGRESS RivalRecord where the player was on their final finite try
+     * (inProgressMaxTries > 0 && inProgressTriesLeft <= 0, persisted when the "Ready?" gate was dismissed)
+     * and force-closed the app mid-round. Automatically finalizes the match outcome (WON, TIED, or LOST
+     * based on lastUserScore vs lastTarget), marks the code consumed, and generates the unsent R-code
+     * (isReplySent = false) so the player never sees "Resume (0 left)" in the Rivalry tab.
+     */
+    fun reconcileOrphanedInProgressChallenges(context: Context) {
+        val rivals = loadRivals(context)
+        for (r in rivals) {
+            if (r.lastStatus == "IN_PROGRESS" && r.inProgressMaxTries > 0 && r.inProgressTriesLeft <= 0) {
+                if (r.inProgressCode.isNotBlank()) {
+                    markCodeConsumed(context, r.inProgressCode)
+                }
+                val resolvedSeed = if (r.inProgressSeed != 0) {
+                    r.inProgressSeed
+                } else {
+                    ChallengeSeed.parseChallengeCode(r.inProgressCode)?.seedInt ?: ChallengeSeed.generateRandomSeed()
+                }
+                recordMatchOutcome(
+                    context = context,
+                    rivalName = r.name,
+                    userScore = r.lastUserScore,
+                    targetScore = r.lastTarget,
+                    gridSize = r.lastGrid,
+                    difficulty = r.lastDifficulty,
+                    chainId = r.lastChainId,
+                    maxTries = r.inProgressMaxTries,
+                    seed = resolvedSeed
+                )
+            }
+        }
     }
 
     /**

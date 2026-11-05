@@ -2530,7 +2530,424 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
         composeTestRule.onNodeWithText("Ready vs DAN?", substring = true).assertIsDisplayed()
     }
+
+    @Test
+    fun pass5_20_cheatProofExitChallenge_forfeit_lockScore_readyGate_and_antiCheat() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Caution 1 (Free Tries Pre-Deduction Write Guard) & Guard A (Orphaned Final-Try Lazy Finalization):
+        val freeItem = ChallengeItem(
+            code = ChallengeSeed.formatChallengeCode(
+                gridTag = "2x2",
+                targetScore = 6,
+                tries = 0, // Free tries (TFE)
+                difficulty = GameDifficulty.EASY,
+                seed = 70001,
+                senderName = "FREE_RIVAL",
+                chainId = "FR0",
+                isRevenge = false
+            ),
+            rivalName = "FREE_RIVAL",
+            gridSizeTag = "2x2",
+            targetScore = 6,
+            maxTries = 0,
+            attemptsLeft = -1, // Even if a caller accidentally passes -1 for Free mode
+            bestScore = 2,
+            seed = 70001,
+            difficulty = GameDifficulty.EASY,
+            chainId = "FR0"
+        )
+        val savedFreeRecord = ChallengeStorage.saveInProgressChallenge(context, freeItem)
+        assertEquals("Caution 1: Free mode maxTries must remain 0", 0, savedFreeRecord.inProgressMaxTries)
+        assertEquals("Caution 1: Free mode inProgressTriesLeft must remain 0 (never negative)", 0, savedFreeRecord.inProgressTriesLeft)
+        ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
+        val afterReconcileFree = ChallengeStorage.findRivalByName(context, "FREE_RIVAL")
+        assertNotNull(afterReconcileFree)
+        assertEquals(
+            "Caution 1: Free mode (inProgressMaxTries == 0) must NEVER be auto-finalized by orphan reconciliation",
+            "IN_PROGRESS",
+            afterReconcileFree!!.lastStatus
+        )
+
+        // Guard A: Simulate a force-closed final finite try (inProgressMaxTries = 3, inProgressTriesLeft = 0)
+        val orphanedCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 7,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 70002,
+            senderName = "ORPHAN",
+            chainId = "ORP",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = orphanedCode,
+                rivalName = "ORPHAN",
+                gridSizeTag = "2x2",
+                targetScore = 7,
+                maxTries = 3,
+                attemptsLeft = 0,
+                bestScore = 4,
+                seed = 70002,
+                difficulty = GameDifficulty.EASY,
+                chainId = "ORP"
+            )
+        )
+        ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
+        val reconciledOrphan = ChallengeStorage.findRivalByName(context, "ORPHAN")
+        assertNotNull(reconciledOrphan)
+        assertEquals("Guard A: Orphaned final try with bestScore 4 < target 7 must finalize as LOST", "LOST", reconciledOrphan!!.lastStatus)
+        assertFalse("Guard A: Orphaned final try must generate an unsent R-code (isReplySent = false)", reconciledOrphan.isReplySent)
+        assertTrue("Guard A: Orphaned final try must populate lastReplyCode", reconciledOrphan.lastReplyCode.contains("-R3E-"))
+
+        // 2. Accept a 3-try T-code from ALEX (target 5, seed 70003)
+        val alexCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 70003,
+            senderName = "ALEX",
+            chainId = "ALX",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(alexCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Rule 4: "Ready?" Gate Exit -> While isChallengeReadyGateVisible is true (before Pad 1 flashes),
+        // tapping Pause -> Exit Challenge must exit cleanly to Rivalry WITHOUT deducting a try and without showing a dialog.
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Rule 1: Pause menu during challenge shows ONLY [Resume] and [Exit Challenge]
+        composeTestRule.onNodeWithTag("pause_resume_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_restart_button").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertDoesNotExist()
+
+        val alexAfterReadyExit = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull(alexAfterReadyExit)
+        assertEquals("Rule 4: Exiting on Ready gate must preserve all 3 tries", 3, alexAfterReadyExit!!.inProgressTriesLeft)
+
+        // 3. Resume ALEX's challenge from Rivalry tab ("Resume (3 left)")
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+
+        // Rule 7: Dismiss "Ready?" gate -> verify SharedPreferences immediately pre-deducts inProgressTriesLeft to 2
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.waitForIdle()
+        val alexAfterReadyDismiss = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertEquals(
+            "Rule 7: Dismissing Ready gate must immediately pre-deduct persisted tries to 2 in SharedPreferences",
+            2,
+            alexAfterReadyDismiss!!.inProgressTriesLeft
+        )
+
+        // Scenario A: Mid-round forfeit (bestScore 0 < target 5) via Pause -> Exit Challenge
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_title").assertTextContains("Exit Challenge?")
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body")
+            .assertTextContains("Leaving now will forfeit your current attempt. You will have 2 tries remaining when you resume.", substring = true)
+
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val alexAfterForfeit1 = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertEquals("Scenario A: After forfeiting Try 1, 2 tries must remain", 2, alexAfterForfeit1!!.inProgressTriesLeft)
+        assertEquals("IN_PROGRESS", alexAfterForfeit1.lastStatus)
+
+        // 4. Rule 3 (Final Try Mid-Round Forfeit -> Auto-LOST with unsent R-code):
+        // Accept a 1-try challenge from ONE_SHOT (target 5, tries 1)
+        val oneShotCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 1,
+            difficulty = GameDifficulty.EASY,
+            seed = 70004,
+            senderName = "ONE_SHOT",
+            chainId = "OS1",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(oneShotCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Rule 1: Tap Leaderboard tab mid-challenge -> triggers Exit Challenge dialog!
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body")
+            .assertTextContains("Leaving now will forfeit your final attempt and end the challenge as a LOSS", substring = true)
+
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val oneShotRecord = ChallengeStorage.findRivalByName(context, "ONE_SHOT")
+        assertNotNull(oneShotRecord)
+        assertEquals("Rule 3: Final-try forfeit must immediately finalize as LOST", "LOST", oneShotRecord!!.lastStatus)
+        assertFalse("Rule 3: Final-try forfeit must generate an unsent R-code (isReplySent = false)", oneShotRecord.isReplySent)
+        assertTrue("Rule 3: Final-try forfeit must populate lastReplyCode", oneShotRecord.lastReplyCode.contains("-R1E-"))
+
+        // 5. Scenario B + Caution 3 (Lock Winning Score Mid-Round):
+        // Simulate a challenge from WIN_RIVAL where bestScore (6) > targetScore (5)
+        val winRivalCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 70005,
+            senderName = "WIN_RIVAL",
+            chainId = "WN1",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = winRivalCode,
+                rivalName = "WIN_RIVAL",
+                gridSizeTag = "2x2",
+                targetScore = 5,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 6,
+                seed = 70005,
+                difficulty = GameDifficulty.EASY,
+                chainId = "WN1"
+            )
+        )
+        // Refresh Rivalry screen and resume WIN_RIVAL
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_WIN_RIVAL").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate so we are mid-round with effectiveBest (6) > target (5)
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Open Pause -> Exit Challenge -> verify Scenario B (WON) mid-round copy (Caution 3)
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_title").assertTextContains("Lock Score & Exit?")
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body").assertTextContains(
+            "You've already beaten the target! If you exit now, your score of 6 will be locked in as your final result. Keep playing to push your score even higher?"
+        )
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val lockedWinRecord = ChallengeStorage.findRivalByName(context, "WIN_RIVAL")
+        assertNotNull(lockedWinRecord)
+        assertEquals("Scenario B: Locking winning score must finalize as WON", "WON", lockedWinRecord!!.lastStatus)
+        assertEquals(6, lockedWinRecord.lastUserScore)
+        assertFalse("Scenario B: Locking winning score must generate unsent R-code (isReplySent = false)", lockedWinRecord.isReplySent)
+        assertTrue(lockedWinRecord.lastReplyCode.uppercase().contains("2X2-6-R3E-"))
+    }
+
+    @Test
+    fun pass5_21_victoryDecisionPause_inboundChallenge_and_revengeRun() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Helper to compute deterministic Easy 2x2 pad sequence for a given seed
+        fun padSequenceForSeed(seed: Int, count: Int): List<PadSpec> {
+            val rng = java.util.Random(seed.toLong())
+            return List(count) { CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)] }
+        }
+
+        // 1. Inbound Challenge: Target = 1, Seed = 81001 ("RIVAL21")
+        // Verify:
+        // - Clearing Round 1 (currentScore == 1 == targetScore) does NOT show VictoryDecisionDialog (Tie rule).
+        // - Clearing Round 2 (currentScore == 2 > targetScore) DOES show VictoryDecisionDialog, with bestScore already checkpointed.
+        // - Tapping [Keep Playing] dismisses the dialog and allows Round 3; clearing Round 3 (currentScore == 3) does NOT show the dialog again (Once-per-try rule).
+        val seed1 = 81001
+        val seq1 = padSequenceForSeed(seed1, 4)
+        val rival21Code = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed1,
+            senderName = "RIVAL21",
+            chainId = "R21",
+            isRevenge = false
+        )
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(rival21Code)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate and wait for Round 1 sequence playback (450ms + 400ms + 200ms)
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Tap Round 1 pad -> currentScore becomes 1 (Tie with target 1) -> must NOT trigger VictoryDecisionDialog
+        composeTestRule.onNodeWithTag(seq1[0].testTagId).performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertDoesNotExist()
+
+        // Advance through Round 1 celebration + Round 2 playback
+        composeTestRule.mainClock.advanceTimeBy(3000L)
+        composeTestRule.waitForIdle()
+
+        // Tap Round 2 pads (2 steps) -> currentScore becomes 2 (> targetScore 1) -> triggers VictoryDecisionDialog!
+        composeTestRule.onNodeWithTag(seq1[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq1[1].testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("victory_decision_title").assertTextContains("🏆 Target Beaten!")
+        composeTestRule.onNodeWithTag("victory_decision_body").assertTextContains(
+            "You beat RIVAL21's target of 1 with score 2! Lock this as your winning result, or keep playing to set an even higher score?"
+        )
+
+        // Verify checkpoint-before-overlay: bestScore (2) is already persisted in SharedPreferences while dialog is open
+        val checkpointedRival21 = ChallengeStorage.findRivalByName(context, "RIVAL21")
+        assertNotNull(checkpointedRival21)
+        assertEquals("bestScore must be checkpointed before showing VictoryDecisionDialog", 2, checkpointedRival21!!.lastUserScore)
+
+        // Tap [Keep Playing] -> dialog closes and Round 3 deals
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertDoesNotExist()
+
+        // Advance through Round 3 playback
+        composeTestRule.mainClock.advanceTimeBy(3500L)
+        composeTestRule.waitForIdle()
+
+        // Clear Round 3 (3 steps) -> currentScore becomes 3 -> must NOT show VictoryDecisionDialog a second time in the same try!
+        composeTestRule.onNodeWithTag(seq1[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq1[1].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq1[2].testTagId).performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertDoesNotExist()
+
+        // Lock via Pause -> Exit Challenge -> Scenario B Lock Score
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Inbound Challenge [Lock & Exit] + Micro-Caution (effectiveBest = maxOf(currentScore, ch.bestScore)):
+        val seed2 = 81002
+        val seq2 = padSequenceForSeed(seed2, 3)
+        val lock21Code = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed2,
+            senderName = "LOCK21",
+            chainId = "L21",
+            isRevenge = false
+        )
+        // Pre-seed LOCK21 with an in-progress bestScore of 4 (e.g., resumed run where previous try had bestScore 4)
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = lock21Code,
+                rivalName = "LOCK21",
+                gridSizeTag = "2x2",
+                targetScore = 1,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 4,
+                seed = seed2,
+                difficulty = GameDifficulty.EASY,
+                chainId = "L21"
+            )
+        )
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_LOCK21").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate and play Round 1 + Round 2 so currentScore reaches 2 (> targetScore 1), while ch.bestScore is 4
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq2[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(3000L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq2[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq2[1].testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        // Micro-Caution: Body copy must display effectiveBest = maxOf(currentScore=2, ch.bestScore=4) = 4!
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("victory_decision_body").assertTextContains(
+            "You beat LOCK21's target of 1 with score 4! Lock this as your winning result, or keep playing to set an even higher score?"
+        )
+        composeTestRule.onNodeWithTag("victory_decision_lock_exit_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val lockedRecord = ChallengeStorage.findRivalByName(context, "LOCK21")
+        assertNotNull(lockedRecord)
+        assertEquals("WON", lockedRecord!!.lastStatus)
+        assertEquals("Lock & Exit must finalize with effectiveBest (4)", 4, lockedRecord.lastUserScore)
+        assertFalse("Lock & Exit must generate unsent R-code (isReplySent = false)", lockedRecord.isReplySent)
+        assertTrue(lockedRecord.lastReplyCode.uppercase().contains("2X2-4-R3E-"))
+    }
 }
+
+
 
 
 

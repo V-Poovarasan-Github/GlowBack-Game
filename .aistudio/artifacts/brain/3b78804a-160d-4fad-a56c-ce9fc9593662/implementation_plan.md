@@ -1,49 +1,63 @@
-# PASS 5.19 — Async Challenge Robustness Pass & 4-Player Mesh Architecture
+# PASS 5.21 — Victory Decision Pause ("You won! Exit or continue?")
 
-This plan hardens the offline peer-to-peer Async Challenge lifecycle against state bleed, duplicate/forged replies, group-broadcast collisions, and mid-game interruptions, while visually separating Challenge gameplay from Solo gameplay for maximum board space on `5×4` grids.
+Pauses active asynchronous challenges and Revenge / Tie-Breaker runs **once per try** at the exact round-clear moment when `currentScore` first exceeds `targetScore` (or `revengeTargetScore`), allowing the player to either immediately lock in their winning score or continue pushing higher without interruption.
 
 ---
 
 ## User Review & Critical Decisions
 
-> [!IMPORTANT]
-> All Stage A, Stage B, Phase 1 interactive clarification choices, and the mandatory **Per-Rival Sub-Chain Forking (`chainId:seedInt`)** enhancement are locked in for execution.
-
-- **Confirmed Decision 1 (`findInProgressChallenge` Matching)**: Match in-progress challenges strictly by **exact `code` string or `seedInt`**, never by `chainId`. Pasting a new T-code from a rival while an older challenge from that rival is still unfinished replaces the old in-progress state and displays: `"Replaced your unfinished challenge from [NAME]"`.
-- **Confirmed Decision 2 (Single Share Flow, Two Outputs)**: Remove the standalone `"Copy Challenge"` button from the Solo Game Over screen. Tapping `"Share Challenge"` opens `ShareTriesSelectorDialog`; after generating the challenge, the result view presents both **"Share"** (PNG Trophy Card + 7-segment code caption) and **"Copy Code"** (raw text to clipboard).
-- **Confirmed Decision 3 (Post-Challenge Exit Destination)**: Exiting a **finished** challenge (`WON`, `TIED`, or `LOST` with `0` tries remaining) navigates directly to **Leaderboard → Rivalry**, whereas exiting a normal Solo run stays on Home.
-- **Confirmed Decision 4 (Group Broadcast 30-Day Chain Retention + Per-Rival Sub-Chain Forking)**: Keep outbound target entries in `KEY_CHAIN_TARGETS` for a **30-day hard TTL** (capped at 100 entries, FIFO), keyed by **`(chainId + ":" + seedInt)`** (with `chainId` fallback) so simultaneous revenge rallies with multiple group members on the same `chainId` never overwrite each other's target scores. Individual R-codes are consumed in `KEY_CONSUMED_CODES` (cap raised to 500, FIFO).
-- **Confirmed Decision 5 (Same-Name Second Reply Disambiguation)**: When an inbound R-code matches an existing rival card's name **and** that rival already has a recorded outcome for the same challenge (`chainId:seedInt`), show an explicit two-choice prompt: `"Two different replies from [NAME] for the same challenge."`
-  - **`[Same person]`**: Merge onto the existing rival card and record the match.
-  - **`[Different person]`**: Require a pre-focused Custom Rival Name input and create a separate rival card before recording.
-- **Confirmed Decision 6 (Tie on Try 1 with Tries Remaining)**: When a responder ties the target (`bestScore == targetScore`) with tries still remaining (`triesLeft > 0`), display:
-  - Banner: `"Target tied (Best: N)! Retry to beat it for the WIN, or send the tie now."`
-  - Primary Button: **`Retry Turn (X tries left)`**
-  - Secondary Button: **`Send Tie to Rival`** (finalizes the match immediately as `TIED`, forfeits remaining tries, consumes the challenge, and generates/sends the R-code)
-  - Tertiary Button: **`Exit Challenge`**
+- **Confirmed Decision 1 — Implement PASS 5.21 Victory Decision Pause:** Pause after the round-clear celebration arpeggio when `currentScore` first exceeds `targetScore` (inbound challenge) or `revengeTargetScore` (Revenge / Tie-Breaker run), showing the **Victory Decision** overlay once per try.
+- **Confirmed Decision 2 — Inbound Challenge `[🔒 Lock & Exit]` Destination:** Tapping `[🔒 Lock & Exit]` on an inbound challenge immediately finalizes the match as **`WON`** with `effectiveBest = maxOf(currentScore, ch.bestScore)`, marks the challenge code consumed, generates the unsent R-code (`isReplySent = false`), clears `IN_PROGRESS` storage, and navigates directly to **Leaderboard $\rightarrow$ Rivalry** where `"Send Reply"` is ready.
+- **Confirmed Micro-Caution — `effectiveBest` in Body Copy:** In `VictoryDecisionDialog` body copy, display `effectiveBest = maxOf(currentScore, ch.bestScore)` as `[N]` (not raw `currentScore`) so the copy stays accurate even in the resume edge case where a prior try's `bestScore` already exceeded the target.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Eliminates state leakage between Solo mode and Async Challenge mode, enforces strict state validation on 7-segment `T`-codes and `R`-codes across multi-player group chats using `(chainId:seedInt)` sub-chain keys, and introduces a unified, space-efficient Challenge HUD with a player-consent start gate.
-- **Target Audience / Persona**: Competitive friends rallying back-and-forth or broadcasting challenges inside WhatsApp/Telegram group chats completely offline.
-- **Key Value**: Zero lost replies, zero accidental re-triggers of completed codes, full vertical space for `5×4` boards, and deterministic head-to-head records across 1-on-1 rallies and 4-player group broadcasts.
+- **What It Does:** Eliminates the need for players to intentionally miss a pad or race to hit Pause during the next sequence after beating a rival's target. The moment they clear the winning round (`currentScore == targetScore + 1`), the round-clear celebration plays, the next round's sequence is prepared, and the sequence playback pauses behind a celebratory **Victory Decision** overlay.
+- **Target Audience / Persona:** Players competing in asynchronous T-code challenges or Revenge / Tie-Breaker rallies who want either an immediate, frictionless victory lock-in or an uninterrupted high-score push.
+- **Key Value:** Gives players explicit control at the moment of victory while keeping normal Solo, 2P, 3P, and 4P modes completely untouched.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-1. **Unified 2-Row Challenge Header (Space Optimization for `5×4`)**:
-   - **Line 1**: `● RIVAL: ALEX   •   TARGET: 5   •   TRIES: 1`
-   - **Line 2**: `5×4 · CLASSIC   •   ⚡ SCORE: 0   •   HARD`
-   - **Dynamic Milestone Border & Accent**: Cyan (`#00E5FF`) when chasing, Amber/Gold (`#FFD600`) when tied, Neon Green (`#00E676`) when beaten.
-2. **Round-vs-Score Clarity**:
-   - Status subtitle explicitly states what clearing the current round accomplishes (`"Round 6 • Clear this round to TIE Target (6)"`, `"Round 7 • Clear this round to WIN (7 vs 6)"`).
-3. **"Ready?" Consent Gate (Round 1 & Resume Only)**:
-   - Starting Try 1, retrying a turn, starting a Revenge run, or resuming an interrupted challenge pauses in a `"READY vs [RIVAL]? • TAP WHEN READY"` state before flashing Pad 1.
-4. **Context-Pure Game Over Actions**:
-   - Failed try (`bestScore < target`, `triesLeft > 0`): `Retry Turn` + `Exit Challenge` (no `Share Score`).
-   - Tied try (`bestScore == target`, `triesLeft > 0`): `Retry Turn` + `Send Tie to Rival` + `Exit Challenge`.
-   - Finished challenge: `Send Victory / Tie / Result to Rival` (with Double-Send Guard) + `Exit Challenge` (navigates to Leaderboard → Rivalry).
-   - Solo Game Over: `Play Again` | `Home` + single `Share Challenge` button with post-generation `Share` and `Copy Code` actions.
+### Key User Flows
+
+1. **Inbound Challenge — First Time Beating Target (`currentScore == targetScore + 1`):**
+   - Player taps the final pad of Round `T + 1`, bringing `currentScore` to `T + 1` (`> targetScore`).
+   - `bestScore` updates immediately (`ch.bestScore = maxOf(currentScore, ch.bestScore)`) and is checkpointed to `SharedPreferences` via `saveInProgressChallenge`.
+   - The round-clear arpeggio and emerald confetti flash play as usual.
+   - Instead of immediately flashing Round `T + 2`, the game pauses (`isVictoryDecisionVisible = true`, `hasShownVictoryDecisionThisTry = true`) and presents the **Victory Decision** dialog:
+     - **Title:** `"🏆 Target Beaten!"`
+     - **Body:** `"You beat [RIVAL]'s target of [T] with score [N]! Lock this as your winning result, or keep playing to set an even higher score?"` where `[N] = effectiveBest = maxOf(currentScore, ch.bestScore)`.
+     - **Buttons:** **`[🔒 Lock & Exit]`** and **`[▶ Keep Playing]`**
+   - **If `[🔒 Lock & Exit]` is tapped:**
+     - Finalizes the match as **`WON`** using `effectiveBest = maxOf(currentScore, ch.bestScore)`, marks the code consumed, generates the unsent R-code (`isReplySent = false`), clears `IN_PROGRESS` state, and navigates to **Leaderboard $\rightarrow$ Rivalry**.
+   - **If `[▶ Keep Playing]` is tapped:**
+     - Dismisses the overlay (`isVictoryDecisionVisible = false`) and immediately triggers the `WATCHING` playback coroutine for the next round (`roundTrigger++`).
+     - Does **not** pause again on subsequent rounds (`T + 2`, `T + 3`, etc.) during this try.
+     - If the player later misses a pad, the standard miss handler records **`WON`** with `bestScore`. If they later open Pause / Exit mid-round, the existing PASS 5.20 Scenario B `"Lock Score & Exit?"` dialog applies.
+
+2. **Revenge / Tie-Breaker Run (`isRevengeRun == true && revengeTargetScore > 0`):**
+   - When `currentScore` first exceeds `revengeTargetScore` (`currentScore == revengeTargetScore + 1`), pauses at the same round-clear boundary (`isVictoryDecisionVisible = true`, `hasShownVictoryDecisionThisTry = true`):
+     - **Title:** `"🏆 Target Beaten!"`
+     - **Body:** `"You beat [RIVAL]'s score of [T]! Lock this to unlock your Revenge share, or keep playing to set an even higher target?"`
+     - **Buttons:** **`[🔒 Lock & Exit]`** and **`[▶ Keep Playing]`**
+   - **If `[🔒 Lock & Exit]` is tapped:**
+     - Dismisses the overlay and transitions directly to `GameState.GAME_OVER` (`failedStepNumber = 0`, `failedExpectedPad = null`, `failedTappedPad = null`) with `currentScore` preserved so the standard Game Over screen appears with **`"Share Challenge"` UNLOCKED** (`currentScore > revengeTargetScore`).
+   - **If `[▶ Keep Playing]` is tapped:**
+     - Dismisses the overlay and continues the run into the next round without further interruptions.
+
+3. **Non-Trigger Conditions:**
+   - **Tie (`currentScore == targetScore`):** Never pauses; preserves the existing `"Clear this round to WIN!"` live banner flow.
+   - **Already Shown This Try (`hasShownVictoryDecisionThisTry == true`):** Never pauses again on `currentScore == targetScore + 2`, `targetScore + 3`, etc.
+   - **Standard Solo (`activeChallenge == null && !isRevengeRun`) & Multiplayer (`2P`/`3P`/`4P`):** Never triggers.
+
+### Visual Identity & Theme
+- **Aesthetic Direction:** High-contrast neon arcade dark card (`#1E293B` surface on `#0F172A` backdrop) with an **Emerald Victory** (`#00E676`) border glow matching the live milestone header.
+- **Component Styling & Accessibility:**
+  - `testTag = "victory_decision_dialog"` on the dialog card
+  - `testTag = "victory_decision_title"` and `testTag = "victory_decision_body"` on the header and body text
+  - `testTag = "victory_decision_lock_exit_button"` (`[🔒 Lock & Exit]`, minimum `48.dp` touch target)
+  - `testTag = "victory_decision_keep_playing_button"` (`[▶ Keep Playing]`, minimum `48.dp` touch target)
