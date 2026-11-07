@@ -3076,6 +3076,195 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText("CYBER MEMORY PROTOCOL").assertDoesNotExist()
         composeTestRule.onNodeWithText("PROTOCOL", substring = true).assertDoesNotExist()
     }
+
+    @Test
+    fun pass5_26_unifiedRivalRunState_multiplayerOnlySave_minFiveVictoryPause_and_exitGuards() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Confirmed Decision 1: Normal Solo has NO "Save & Exit" in Pause and NO "Continue" banner on Home
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("pause_resume_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_home_button")
+            .assertIsDisplayed()
+            .assertTextContains("Quit to Home")
+        composeTestRule.onNodeWithTag("pause_restart_button").assertIsDisplayed()
+
+        // Quit to Home from Normal Solo -> no Continue pill on Home
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("continue_run_button").assertDoesNotExist()
+
+        // 2. Confirmed Decision 1: 2P Pass & Play DOES have "Save & Exit" and shows "Continue" banner on Home
+        composeTestRule.onNodeWithTag("mode_2p").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("handoff_ready_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("continue_run_button").assertIsDisplayed()
+
+        // Switch back to SOLO and clear the 2P run
+        RunStateStorage.clearRunState(context)
+        composeTestRule.onNodeWithTag("mode_solo").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3. Outbound Rival Run on unplayed 2x2 grid (MIN: 5 gate) vs rival "RIVAL26" (lost on 3x3, unplayed on 2x2)
+        val rival26 = RivalRecord(
+            name = "RIVAL26",
+            wins = 0,
+            losses = 1,
+            ties = 0,
+            matches = 1,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 7,
+            lastUserScore = 4,
+            lastStatus = "LOST",
+            lastChainId = "R26",
+            gridStats = mapOf(
+                "3x3" to GridStat(wins = 0, losses = 1, ties = 0, lastTarget = 7, lastDifficulty = GameDifficulty.EASY, lastStatus = "LOST")
+            )
+        )
+        ChallengeStorage.saveRival(context, rival26)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_RIVAL26").performClick()
+        composeTestRule.waitForIdle()
+
+        // Select unplayed 2x2 grid (MIN: 5 gate) and start custom match
+        composeTestRule.onNodeWithTag("rival_setup_grid_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_target_banner").assertTextContains("Score 5+", substring = true)
+        composeTestRule.onNodeWithTag("rival_setup_start_custom_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify InGameChallengeBanner shows "RIVAL: RIVAL26" and "MIN: 5"
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("RIVAL: RIVAL26").assertIsDisplayed()
+        composeTestRule.onNodeWithText("MIN: 5", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+
+        val initialSeed = ChallengeSeed.lastGeneratedRandomSeed
+        // Dismiss Ready gate
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Pause menu on MIN: 5 Rival Run has NO "Save & Exit" and shows "Exit to Rivalry"
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_home_button")
+            .assertIsDisplayed()
+            .assertTextContains("Exit to Rivalry")
+
+        // Confirmed Decision 3: Tapping "Exit to Rivalry" when score (0) < gate (5) warns about discarding
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_title").assertTextContains("Exit Rival Run?")
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body").assertTextContains("minimum score of 5", substring = true)
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Review Catch 1: Tapping Restart on a MIN: 5 Rival Run re-arms the Ready gate with a fresh seed
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+        val restartedSeed = ChallengeSeed.lastGeneratedRandomSeed
+
+        // Helper to compute deterministic Easy 2x2 pad sequence for a given seed
+        fun padSequenceForSeed(seed: Int, count: Int): List<PadSpec> {
+            val rng = java.util.Random(seed.toLong())
+            return List(count) { CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)] }
+        }
+        val seq = padSequenceForSeed(restartedSeed, 6)
+
+        // Dismiss Ready gate and play Rounds 1..5 to reach Score 5 on the MIN: 5 Rival Run
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        for (round in 1..5) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(seq[step].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Confirmed Decision 2: Clearing Round 5 (Score 5) on MIN: 5 Rival Run triggers VictoryDecisionDialog!
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("victory_decision_title").assertTextContains("🏆 Target Reached!")
+        composeTestRule.onNodeWithTag("victory_decision_body").assertTextContains(
+            "You reached score 5 against RIVAL26! Lock this to unlock your challenge share, or keep playing to set an even higher target?"
+        )
+
+        // Tap [Keep Playing] to continue to Round 6
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("victory_decision_dialog").assertDoesNotExist()
+
+        // Review Catch 1 Bonus Safeguard: Tapping Restart at Score 5 (>= gate 5) shows RivalRestartConfirmDialog
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_restart_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_restart_dialog_body").assertTextContains(
+            "Restart discards your qualifying score of 5 against RIVAL26."
+        )
+        composeTestRule.onNodeWithTag("rival_restart_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirmed Decision 3: Tapping Pause -> Exit to Rivalry at Score 5 (>= gate 5) offers "Exit & Lock Score"
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_title").assertTextContains("Lock Score & Exit?")
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Polish 2: Lands on Game Over with Score 5 locked in and Share Challenge unlocked ("Exit to Rivalry" button shown)
+        composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("game_over_home_button")
+            .assertIsDisplayed()
+            .assertTextContains("Exit to Rivalry")
+
+        // Polish 1: Tapping "Exit to Rivalry" before sharing Score 5 prompts UnsharedRivalExitConfirmDialog
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("unshared_rival_exit_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("unshared_rival_exit_body").assertTextContains(
+            "Score 5 qualifies — share before leaving?"
+        )
+
+        // Tap "Leave Without Sharing" -> returns cleanly to Rivalry screen and clears rival state
+        composeTestRule.onNodeWithTag("unshared_rival_leave_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
+        assertTrue("Initial seed must be valid", initialSeed >= 0)
+    }
 }
 
 

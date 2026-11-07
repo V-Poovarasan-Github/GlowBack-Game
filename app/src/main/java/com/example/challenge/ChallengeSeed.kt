@@ -408,10 +408,16 @@ object ChallengeSeed {
         return List(length) { rng.nextInt(padCount) }
     }
 
+    @Volatile
+    var lastGeneratedRandomSeed: Int = 0
+        private set
+
     /**
      * Creates a new random 25-bit seed.
      */
     fun generateRandomSeed(): Int {
-        return (Math.random() * (MAX_SEED + 1)).toInt() and MAX_SEED
+        val generated = (Math.random() * (MAX_SEED + 1)).toInt() and MAX_SEED
+        lastGeneratedRandomSeed = generated
+        return generated
     }
 }
