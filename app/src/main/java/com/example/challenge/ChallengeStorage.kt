@@ -461,10 +461,15 @@ object ChallengeStorage {
                     for (k in keys) {
                         val sObj = gridObj.optJSONObject(k)
                         if (sObj != null) {
+                            val sDiffName = sObj.optString("lastDifficulty", "EASY")
+                            val sDiff = try { GameDifficulty.valueOf(sDiffName) } catch (_: Exception) { GameDifficulty.EASY }
                             parsedGridStats[k.lowercase()] = GridStat(
                                 wins = sObj.optInt("wins", 0),
                                 losses = sObj.optInt("losses", 0),
-                                ties = sObj.optInt("ties", 0)
+                                ties = sObj.optInt("ties", 0),
+                                lastTarget = sObj.optInt("lastTarget", 0),
+                                lastDifficulty = sDiff,
+                                lastStatus = sObj.optString("lastStatus", "")
                             )
                         }
                     }
@@ -510,6 +515,9 @@ object ChallengeStorage {
                     put("wins", stat.wins)
                     put("losses", stat.losses)
                     put("ties", stat.ties)
+                    put("lastTarget", stat.lastTarget)
+                    put("lastDifficulty", stat.lastDifficulty.name)
+                    put("lastStatus", stat.lastStatus)
                 }
                 gridObj.put(gridKey.lowercase(), sObj)
             }
@@ -797,17 +805,47 @@ object ChallengeStorage {
         gridSize: String,
         isWon: Boolean,
         isLoss: Boolean,
-        isTie: Boolean
+        isTie: Boolean,
+        rivalScoreOnThisGrid: Int = 0,
+        difficulty: GameDifficulty = GameDifficulty.EASY,
+        myStatusOnThisGrid: String = ""
     ): Map<String, GridStat> {
         val key = gridSize.trim().lowercase()
         val mutable = existingStats.toMutableMap()
         val prev = mutable[key] ?: GridStat()
+        val resolvedTarget = if (rivalScoreOnThisGrid > 0) rivalScoreOnThisGrid else prev.lastTarget
+        val resolvedDiff = if (rivalScoreOnThisGrid > 0) difficulty else prev.lastDifficulty
+        val resolvedStatus = if (myStatusOnThisGrid.isNotBlank()) myStatusOnThisGrid else prev.lastStatus
         mutable[key] = GridStat(
             wins = prev.wins + (if (isWon) 1 else 0),
             losses = prev.losses + (if (isLoss) 1 else 0),
-            ties = prev.ties + (if (isTie) 1 else 0)
+            ties = prev.ties + (if (isTie) 1 else 0),
+            lastTarget = resolvedTarget,
+            lastDifficulty = resolvedDiff,
+            lastStatus = resolvedStatus
         )
         return mutable
+    }
+
+    /**
+     * PASS 5.22:
+     * Resolves the rival's score, difficulty, and outcome status for a given grid tag (e.g. "2x2", "3x3", "5x4").
+     * Returns Triple(rivalScore, difficulty, status):
+     * - If matching rival.lastGrid and rival.lastTarget > 0, returns the most recent match info.
+     * - Else returns that specific grid's GridStat if present and has a recorded rival score.
+     * - Else returns Triple(0, GameDifficulty.EASY, "NEW").
+     */
+    fun getGridTargetInfo(rival: RivalRecord, gridTag: String): Triple<Int, GameDifficulty, String> {
+        val cleanTag = gridTag.trim().lowercase()
+        val cleanLast = rival.lastGrid.trim().lowercase()
+        if (cleanTag == cleanLast && rival.lastTarget > 0) {
+            return Triple(rival.lastTarget, rival.lastDifficulty, rival.lastStatus)
+        }
+        val stat = rival.gridStats[cleanTag]
+        if (stat != null && stat.lastTarget > 0) {
+            return Triple(stat.lastTarget, stat.lastDifficulty, stat.lastStatus)
+        }
+        return Triple(0, GameDifficulty.EASY, "NEW")
     }
 
     fun recordMatchOutcome(
@@ -849,7 +887,16 @@ object ChallengeStorage {
         val updatedLosses = (existing?.losses ?: 0) + (if (isLoss) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
-        val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLoss, isTie)
+        val updatedGridStats = updateGridStatsMap(
+            existingStats = existing?.gridStats ?: emptyMap(),
+            gridSize = gridSize,
+            isWon = isWon,
+            isLoss = isLoss,
+            isTie = isTie,
+            rivalScoreOnThisGrid = targetScore,
+            difficulty = difficulty,
+            myStatusOnThisGrid = status
+        )
         val resolvedChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
         val resolvedSeed = if (seed != 0) {
             seed
@@ -932,7 +979,16 @@ object ChallengeStorage {
         val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
         val updatedMatches = (existing?.matches ?: 0) + 1
-        val updatedGridStats = updateGridStatsMap(existing?.gridStats ?: emptyMap(), gridSize, isWon, isLost, isTie)
+        val updatedGridStats = updateGridStatsMap(
+            existingStats = existing?.gridStats ?: emptyMap(),
+            gridSize = gridSize,
+            isWon = isWon,
+            isLoss = isLost,
+            isTie = isTie,
+            rivalScoreOnThisGrid = responderScore,
+            difficulty = difficulty,
+            myStatusOnThisGrid = status
+        )
         val resolvedChain = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
 
         if (resolvedChain.isNotEmpty()) {

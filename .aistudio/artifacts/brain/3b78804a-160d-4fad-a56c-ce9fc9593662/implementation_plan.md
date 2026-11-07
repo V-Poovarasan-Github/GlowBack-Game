@@ -1,63 +1,105 @@
-# PASS 5.21 — Victory Decision Pause ("You won! Exit or continue?")
+# Implementation Plan - PASS 5.22: Rival Match Variation Selector & Per-Grid Target Tracking (Approved)
 
-Pauses active asynchronous challenges and Revenge / Tie-Breaker runs **once per try** at the exact round-clear moment when `currentScore` first exceeds `targetScore` (or `revengeTargetScore`), allowing the player to either immediately lock in their winning score or continue pushing higher without interruption.
-
----
-
-## User Review & Critical Decisions
-
-- **Confirmed Decision 1 — Implement PASS 5.21 Victory Decision Pause:** Pause after the round-clear celebration arpeggio when `currentScore` first exceeds `targetScore` (inbound challenge) or `revengeTargetScore` (Revenge / Tie-Breaker run), showing the **Victory Decision** overlay once per try.
-- **Confirmed Decision 2 — Inbound Challenge `[🔒 Lock & Exit]` Destination:** Tapping `[🔒 Lock & Exit]` on an inbound challenge immediately finalizes the match as **`WON`** with `effectiveBest = maxOf(currentScore, ch.bestScore)`, marks the challenge code consumed, generates the unsent R-code (`isReplySent = false`), clears `IN_PROGRESS` storage, and navigates directly to **Leaderboard $\rightarrow$ Rivalry** where `"Send Reply"` is ready.
-- **Confirmed Micro-Caution — `effectiveBest` in Body Copy:** In `VictoryDecisionDialog` body copy, display `effectiveBest = maxOf(currentScore, ch.bestScore)` as `[N]` (not raw `currentScore`) so the copy stays accurate even in the resume edge case where a prior try's `bestScore` already exceeded the target.
-
----
-
-## 1. Overview & Core Concept
-
-- **What It Does:** Eliminates the need for players to intentionally miss a pad or race to hit Pause during the next sequence after beating a rival's target. The moment they clear the winning round (`currentScore == targetScore + 1`), the round-clear celebration plays, the next round's sequence is prepared, and the sequence playback pauses behind a celebratory **Victory Decision** overlay.
-- **Target Audience / Persona:** Players competing in asynchronous T-code challenges or Revenge / Tie-Breaker rallies who want either an immediate, frictionless victory lock-in or an uninterrupted high-score push.
-- **Key Value:** Gives players explicit control at the moment of victory while keeping normal Solo, 2P, 3P, and 4P modes completely untouched.
+## Approved Decisions & User Fixes
+1. **Easy & Hard Only:** Glowback uses only `GameDifficulty.EASY` ('E') and `GameDifficulty.HARD` ('H'). No Medium exists.
+2. **Precise `GridStat.lastTarget` Definition:**
+   - `lastTarget` strictly represents the **rival's last score on this grid from my perspective**:
+     - In `recordMatchOutcome` (responder playing rival's T-code): rival's score is incoming `targetScore`.
+     - In `recordReplyOutcome` (originator receiving rival's R-code): rival's score is incoming `responderScore` (NOT my original target).
+   - `lastStatus` represents **my outcome** on that grid (`"WON"`, `"LOST"`, `"TIED"`).
+3. **Chain & Gate-Type Plumbing:**
+   - Always preserves `rival.lastChainId` so all matches continue to stack on the same rival card.
+   - Gate type:
+     - For grids with previous **LOST** or **TIED** status (`targetScore > 0`): `isRevengeRun = true`, `revengeTargetScore = targetScore` (BEAT_SCORE gate: must exceed rival's score to unlock Revenge share; banner shows `BEAT: X`).
+     - For grids with previous **WON** status or unplayed grids: `isRevengeRun = false`, `revengeTargetScore = 0` (MIN_FIVE gate: score ≥ 5 unlocks challenge share; banner shows `MIN: 5` or standard banner).
 
 ---
 
-## 2. User Experience & Visual Design
+## Technical Implementation
 
-### Key User Flows
+### 1. `ChallengeModels.kt`
+- Update `GridStat`:
+  ```kotlin
+  data class GridStat(
+      val wins: Int = 0,
+      val losses: Int = 0,
+      val ties: Int = 0,
+      val lastTarget: Int = 0,                                   // Rival's last score on this grid
+      val lastDifficulty: GameDifficulty = GameDifficulty.EASY,  // EASY or HARD only
+      val lastStatus: String = ""                                // "WON", "LOST", "TIED"
+  )
+  ```
 
-1. **Inbound Challenge — First Time Beating Target (`currentScore == targetScore + 1`):**
-   - Player taps the final pad of Round `T + 1`, bringing `currentScore` to `T + 1` (`> targetScore`).
-   - `bestScore` updates immediately (`ch.bestScore = maxOf(currentScore, ch.bestScore)`) and is checkpointed to `SharedPreferences` via `saveInProgressChallenge`.
-   - The round-clear arpeggio and emerald confetti flash play as usual.
-   - Instead of immediately flashing Round `T + 2`, the game pauses (`isVictoryDecisionVisible = true`, `hasShownVictoryDecisionThisTry = true`) and presents the **Victory Decision** dialog:
-     - **Title:** `"🏆 Target Beaten!"`
-     - **Body:** `"You beat [RIVAL]'s target of [T] with score [N]! Lock this as your winning result, or keep playing to set an even higher score?"` where `[N] = effectiveBest = maxOf(currentScore, ch.bestScore)`.
-     - **Buttons:** **`[🔒 Lock & Exit]`** and **`[▶ Keep Playing]`**
-   - **If `[🔒 Lock & Exit]` is tapped:**
-     - Finalizes the match as **`WON`** using `effectiveBest = maxOf(currentScore, ch.bestScore)`, marks the code consumed, generates the unsent R-code (`isReplySent = false`), clears `IN_PROGRESS` state, and navigates to **Leaderboard $\rightarrow$ Rivalry**.
-   - **If `[▶ Keep Playing]` is tapped:**
-     - Dismisses the overlay (`isVictoryDecisionVisible = false`) and immediately triggers the `WATCHING` playback coroutine for the next round (`roundTrigger++`).
-     - Does **not** pause again on subsequent rounds (`T + 2`, `T + 3`, etc.) during this try.
-     - If the player later misses a pad, the standard miss handler records **`WON`** with `bestScore`. If they later open Pause / Exit mid-round, the existing PASS 5.20 Scenario B `"Lock Score & Exit?"` dialog applies.
+### 2. `ChallengeStorage.kt`
+- Update `updateGridStatsMap`:
+  ```kotlin
+  private fun updateGridStatsMap(
+      existingStats: Map<String, GridStat>,
+      gridSize: String,
+      isWon: Boolean,
+      isLoss: Boolean,
+      isTie: Boolean,
+      rivalScoreOnThisGrid: Int,
+      difficulty: GameDifficulty,
+      myStatusOnThisGrid: String
+  ): Map<String, GridStat>
+  ```
+- In `recordMatchOutcome`:
+  - Pass `rivalScoreOnThisGrid = targetScore` (the sender's score).
+  - Pass `myStatusOnThisGrid = status`.
+- In `recordReplyOutcome`:
+  - Pass `rivalScoreOnThisGrid = responderScore` (the rival's score).
+  - Pass `myStatusOnThisGrid = status`.
+- In JSON serialization and deserialization:
+  - Serialize `lastTarget`, `lastDifficulty.name`, `lastStatus`.
+  - Deserialization with fallback (`optInt("lastTarget", 0)`, `optString("lastDifficulty", "EASY")`, `optString("lastStatus", "")`).
+- Add helper `getGridTargetInfo(rival: RivalRecord, gridTag: String): Triple<Int, GameDifficulty, String>`:
+  - Returns `(rivalScore, difficulty, status)`.
+  - If `gridTag.equals(rival.lastGrid, ignoreCase = true)`, returns `(rival.lastTarget, rival.lastDifficulty, rival.lastStatus)`.
+  - Else checks `rival.gridStats[gridTag.lowercase()]`.
+  - If not found or empty, returns `(0, GameDifficulty.EASY, "NEW")`.
 
-2. **Revenge / Tie-Breaker Run (`isRevengeRun == true && revengeTargetScore > 0`):**
-   - When `currentScore` first exceeds `revengeTargetScore` (`currentScore == revengeTargetScore + 1`), pauses at the same round-clear boundary (`isVictoryDecisionVisible = true`, `hasShownVictoryDecisionThisTry = true`):
-     - **Title:** `"🏆 Target Beaten!"`
-     - **Body:** `"You beat [RIVAL]'s score of [T]! Lock this to unlock your Revenge share, or keep playing to set an even higher target?"`
-     - **Buttons:** **`[🔒 Lock & Exit]`** and **`[▶ Keep Playing]`**
-   - **If `[🔒 Lock & Exit]` is tapped:**
-     - Dismisses the overlay and transitions directly to `GameState.GAME_OVER` (`failedStepNumber = 0`, `failedExpectedPad = null`, `failedTappedPad = null`) with `currentScore` preserved so the standard Game Over screen appears with **`"Share Challenge"` UNLOCKED** (`currentScore > revengeTargetScore`).
-   - **If `[▶ Keep Playing]` is tapped:**
-     - Dismisses the overlay and continues the run into the next round without further interruptions.
+### 3. `ChallengeUI.kt`
+- Build `RivalMatchSetupDialog`:
+  - Title:
+    - `"⚡ Revenge Setup: ${rival.name}"` (if `rival.lastStatus == "LOST"`)
+    - `"🤝 Tie-Breaker Setup: ${rival.name}"` (if `rival.lastStatus == "TIED"`)
+    - `"👑 Challenge Setup: ${rival.name}"` (if `rival.lastStatus == "WON"`)
+  - **Quick Action ("Continue Last Mode"):**
+    - Card displaying: `${rival.lastGrid.uppercase()} • ${if (rival.lastDifficulty == GameDifficulty.HARD) "Hard" else "Easy"} • Classic`
+    - Target label:
+      - If `rival.lastStatus == "LOST"` or `"TIED"`: `"Target: Beat ${rival.lastTarget}"`
+      - Else: `"Target: Score 5+"`
+    - Button: `[▶ Continue ${rival.lastGrid.uppercase()}]` (`testTag = "rival_setup_continue_last_button"`).
+  - **Custom Action ("Choose Variation"):**
+    - Grid chips: `2×2`, `3×3`, `4×4`, `5×4` (`testTag = "rival_setup_grid_..."`).
+    - Difficulty chips: `Easy` and `Hard` ONLY (`testTag = "rival_setup_diff_easy"`, `"rival_setup_diff_hard"`).
+    - Dynamic Target Banner (`testTag = "rival_setup_target_banner"`):
+      - If selected grid has a prior loss/tie: `"⚡ Revenge Mode: Beat ${rival.name}'s previous score of ${target} to share"`
+      - If selected grid has a prior win: `"👑 Challenge Mode: Score 5+ to send challenge"`
+      - If selected grid is unplayed: `"⚔️ First match on this grid: Score 5+ to send challenge"`
+    - Button: `[Start Match]` (`testTag = "rival_setup_start_custom_button"`).
+  - **Pace Mode:** Displays `"Pace: Classic (Async Standard)"` (no picker, locked to Classic).
+  - Test tags on all interactive elements.
 
-3. **Non-Trigger Conditions:**
-   - **Tie (`currentScore == targetScore`):** Never pauses; preserves the existing `"Clear this round to WIN!"` live banner flow.
-   - **Already Shown This Try (`hasShownVictoryDecisionThisTry == true`):** Never pauses again on `currentScore == targetScore + 2`, `targetScore + 3`, etc.
-   - **Standard Solo (`activeChallenge == null && !isRevengeRun`) & Multiplayer (`2P`/`3P`/`4P`):** Never triggers.
+### 4. `MainActivity.kt`
+- Add `var rivalForMatchSetup by remember { mutableStateOf<RivalRecord?>(null) }`.
+- When clicking `onDynamicAction` in `RivalCard`:
+  - If `rival.lastStatus == "IN_PROGRESS"`, call `onStartRevenge(rival)` directly (resumes active run).
+  - If `rival.lastStatus != "IN_PROGRESS"`, open setup dialog: `rivalForMatchSetup = rival`.
+- In `startRevengeGame(rival: RivalRecord, targetGrid: GridSize, targetDifficulty: GameDifficulty)`:
+  - Preserve `currentRivalChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }`.
+  - Preserve `currentRivalNameForShare = rival.name`.
+  - Retrieve target and status for `targetGrid.tag` via `ChallengeStorage.getGridTargetInfo(rival, targetGrid.tag)`.
+  - If `(status == "LOST" || status == "TIED") && targetScore > 0`:
+    - `isRevengeRun = true`, `revengeTargetScore = targetScore` (BEAT_SCORE gate).
+  - Else:
+    - `isRevengeRun = false`, `revengeTargetScore = 0` (MIN_FIVE gate).
+  - Set `gridSize = targetGrid`, `difficultyMode = targetDifficulty`, `paceMode = PaceMode.CLASSIC`.
+  - Update banner display if `isRevengeRun` (shows `BEAT: ${revengeTargetScore}`) vs non-revenge (shows `MIN: 5`).
 
-### Visual Identity & Theme
-- **Aesthetic Direction:** High-contrast neon arcade dark card (`#1E293B` surface on `#0F172A` backdrop) with an **Emerald Victory** (`#00E676`) border glow matching the live milestone header.
-- **Component Styling & Accessibility:**
-  - `testTag = "victory_decision_dialog"` on the dialog card
-  - `testTag = "victory_decision_title"` and `testTag = "victory_decision_body"` on the header and body text
-  - `testTag = "victory_decision_lock_exit_button"` (`[🔒 Lock & Exit]`, minimum `48.dp` touch target)
-  - `testTag = "victory_decision_keep_playing_button"` (`[▶ Keep Playing]`, minimum `48.dp` touch target)
+### 5. `ExampleRobolectricTest.kt`
+- Add test `pass5_22_rivalMatchVariationSelector_and_perGridTargets()`:
+  - Tests quick continue vs custom variation.
+  - Verifies Easy/Hard chips (no Medium).
+  - Verifies per-grid target scores and gate-type behavior.

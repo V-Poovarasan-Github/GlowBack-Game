@@ -270,19 +270,28 @@ fun InGameChallengeBanner(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
-                    Text(
-                        text = "  •  TARGET: $targetScore",
-                        color = Color(0xFFFFD600),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    val triesDisplay = if (maxTries == 0) "Unlimited" else "$triesLeft"
-                    Text(
-                        text = "  •  TRIES: $triesDisplay",
-                        color = if (maxTries == 0 || triesLeft > 1) Color(0xFF00E676) else Color(0xFFFF5252),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (targetScore > 0) {
+                        Text(
+                            text = "  •  TARGET: $targetScore",
+                            color = Color(0xFFFFD600),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        val triesDisplay = if (maxTries == 0) "Unlimited" else "$triesLeft"
+                        Text(
+                            text = "  •  TRIES: $triesDisplay",
+                            color = if (maxTries == 0 || triesLeft > 1) Color(0xFF00E676) else Color(0xFFFF5252),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Text(
+                            text = "  •  MIN: 5",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -2405,6 +2414,313 @@ fun ChallengerNameSetupCardContent(
 }
 
 /**
+ * PASS 5.22:
+ * Match Setup Dialog when initiating a match against a Rival (Revenge, Tie-Breaker, or Send Challenge).
+ * Offers:
+ * 1. [Continue Last Mode]: Quick launch with the exact grid and difficulty from the last match.
+ * 2. [Choose Variation]: Interactive selector for Grid (2x2, 3x3, 4x4, 5x4) and Difficulty (Easy, Hard only),
+ *    with dynamic per-grid target score banner (Revenge gate vs Min 5 gate).
+ */
+@Composable
+fun RivalMatchSetupDialog(
+    rival: RivalRecord,
+    onDismiss: () -> Unit,
+    onLaunch: (gridTag: String, difficulty: GameDifficulty) -> Unit
+) {
+    var selectedGridTag by remember { mutableStateOf(rival.lastGrid.lowercase()) }
+    var selectedDifficulty by remember { mutableStateOf(rival.lastDifficulty) }
+
+    val accentColor = when (rival.lastStatus) {
+        "LOST" -> Color(0xFFFF0055)
+        "TIED" -> Color(0xFFFFD600)
+        else -> Color(0xFF00E5FF)
+    }
+
+    val dialogTitle = when (rival.lastStatus) {
+        "LOST" -> "⚡ Revenge Setup: ${rival.name}"
+        "TIED" -> "🤝 Tie-Breaker: ${rival.name}"
+        else -> "👑 Challenge: ${rival.name}"
+    }
+
+    val grids = listOf("2x2" to "2×2", "3x3" to "3×3", "4x4" to "4×4", "5x4" to "5×4")
+    val difficulties = listOf(GameDifficulty.EASY to "Easy", GameDifficulty.HARD to "Hard")
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .border(1.5.dp, accentColor, RoundedCornerShape(20.dp))
+                .testTag("rival_match_setup_dialog"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header with close button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = dialogTitle,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.weight(1f).testTag("rival_setup_dialog_title")
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(28.dp).testTag("rival_setup_close_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
+                    }
+                }
+
+                // Section 1: Quick Continue Last Mode
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rival_setup_last_mode_card"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    border = BorderStroke(1.dp, Color(0xFF334155))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "LAST BATTLE MODE",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "${rival.lastGrid.uppercase()} • ${if (rival.lastDifficulty == GameDifficulty.HARD) "Hard" else "Easy"} • Classic",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        val lastTargetText = if ((rival.lastStatus == "LOST" || rival.lastStatus == "TIED") && rival.lastTarget > 0) {
+                            "Target: Beat rival's score of ${rival.lastTarget}"
+                        } else {
+                            "Target: Score 5+ to send challenge"
+                        }
+                        Text(
+                            text = lastTargetText,
+                            color = if (rival.lastStatus == "LOST") Color(0xFFFF5252) else if (rival.lastStatus == "TIED") Color(0xFFFFD600) else Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Button(
+                            onClick = { onLaunch(rival.lastGrid, rival.lastDifficulty) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 40.dp)
+                                .testTag("rival_setup_continue_last_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = if (rival.lastStatus == "LOST") Color.White else Color.Black
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Play ${rival.lastGrid.uppercase()} (${if (rival.lastDifficulty == GameDifficulty.HARD) "Hard" else "Easy"})",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+
+                // Divider: OR CHOOSE VARIATION
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                    Text(
+                        text = "  OR CHOOSE VARIATION  ",
+                        color = Color(0xFF64748B),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                }
+
+                // Grid Size Selector
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "GRID SIZE",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        grids.forEach { (tag, label) ->
+                            val isSelected = selectedGridTag.equals(tag, ignoreCase = true)
+                            Button(
+                                onClick = { selectedGridTag = tag },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 36.dp)
+                                    .testTag("rival_setup_grid_$tag"),
+                                shape = RoundedCornerShape(8.dp),
+                                border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF334155)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF1E293B),
+                                    contentColor = if (isSelected) Color.Black else Color.White
+                                ),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(label, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+
+                // Difficulty Selector (Easy & Hard only - NO Medium)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "DIFFICULTY",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        difficulties.forEach { (diff, label) ->
+                            val isSelected = selectedDifficulty == diff
+                            Button(
+                                onClick = { selectedDifficulty = diff },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 36.dp)
+                                    .testTag("rival_setup_diff_${diff.name.lowercase()}"),
+                                shape = RoundedCornerShape(8.dp),
+                                border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF334155)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) Color(0xFF38BDF8) else Color(0xFF1E293B),
+                                    contentColor = if (isSelected) Color.Black else Color.White
+                                ),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(label, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+
+                // Dynamic Target Banner for chosen grid
+                val (gridTarget, _, gridStatus) = ChallengeStorage.getGridTargetInfo(rival, selectedGridTag)
+                val isRevengeGrid = (gridStatus == "LOST" || gridStatus == "TIED") && gridTarget > 0
+                val (bannerBg, bannerBorder, bannerText) = when {
+                    isRevengeGrid -> Triple(
+                        Color(0xFFFF0055).copy(alpha = 0.15f),
+                        Color(0xFFFF0055),
+                        "⚡ Revenge Mode: Beat ${rival.name}'s previous score of $gridTarget to share"
+                    )
+                    gridStatus == "WON" -> Triple(
+                        Color(0xFF00E676).copy(alpha = 0.15f),
+                        Color(0xFF00E676),
+                        "👑 Challenge Mode: Score 5+ to send challenge"
+                    )
+                    else -> Triple(
+                        Color(0xFF00E5FF).copy(alpha = 0.15f),
+                        Color(0xFF00E5FF),
+                        "⚔️ First duel on this grid: Score 5+ to send challenge"
+                    )
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {}
+                        .testTag("rival_setup_target_banner"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = bannerBg,
+                    border = BorderStroke(1.dp, bannerBorder)
+                ) {
+                    Text(
+                        text = bannerText,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
+
+                // Action Buttons
+                Button(
+                    onClick = { onLaunch(selectedGridTag, selectedDifficulty) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .testTag("rival_setup_start_custom_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color.Black
+                    )
+                ) {
+                    Text(
+                        text = "Start Match",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp)
+                        .testTag("rival_setup_cancel_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8)),
+                    border = BorderStroke(1.dp, Color(0xFF334155))
+                ) {
+                    Text("Cancel", fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
  * Full LEADERBOARD Screen containing:
  * - Tab 1: [ ⚔️ RIVALRY ]
  * - Tab 2: [ 🏆 RECORDS ]
@@ -2413,6 +2729,7 @@ fun ChallengerNameSetupCardContent(
 fun HallOfFameScreen(
     onNavigateBack: () -> Unit,
     onStartRevenge: (RivalRecord) -> Unit,
+    onStartRevengeWithSettings: (RivalRecord, String, GameDifficulty) -> Unit = { rival, _, _ -> onStartRevenge(rival) },
     onPlayAwaiting: (AwaitingChallenge) -> Unit,
     onShareCodeClicked: () -> Unit,
     onPasteCodeClicked: () -> Unit,
@@ -2427,10 +2744,23 @@ fun HallOfFameScreen(
     var rivals by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadRivals(context)) }
     var awaitingChallenges by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadAwaitingChallenges(context)) }
     var rivalForPasteCode by remember { mutableStateOf<RivalRecord?>(null) }
+    var rivalForSetup by remember { mutableStateOf<RivalRecord?>(null) }
 
     fun refreshData() {
         rivals = ChallengeStorage.loadRivals(context)
         awaitingChallenges = ChallengeStorage.loadAwaitingChallenges(context)
+    }
+
+    if (rivalForSetup != null) {
+        RivalMatchSetupDialog(
+            rival = rivalForSetup!!,
+            onDismiss = { rivalForSetup = null },
+            onLaunch = { selectedGridTag, selectedDifficulty ->
+                val r = rivalForSetup!!
+                rivalForSetup = null
+                onStartRevengeWithSettings(r, selectedGridTag, selectedDifficulty)
+            }
+        )
     }
 
     if (rivalForPasteCode != null) {
@@ -2519,7 +2849,13 @@ fun HallOfFameScreen(
                 RivalryTabContent(
                     rivals = rivals,
                     awaitingChallenges = awaitingChallenges,
-                    onGetRevenge = onStartRevenge,
+                    onGetRevenge = { rival ->
+                        if (rival.lastStatus == "IN_PROGRESS") {
+                            onStartRevenge(rival)
+                        } else {
+                            rivalForSetup = rival
+                        }
+                    },
                     onPasteNewCode = { rival -> rivalForPasteCode = rival },
                     onDeleteRival = { rival ->
                         ChallengeStorage.deleteRival(context, rival.name)

@@ -67,7 +67,10 @@ data class ParsedChallenge(
 data class GridStat(
     val wins: Int = 0,
     val losses: Int = 0,
-    val ties: Int = 0
+    val ties: Int = 0,
+    val lastTarget: Int = 0,                                   // Rival's last score on this grid from my perspective
+    val lastDifficulty: GameDifficulty = GameDifficulty.EASY,  // EASY or HARD only
+    val lastStatus: String = ""                                // "WON", "LOST", "TIED"
 )
 
 /**

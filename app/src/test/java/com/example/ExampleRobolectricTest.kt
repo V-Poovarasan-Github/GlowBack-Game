@@ -5,10 +5,13 @@ import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeStorage
 import com.example.challenge.GameDifficulty
+import com.example.challenge.GridStat
+import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
 import com.example.notification.NotificationContentProvider
 import com.example.notification.NotificationScheduler
+import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -1904,6 +1907,9 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_VIKRAM").performClick()
         composeTestRule.waitForIdle()
+        // PASS 5.22: Tapping Get Revenge opens RivalMatchSetupDialog -> tap Continue Last Mode
+        composeTestRule.onNodeWithTag("rival_setup_continue_last_button").performClick()
+        composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
         composeTestRule.onNodeWithText("⚡ REVENGE vs VIKRAM").assertIsDisplayed()
@@ -2944,6 +2950,131 @@ class ExampleRobolectricTest {
         assertEquals("Lock & Exit must finalize with effectiveBest (4)", 4, lockedRecord.lastUserScore)
         assertFalse("Lock & Exit must generate unsent R-code (isReplySent = false)", lockedRecord.isReplySent)
         assertTrue(lockedRecord.lastReplyCode.uppercase().contains("2X2-4-R3E-"))
+    }
+
+    @Test
+    fun pass5_22_rivalMatchVariationSelector_and_perGridTargets() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Create a RivalRecord for "HERO_DUEL" with matches across multiple grids:
+        // - 3x3: Last match was LOST, targetScore = 6 (lastGrid = "3x3", lastTarget = 6, lastStatus = "LOST", lastDifficulty = EASY)
+        // - 2x2: Previous match was WON (gridStats["2x2"] = GridStat(wins = 1, losses = 0, lastTarget = 4, lastStatus = "WON"))
+        // - 5x4: Previous match was LOST with target 9 (gridStats["5x4"] = GridStat(wins = 0, losses = 1, lastTarget = 9, lastStatus = "LOST"))
+        // - 4x4: Unplayed (no entry in gridStats)
+        val initialHeroDuel = RivalRecord(
+            name = "HERO_DUEL",
+            wins = 1,
+            losses = 2,
+            ties = 0,
+            matches = 3,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 6,
+            lastUserScore = 5,
+            lastStatus = "LOST",
+            lastChainId = "HRO",
+            gridStats = mapOf(
+                "3x3" to GridStat(wins = 0, losses = 1, ties = 0, lastTarget = 6, lastDifficulty = GameDifficulty.EASY, lastStatus = "LOST"),
+                "2x2" to GridStat(wins = 1, losses = 0, ties = 0, lastTarget = 4, lastDifficulty = GameDifficulty.EASY, lastStatus = "WON"),
+                "5x4" to GridStat(wins = 0, losses = 1, ties = 0, lastTarget = 9, lastDifficulty = GameDifficulty.HARD, lastStatus = "LOST")
+            )
+        )
+        ChallengeStorage.saveRival(context, initialHeroDuel)
+
+        // Navigate to Rivalry tab
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify the dynamic action button on HERO_DUEL's card says "⚡ Get Revenge"
+        composeTestRule.onNodeWithTag("rival_dynamic_button_HERO_DUEL").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_HERO_DUEL").assertTextContains("⚡ Get Revenge")
+
+        // 2. Click "⚡ Get Revenge" -> opens RivalMatchSetupDialog
+        composeTestRule.onNodeWithTag("rival_dynamic_button_HERO_DUEL").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_dialog_title").assertTextContains("HERO_DUEL", substring = true)
+
+        // Check Continue Last Mode Card
+        composeTestRule.onNodeWithTag("rival_setup_continue_last_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_continue_last_button").assertTextContains("3X3", substring = true)
+
+        // 3. Check Variation Selectors:
+        // Ensure Easy and Hard exist, and MEDIUM does NOT exist (Catch 1)
+        composeTestRule.onNodeWithTag("rival_setup_diff_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_diff_hard").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_diff_medium").assertDoesNotExist()
+
+        // Default grid is 3x3 (loss, target 6)
+        composeTestRule.onNodeWithTag("rival_setup_target_banner").assertTextContains("score of 6", substring = true)
+
+        // Switch grid to 5x4 (prior loss with target 9)
+        composeTestRule.onNodeWithTag("rival_setup_grid_5x4").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_target_banner").assertTextContains("score of 9", substring = true)
+
+        // Switch grid to 2x2 (prior win)
+        composeTestRule.onNodeWithTag("rival_setup_grid_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_target_banner").assertTextContains("Score 5+", substring = true)
+
+        // Switch grid to 4x4 (unplayed)
+        composeTestRule.onNodeWithTag("rival_setup_grid_4x4").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_target_banner").assertTextContains("Score 5+", substring = true)
+
+        // 4. Test Custom Match Launch on 5x4 Hard:
+        composeTestRule.onNodeWithTag("rival_setup_grid_5x4").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_diff_hard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_start_custom_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dialog closes, game starts on 5x4 grid with Ready gate
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+
+        // Banner shows "⚡ REVENGE vs HERO_DUEL • BEAT: 9" and grid "5×4"
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("⚡ REVENGE vs HERO_DUEL").assertIsDisplayed()
+        composeTestRule.onNodeWithText("BEAT: 9", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("active_challenge_grid_pace_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("active_challenge_grid_pace_pill").assertTextContains("CLASSIC", substring = true)
+        composeTestRule.onNodeWithTag("active_challenge_grid_pace_pill").assertTextContains("5", substring = true)
+    }
+
+    @Test
+    fun pass5_23_customNeonSplashScreen_visualsAndStructure() {
+        composeTestRule.activity.runOnUiThread {
+            composeTestRule.activity.setContent {
+                SplashScreen()
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // 1. Verify root splash screen container is displayed
+        composeTestRule.onNodeWithTag("splash_screen").assertExists()
+
+        // 2. Verify authentic app icon container is present
+        composeTestRule.onNodeWithContentDescription("Glowback App Icon").assertExists()
+
+        // 3. Verify ripple canvas is present
+        composeTestRule.onNodeWithTag("splash_ripples").assertExists()
+
+        // 4. Verify title section and "GLOWBACK" title
+        composeTestRule.onNodeWithTag("splash_title").assertExists()
+        composeTestRule.onNodeWithText("GLOWBACK").assertExists()
+
+        // 5. CRITICAL: Ensure NO subtitle exists
+        composeTestRule.onNodeWithText("CYBER MEMORY PROTOCOL").assertDoesNotExist()
+        composeTestRule.onNodeWithText("PROTOCOL", substring = true).assertDoesNotExist()
     }
 }
 

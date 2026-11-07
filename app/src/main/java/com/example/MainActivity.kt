@@ -594,13 +594,41 @@ class MainActivity : ComponentActivity() {
         NotificationScheduler.createNotificationChannel(this)
 
         enableEdgeToEdge()
+        val isTestEnv = try {
+            Class.forName("org.robolectric.Robolectric") != null
+        } catch (_: Throwable) {
+            false
+        }
+
         setContent {
+            var showSplash by remember { mutableStateOf(!isTestEnv && !skipSplashForTesting) }
+
+            if (showSplash) {
+                LaunchedEffect(Unit) {
+                    delay(1200)
+                    showSplash = false
+                }
+            }
+
             MaterialTheme(colorScheme = GlowDarkColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    GlowbackGameScreen(launchCount = launchCount)
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        GlowbackGameScreen(launchCount = launchCount)
+                        AnimatedVisibility(
+                            visible = showSplash,
+                            enter = EnterTransition.None,
+                            exit = fadeOut(animationSpec = tween(300))
+                        ) {
+                            SplashScreen()
+                        }
+                    }
                 }
             }
         }
+    }
+
+    companion object {
+        var skipSplashForTesting: Boolean = false
     }
 
     override fun onResume() {
@@ -1365,29 +1393,43 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         saveActiveRun()
     }
 
-    fun startRevengeGame(rival: RivalRecord) {
-        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3 + PASS 5.19 Stage B #2:
-        // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rival.lastTarget; must beat rival.lastTarget to share).
-        // - "👑 Send Challenge" (WON): Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
+    fun startRevengeGame(
+        rival: RivalRecord,
+        targetGrid: GridSize? = null,
+        targetDifficulty: GameDifficulty? = null
+    ) {
+        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3 + PASS 5.19 Stage B #2 + PASS 5.22:
+        // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rivalScoreOnGrid; must beat target to share).
+        // - "👑 Send Challenge" (WON) / unplayed grid: Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
         // - Preserve rival.lastChainId in currentRivalChainId so all rally matches stack on the same Rival Card.
         // - Force Classic pace for all revenge runs.
         resetRunState()
-        val targetGrid = when (rival.lastGrid.lowercase()) {
+        val resolvedGrid = targetGrid ?: when (rival.lastGrid.lowercase()) {
             "3x3" -> GridSize.THREE_BY_THREE
             "4x4" -> GridSize.FOUR_BY_FOUR
             "5x4" -> GridSize.FIVE_BY_FOUR
             else -> GridSize.TWO_BY_TWO
         }
-        gridSize = targetGrid
-        difficultyMode = rival.lastDifficulty
+        val resolvedDifficulty = targetDifficulty ?: rival.lastDifficulty
+        gridSize = resolvedGrid
+        difficultyMode = resolvedDifficulty
         paceMode = PaceMode.CLASSIC
         activeChallenge = null
         challengeRng = null
         currentRivalNameForShare = rival.name
         currentRivalChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }
-        val needsRevengeGate = rival.lastStatus == "LOST" || rival.lastStatus == "TIED"
+
+        val gridTag = when (resolvedGrid) {
+            GridSize.THREE_BY_THREE -> "3x3"
+            GridSize.FOUR_BY_FOUR -> "4x4"
+            GridSize.FIVE_BY_FOUR -> "5x4"
+            else -> "2x2"
+        }
+        val (gridRivalScore, _, gridStatus) = ChallengeStorage.getGridTargetInfo(rival, gridTag)
+        val needsRevengeGate = (gridStatus == "LOST" || gridStatus == "TIED") && gridRivalScore > 0
         isRevengeRun = needsRevengeGate
-        revengeTargetScore = if (needsRevengeGate) rival.lastTarget else 0
+        revengeTargetScore = if (needsRevengeGate) gridRivalScore else 0
+
         isChallengeWon = false
         isChallengeTied = false
         isChallengeLost = false
@@ -1399,7 +1441,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         currentRunSeed = seed
         val rng = java.util.Random(seed.toLong())
         soloRng = rng
-        val pads = padsForGridSize(targetGrid)
+        val pads = padsForGridSize(resolvedGrid)
         sequence.add(pads[rng.nextInt(pads.size)])
         isChallengeReadyGateVisible = true
         roundTrigger++
@@ -2023,6 +2065,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         startRevengeGame(rival)
                     }
                 },
+                onStartRevengeWithSettings = { rival, chosenGridTag, chosenDifficulty ->
+                    currentScreen = AppScreen.HOME
+                    val inProgress = ChallengeStorage.getInProgressChallengeForRival(context, rival)
+                    if (inProgress != null) {
+                        startChallenge(inProgress)
+                    } else {
+                        val targetGrid = when (chosenGridTag.lowercase()) {
+                            "3x3" -> GridSize.THREE_BY_THREE
+                            "4x4" -> GridSize.FOUR_BY_FOUR
+                            "5x4" -> GridSize.FIVE_BY_FOUR
+                            else -> GridSize.TWO_BY_TWO
+                        }
+                        startRevengeGame(rival, targetGrid, chosenDifficulty)
+                    }
+                },
                 onPlayAwaiting = { _ ->
                     currentScreen = AppScreen.HOME
                 },
@@ -2085,14 +2142,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                     difficulty = difficultyMode,
                                     showSecondRow = true
                                 )
-                            } else if (isRevengeRun && !currentRivalNameForShare.isNullOrBlank()) {
+                            } else if (!currentRivalNameForShare.isNullOrBlank()) {
                                 InGameChallengeBanner(
                                     rivalName = currentRivalNameForShare!!,
                                     targetScore = revengeTargetScore,
                                     triesLeft = 1,
-                                    isRevenge = true,
+                                    isRevenge = isRevengeRun,
                                     maxTries = 0,
-                                    isRevengeRunMode = true,
+                                    isRevengeRunMode = isRevengeRun,
                                     gridLabel = gridSize.label,
                                     paceLabel = "CLASSIC",
                                     currentScore = currentScore,
@@ -2102,8 +2159,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                             if (gameState == GameState.WATCHING || gameState == GameState.PLAYING) {
                                 if (gameMode == GameMode.SOLO) {
-                                    // PASS 5.18 & 5.19: Remove large Current/Best score cards during active challenges & revenge runs
-                                    if (activeChallenge == null && !isRevengeRun) {
+                                    // PASS 5.18, 5.19 & 5.22: Remove large Current/Best score cards during active challenges & rival runs
+                                    if (activeChallenge == null && !isRevengeRun && currentRivalNameForShare.isNullOrBlank()) {
                                         ScoreboardRow(
                                             currentScore = currentScore,
                                             bestScore = bestScore,
@@ -2122,7 +2179,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     }
 
                     AnimatedVisibility(
-                        visible = gameState != GameState.GAME_OVER && (gameState == GameState.IDLE || (activeChallenge == null && !isRevengeRun)),
+                        visible = gameState != GameState.GAME_OVER && (gameState == GameState.IDLE || (activeChallenge == null && !isRevengeRun && currentRivalNameForShare.isNullOrBlank())),
                         enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                         exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                     ) {
