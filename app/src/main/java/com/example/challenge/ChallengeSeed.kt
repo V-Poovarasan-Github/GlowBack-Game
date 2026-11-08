@@ -400,7 +400,7 @@ object ChallengeSeed {
 
     /**
      * Generates a deterministic sequence of pad indices of the requested [length]
-     * for a grid containing [padCount] pads (e.g. 4, 9, or 16).
+     * for a grid containing [padCount] pads (e.g. 4, 9, 16, or 20).
      */
     fun generateSequence(seed: Int, padCount: Int, length: Int): List<Int> {
         if (padCount <= 0 || length <= 0) return emptyList()
@@ -408,15 +408,39 @@ object ChallengeSeed {
         return List(length) { rng.nextInt(padCount) }
     }
 
+    /**
+     * Generates the exact 0-based pad index sequence for a 1-based [round] under [difficulty]:
+     * - EASY: Cumulative 1 draw per round (Round R has R indices drawn sequentially from Random(seed)).
+     * - HARD: Round R draws R fresh indices after prior rounds 1..(R-1) each consumed r draws.
+     */
+    fun generateSequenceForRound(
+        seed: Int,
+        padCount: Int,
+        difficulty: GameDifficulty = GameDifficulty.EASY,
+        round: Int
+    ): List<Int> {
+        if (padCount <= 0 || round <= 0) return emptyList()
+        val rng = Random(seed.toLong())
+        return if (difficulty == GameDifficulty.HARD) {
+            for (r in 1 until round) {
+                repeat(r) { rng.nextInt(padCount) }
+            }
+            List(round) { rng.nextInt(padCount) }
+        } else {
+            List(round) { rng.nextInt(padCount) }
+        }
+    }
+
     @Volatile
     var lastGeneratedRandomSeed: Int = 0
         private set
 
     /**
-     * Creates a new random 25-bit seed.
+     * Creates a new random non-zero 25-bit seed (1..MAX_SEED).
      */
     fun generateRandomSeed(): Int {
-        val generated = (Math.random() * (MAX_SEED + 1)).toInt() and MAX_SEED
+        val raw = (Math.random() * MAX_SEED).toInt() + 1
+        val generated = (raw and MAX_SEED).let { if (it <= 0) 1 else it }
         lastGeneratedRandomSeed = generated
         return generated
     }

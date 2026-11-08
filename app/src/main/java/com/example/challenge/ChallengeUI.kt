@@ -32,8 +32,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -1882,8 +1884,10 @@ fun PasteRivalCodeDialog(
 @Composable
 fun ShareTriesSelectorDialog(
     initialTries: Int = 3,
+    initialBoardIndex: Int = 0,
     boardOptions: List<BoardScoreOption> = emptyList(),
     lockedRunSummary: String? = null,
+    isProgressiveBlocked: Boolean = false,
     currentScoreToShare: Int = 1,
     requireNameSetupFirst: Boolean = false,
     awaitingChallengeForDialog: AwaitingChallenge? = null,
@@ -1899,9 +1903,13 @@ fun ShareTriesSelectorDialog(
     var senderNameInput by remember { mutableStateOf(ChallengeStorage.getMyName(context)) }
     val options = listOf(1, 3, 5, 0) // 0 = Free/Unlimited
     var selectedTries by remember { mutableIntStateOf(if (initialTries in options) initialTries else 3) }
-    var selectedBoardIndex by remember { mutableIntStateOf(0) }
+    var selectedBoardIndex by remember(boardOptions, initialBoardIndex) {
+        mutableIntStateOf(initialBoardIndex.coerceIn(0, (boardOptions.size - 1).coerceAtLeast(0)))
+    }
     var isGenerateFlashing by remember { mutableStateOf(false) }
     var isCopyOnlyFlashing by remember { mutableStateOf(false) }
+
+    val canShare = !isProgressiveBlocked && (lockedRunSummary != null || boardOptions.isNotEmpty())
 
     Dialog(
         onDismissRequest = {
@@ -1993,7 +2001,30 @@ fun ShareTriesSelectorDialog(
                             .testTag("share_sender_name_input")
                     )
 
-                    if (lockedRunSummary != null) {
+                    if (isProgressiveBlocked) {
+                        // PASS 5.29 Final Addition: Progressive Game Over Lock
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFFFF5252), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .semantics(mergeDescendants = true) {}
+                                .testTag("share_progressive_blocked_card")
+                        ) {
+                            Text(
+                                text = "Duels are played at Classic pace — replay in Classic to share this score.",
+                                color = Color(0xFFFF5252),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else if (lockedRunSummary != null) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Box(
                             modifier = Modifier
@@ -2002,6 +2033,7 @@ fun ShareTriesSelectorDialog(
                                 .background(Color(0xFF1E293B))
                                 .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
                                 .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .semantics(mergeDescendants = true) {}
                                 .testTag("locked_run_summary_text")
                         ) {
                             Text(
@@ -2011,15 +2043,48 @@ fun ShareTriesSelectorDialog(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                    } else if (boardOptions.isNotEmpty()) {
+                    } else if (boardOptions.isEmpty()) {
+                        // PASS 5.29 Catch 2: Zero Classic Boards Empty State
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Target Score to Beat:",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .semantics(mergeDescendants = true) {}
+                                .testTag("share_no_classic_scores_card")
+                        ) {
+                            Text(
+                                text = "No Classic scores of 5+ yet — play a Classic run to create a challenge.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Target Score to Beat:",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Duels are played at Classic pace.",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2117,7 +2182,7 @@ fun ShareTriesSelectorDialog(
 
                     Button(
                         onClick = {
-                            if (isGenerateFlashing) return@Button
+                            if (!canShare || isGenerateFlashing) return@Button
                             val finalName = ChallengeSeed.sanitizePlayerName(senderNameInput)
                             ChallengeStorage.setMyName(context, finalName)
                             val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
@@ -2128,6 +2193,7 @@ fun ShareTriesSelectorDialog(
                                 onGenerateCard(selectedTries, finalName, chosenBoard)
                             }
                         },
+                        enabled = canShare,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
@@ -2135,7 +2201,9 @@ fun ShareTriesSelectorDialog(
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isGenerateFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
-                            contentColor = Color(0xFF090D16)
+                            contentColor = Color(0xFF090D16),
+                            disabledContainerColor = Color(0xFF334155),
+                            disabledContentColor = Color(0xFF64748B)
                         )
                     ) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -2147,7 +2215,7 @@ fun ShareTriesSelectorDialog(
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
-                                if (isCopyOnlyFlashing) return@OutlinedButton
+                                if (!canShare || isCopyOnlyFlashing) return@OutlinedButton
                                 val finalName = ChallengeSeed.sanitizePlayerName(senderNameInput)
                                 ChallengeStorage.setMyName(context, finalName)
                                 val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
@@ -2158,23 +2226,28 @@ fun ShareTriesSelectorDialog(
                                     onCopyOnly(selectedTries, finalName, chosenBoard)
                                 }
                             },
+                            enabled = canShare,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 44.dp)
                                 .testTag("tries_selector_copy_code_button"),
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8))
+                            border = BorderStroke(1.dp, if (!canShare) Color(0xFF334155) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFF38BDF8),
+                                disabledContentColor = Color(0xFF64748B)
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
+                                tint = if (!canShare) Color(0xFF64748B) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = if (isCopyOnlyFlashing) "✓ Copied!" else "Copy Code",
-                                color = if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
+                                color = if (!canShare) Color(0xFF64748B) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -2424,7 +2497,9 @@ fun ChallengerNameSetupCardContent(
 @Composable
 fun RivalMatchSetupDialog(
     rival: RivalRecord,
+    recommendations: List<SleepingScoreRecommendation> = emptyList(),
     onDismiss: () -> Unit,
+    onSelectRecommendation: (index: Int) -> Unit = {},
     onLaunch: (gridTag: String, difficulty: GameDifficulty) -> Unit
 ) {
     var selectedGridTag by remember { mutableStateOf(rival.lastGrid.lowercase()) }
@@ -2458,6 +2533,7 @@ fun RivalMatchSetupDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -2479,6 +2555,79 @@ fun RivalMatchSetupDialog(
                         modifier = Modifier.size(28.dp).testTag("rival_setup_close_button")
                     ) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
+                    }
+                }
+
+                // PASS 5.28: Conditional "🎯 RECOMMENDATION" Section ("Sleeping Scores")
+                if (recommendations.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rival_setup_recommendations_section"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F2922)),
+                        border = BorderStroke(1.dp, Color(0xFF10B981))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "🎯 RECOMMENDATION",
+                                color = Color(0xFF10B981),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.testTag("rival_setup_recommendations_title")
+                            )
+                            Text(
+                                text = "You already have a stored score that beats ${rival.name}:",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            LazyRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rival_recommendations_carousel"),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                itemsIndexed(recommendations) { idx, rec ->
+                                    val chipTag = "rival_recommendation_chip_${rec.boardOption.gridTag.lowercase()}_${rec.boardOption.difficulty.name.lowercase()}"
+                                    Surface(
+                                        onClick = { onSelectRecommendation(idx) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF1E293B),
+                                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.65f)),
+                                        modifier = Modifier
+                                            .semantics(mergeDescendants = true) {}
+                                            .testTag(chipTag)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text(
+                                                text = rec.chipLabel,
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.Share,
+                                                contentDescription = "Share Recommended Score",
+                                                tint = Color(0xFF10B981),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2730,11 +2879,13 @@ fun HallOfFameScreen(
     onNavigateBack: () -> Unit,
     onStartRevenge: (RivalRecord) -> Unit,
     onStartRevengeWithSettings: (RivalRecord, String, GameDifficulty) -> Unit = { rival, _, _ -> onStartRevenge(rival) },
+    onShareRivalRecommendation: (RivalRecord, List<BoardScoreOption>, Int) -> Unit = { _, _, _ -> },
     onPlayAwaiting: (AwaitingChallenge) -> Unit,
     onShareCodeClicked: () -> Unit,
     onPasteCodeClicked: () -> Unit,
     onAcceptChallenge: (ChallengeItem) -> Unit,
     sharedPrefs: android.content.SharedPreferences,
+    allBoardScores: List<BoardScoreOption> = emptyList(),
     refreshTrigger: Any? = null,
     modifier: Modifier = Modifier
 ) {
@@ -2752,9 +2903,19 @@ fun HallOfFameScreen(
     }
 
     if (rivalForSetup != null) {
+        val currentRival = rivalForSetup!!
+        val recommendations = remember(currentRival, allBoardScores) {
+            ChallengeStorage.computeSleepingScoresForRival(currentRival, allBoardScores)
+        }
         RivalMatchSetupDialog(
-            rival = rivalForSetup!!,
+            rival = currentRival,
+            recommendations = recommendations,
             onDismiss = { rivalForSetup = null },
+            onSelectRecommendation = { selectedIndex ->
+                val qualifyingBoards = recommendations.map { it.boardOption }
+                rivalForSetup = null
+                onShareRivalRecommendation(currentRival, qualifyingBoards, selectedIndex)
+            },
             onLaunch = { selectedGridTag, selectedDifficulty ->
                 val r = rivalForSetup!!
                 rivalForSetup = null
@@ -3918,6 +4079,7 @@ fun RecordScoreCard(
         modifier = modifier
             .fillMaxWidth()
             .border(1.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .semantics(mergeDescendants = true) {}
             .testTag(tag),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))

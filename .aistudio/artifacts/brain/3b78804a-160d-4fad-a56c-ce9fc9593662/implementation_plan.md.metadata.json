@@ -1,6 +1,6 @@
 {
-  "summary":  "Revised PASS 5.26 implementation plan incorporating explicit isOutboundRivalRun state flag, fresh-seed + Ready-gate + qualifying-score confirmation on Restart, Game Over unshared qualifying score guard, PASS 5.21-consistent Lock & Exit Game Over landing, 2P-4P-only Save/Continue, and unused asset cleanup.",
-  "updatedAt":  "2026-11-07T11:56:41.819979711Z",
+  "summary":  "Architectural plan for PASS 5.30: Solo Voluntary Game Over ('End Run & Keep Score') in pause menu. Enables players in a hurry to cleanly bank and finalize scores of 5+ to records and seeds without forcing accidental score loss or cheat-prone save-and-resume. Preserves 100% isolation for 2P/3P/4P Pass & Play, Inbound Duels, and Outbound Rival runs.",
+  "updatedAt":  "2026-11-08T06:16:34.873652534Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

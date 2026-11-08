@@ -848,6 +848,40 @@ object ChallengeStorage {
         return Triple(0, GameDifficulty.EASY, "NEW")
     }
 
+    /**
+     * PASS 5.28:
+     * Computes qualifying "Sleeping Scores" (Rival Score Recommendations) where the player already has
+     * a stored Classic board score (with valid seed > 0) that strictly beats the rival's lastTarget
+     * on the exact same gridTag and difficulty.
+     */
+    fun computeSleepingScoresForRival(
+        rival: RivalRecord,
+        allBoardScores: List<BoardScoreOption>
+    ): List<SleepingScoreRecommendation> {
+        val recommendations = mutableListOf<SleepingScoreRecommendation>()
+        for (board in allBoardScores) {
+            if (!board.paceName.equals("Classic", ignoreCase = true)) continue
+            if (board.score < 5 || board.seed <= 0) continue
+
+            val (rivalTarget, rivalDiff, rivalStatus) = getGridTargetInfo(rival, board.gridTag)
+            if (rivalTarget <= 0 || rivalStatus == "NEW") continue
+            if (board.difficulty != rivalDiff) continue
+            if (board.score > rivalTarget) {
+                recommendations.add(
+                    SleepingScoreRecommendation(
+                        boardOption = board,
+                        rivalLastTarget = rivalTarget
+                    )
+                )
+            }
+        }
+        return recommendations.sortedWith(
+            compareByDescending<SleepingScoreRecommendation> { it.boardOption.score - it.rivalLastTarget }
+                .thenByDescending { it.boardOption.gridTag.equals(rival.lastGrid, ignoreCase = true) }
+                .thenByDescending { it.boardOption.score }
+        )
+    }
+
     fun recordMatchOutcome(
         context: Context,
         rivalName: String,

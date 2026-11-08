@@ -1,5 +1,7 @@
 package com.example.challenge
 
+import com.example.PaceMode
+
 enum class GameDifficulty(val label: String, val codeChar: Char) {
     EASY("Easy", 'E'),
     HARD("Hard", 'H');
@@ -46,8 +48,52 @@ data class BoardScoreOption(
     val gridTag: String,
     val paceName: String,
     val difficulty: GameDifficulty,
-    val score: Int
+    val score: Int,
+    val seed: Int = 0
 )
+
+/**
+ * PASS 5.28: Represents a stored Classic board score that already strictly beats
+ * a rival's recorded lastTarget on the exact same gridTag and difficulty.
+ */
+data class SleepingScoreRecommendation(
+    val boardOption: BoardScoreOption,
+    val rivalLastTarget: Int
+) {
+    val gridDisplay: String
+        get() = when (boardOption.gridTag.lowercase()) {
+            "2x2" -> "2×2"
+            "3x3" -> "3×3"
+            "4x4" -> "4×4"
+            "5x4" -> "5×4"
+            else -> boardOption.gridTag
+        }
+
+    val chipLabel: String
+        get() = "$gridDisplay ${boardOption.difficulty.label} · You ${boardOption.score} vs their $rivalLastTarget"
+}
+
+sealed class ShareSource {
+    data class FromRunSnapshot(
+        val gridTag: String,
+        val gridLabel: String,
+        val score: Int,
+        val difficulty: GameDifficulty,
+        val seed: Int,
+        val pace: PaceMode = PaceMode.CLASSIC,
+        val lockedRivalName: String? = null,
+        val lockedChainId: String? = null
+    ) : ShareSource()
+
+    data object FromBoardSelector : ShareSource()
+
+    data class FromRivalRecommendation(
+        val rivalName: String,
+        val chainId: String,
+        val qualifyingBoards: List<BoardScoreOption>,
+        val initialIndex: Int = 0
+    ) : ShareSource()
+}
 
 data class ParsedChallenge(
     val gridTag: String,

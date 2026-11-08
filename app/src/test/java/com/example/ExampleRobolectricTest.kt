@@ -16,11 +16,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
@@ -3265,7 +3267,916 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
         assertTrue("Initial seed must be valid", initialSeed >= 0)
     }
+
+    @Test
+    fun pass5_27_test1_crossGridSwitchAndGameOverShare_preservesExactSequenceAcrossDialogDismissAndReopen() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Start on 4x4, then switch to 3x3 Easy via Settings
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("grid_size_4x4").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("grid_size_3x3").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // 2. Start a 3x3 Easy game and play to Score 6, recording the exact 6-pad sequence
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val runSeed3x3 = ChallengeSeed.lastGeneratedRandomSeed
+        val pads3x3 = padsForGridSize(GridSize.THREE_BY_THREE)
+        val expectedIndices = ChallengeSeed.generateSequenceForRound(
+            seed = runSeed3x3,
+            padCount = pads3x3.size,
+            difficulty = GameDifficulty.EASY,
+            round = 7
+        )
+        val playedSequenceRound6 = expectedIndices.take(6).map { pads3x3[it] }
+
+        for (round in 1..6) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                val padToTap = pads3x3[expectedIndices[step]]
+                composeTestRule.onNodeWithTag(padToTap.testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Advance into Round 7 playback and intentionally tap a wrong pad on Step 1 to enter GAME_OVER at Score 6
+        composeTestRule.mainClock.advanceTimeBy(450L + 7 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val wrongPad = pads3x3.first { it.id != pads3x3[expectedIndices[0]].id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(500L)
+        composeTestRule.waitForIdle()
+
+        // 3. On Game Over: Open Share Challenge, DISMISS it, then RE-OPEN Share Challenge
+        composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertDoesNotExist()
+
+        // Re-open Share Challenge on Game Over -> must still lock onto the played 3x3 Easy Score 6 & runSeed3x3!
+        composeTestRule.onNodeWithTag("share_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("locked_run_summary_text")
+            .assertIsDisplayed()
+            .assertTextContains("3×3 Classic Easy - your score 6", substring = true)
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        val pendingShare = ChallengeStorage.getPendingShare(context)
+        assertNotNull("Pending share must be created after copying from ShareTriesSelectorDialog", pendingShare)
+        val parsed = ChallengeSeed.parseChallengeCode(pendingShare!!.code)
+        assertNotNull("Generated code must be valid 7-segment code", parsed)
+        assertEquals("3x3", parsed!!.gridTag)
+        assertEquals(6, parsed.targetScore)
+        assertEquals("Seed in shared code must equal the exact played runSeed3x3", runSeed3x3, parsed.seedInt)
+
+        val receiverRound6Pads = ChallengeSeed.generateSequenceForRound(
+            seed = parsed.seedInt,
+            padCount = pads3x3.size,
+            difficulty = parsed.difficulty,
+            round = 6
+        ).map { pads3x3[it] }
+        assertEquals(
+            "Receiver's 3x3 Easy 6-pad sequence must match sender's played sequence element-for-element",
+            playedSequenceRound6.map { it.id },
+            receiverRound6Pads.map { it.id }
+        )
+    }
+
+    @Test
+    fun pass5_27_test2_delayedLeaderboardShare_twoHoursLaterOn3x3Easy_matchesPlayedSequence() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        ChallengeStorage.setMyName(context, "HERO")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Switch to 3x3 Easy via Settings
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("grid_size_3x3").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // 2. Play a 3x3 Easy run to Score 7
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val playedSeed3x3 = ChallengeSeed.lastGeneratedRandomSeed
+        val pads3x3 = padsForGridSize(GridSize.THREE_BY_THREE)
+        val indicesRound8 = ChallengeSeed.generateSequenceForRound(
+            seed = playedSeed3x3,
+            padCount = pads3x3.size,
+            difficulty = GameDifficulty.EASY,
+            round = 8
+        )
+        val played7Pads = indicesRound8.take(7).map { pads3x3[it].id }
+
+        for (round in 1..7) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads3x3[indicesRound8[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Miss on Round 8 Step 1 -> finishes run at Score 7
+        composeTestRule.mainClock.advanceTimeBy(450L + 8 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val wrongPad = pads3x3.first { it.id != pads3x3[indicesRound8[0]].id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(500L)
+        composeTestRule.waitForIdle()
+
+        // Verify Data Layer persisted both score 7 and exact seed playedSeed3x3
+        assertEquals(7, prefs.getInt("best_3x3_classic_EASY", 0))
+        assertEquals(
+            "best_seed_3x3_classic_EASY must persist the exact played seed",
+            playedSeed3x3,
+            prefs.getInt("best_seed_3x3_classic_EASY", 0)
+        )
+        val bestRecord = getBestBoardRecord(prefs, "3x3", GameDifficulty.EASY)
+        assertNotNull(bestRecord)
+        assertEquals(7, bestRecord!!.score)
+        assertEquals(playedSeed3x3, bestRecord.seed)
+
+        // 3. Simulate "2 hours later": leave Game Over to Home, switch to 2x2, start another run (which overwrites currentRunSeed in memory), then go to Leaderboard
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("grid_size_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Navigate to Leaderboard / Rivalry tab and tap Share Challenge
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Select board_option_0 (3x3 Classic · Easy 7) and copy code
+        composeTestRule.onNodeWithTag("board_option_0")
+            .assertIsDisplayed()
+            .assertTextContains("3x3 Classic · Easy", substring = true)
+            .performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        val delayedShare = ChallengeStorage.getPendingShare(context)
+        assertNotNull("Delayed share from Leaderboard must create pending share", delayedShare)
+        val parsedDelayed = ChallengeSeed.parseChallengeCode(delayedShare!!.code)
+        assertNotNull(parsedDelayed)
+        assertEquals("3x3", parsedDelayed!!.gridTag)
+        assertEquals(7, parsedDelayed.targetScore)
+        assertEquals(
+            "Delayed Leaderboard share must encode the exact stored seed from the 3x3 Easy run",
+            playedSeed3x3,
+            parsedDelayed.seedInt
+        )
+
+        val receiver7Pads = ChallengeSeed.generateSequenceForRound(
+            seed = parsedDelayed.seedInt,
+            padCount = pads3x3.size,
+            difficulty = parsedDelayed.difficulty,
+            round = 7
+        ).map { pads3x3[it].id }
+        assertEquals(
+            "Delayed Leaderboard share sequence must be 100% identical to the 7-pad sequence played 2 hours earlier",
+            played7Pads,
+            receiver7Pads
+        )
+    }
+
+    @Test
+    fun pass5_27_test3_allFourGridsAndBothDifficulties_deterministicSequenceParity() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // 1. Verify mathematical determinism across all 4 grids (2x2, 3x3, 4x4, 5x4) and both difficulties (EASY, HARD)
+        val testSeeds = listOf(13579, 24680, 987654, 33554431)
+        for (grid in GridSize.entries) {
+            val pads = padsForGridSize(grid)
+            for (diff in GameDifficulty.entries) {
+                for (seed in testSeeds) {
+                    val code = ChallengeSeed.formatChallengeCode(
+                        gridTag = grid.keyPrefix,
+                        targetScore = 6,
+                        tries = 3,
+                        difficulty = diff,
+                        seed = seed,
+                        senderName = "HERO",
+                        chainId = "DET",
+                        isRevenge = false
+                    )
+                    val parsed = ChallengeSeed.parseChallengeCode(code)
+                    assertNotNull("Code must parse for ${grid.keyPrefix} $diff", parsed)
+                    assertEquals(seed and ChallengeSeed.MAX_SEED, parsed!!.seedInt)
+
+                    // Simulate Sender live RNG stream vs Receiver live RNG stream through Rounds 1..6
+                    val senderRng = java.util.Random(seed.toLong())
+                    val receiverRng = java.util.Random(parsed.seedInt.toLong())
+                    val senderCumulative = mutableListOf<Int>()
+                    val receiverCumulative = mutableListOf<Int>()
+
+                    for (round in 1..6) {
+                        val senderRoundPads = if (diff == GameDifficulty.HARD) {
+                            List(round) { pads[senderRng.nextInt(pads.size)].id }
+                        } else {
+                            senderCumulative.add(pads[senderRng.nextInt(pads.size)].id)
+                            senderCumulative.toList()
+                        }
+
+                        val receiverRoundPads = if (diff == GameDifficulty.HARD) {
+                            List(round) { pads[receiverRng.nextInt(pads.size)].id }
+                        } else {
+                            receiverCumulative.add(pads[receiverRng.nextInt(pads.size)].id)
+                            receiverCumulative.toList()
+                        }
+
+                        val helperRoundPads = ChallengeSeed.generateSequenceForRound(
+                            seed = parsed.seedInt,
+                            padCount = pads.size,
+                            difficulty = diff,
+                            round = round
+                        ).map { pads[it].id }
+
+                        assertEquals(
+                            "Sender and Receiver sequences must match on ${grid.keyPrefix} $diff Round $round",
+                            senderRoundPads,
+                            receiverRoundPads
+                        )
+                        assertEquals(
+                            "generateSequenceForRound must match live RNG stream on ${grid.keyPrefix} $diff Round $round",
+                            senderRoundPads,
+                            helperRoundPads
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Verify Self-Healing Legacy Migration: if a legacy score >= 5 exists with no seed, readMigratedBestSeed mints and persists a stable seed
+        prefs.edit()
+            .putInt(bestScoreKeyFor(GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.HARD), 11)
+            .remove(bestSeedKeyFor(GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.HARD))
+            .apply()
+
+        val healedSeed1 = readMigratedBestSeed(prefs, GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.HARD)
+        val healedSeed2 = readMigratedBestSeed(prefs, GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.HARD)
+        assertTrue("Self-healed legacy seed must be > 0", healedSeed1 > 0)
+        assertEquals("Self-healed legacy seed must be persisted and stable across reads", healedSeed1, healedSeed2)
+    }
+
+    @Test
+    fun pass5_27_test4_nonBestQualifyingRun_gameOverEncodesPlayedRun_leaderboardEncodesAllTimeBest() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Pre-seed 3x3 Easy with an all-time best of 10 and seed = 101010
+        val allTimeBestSeed = 101010
+        writeBestScore(
+            prefs = prefs,
+            gridSize = GridSize.THREE_BY_THREE,
+            paceMode = PaceMode.CLASSIC,
+            difficulty = GameDifficulty.EASY,
+            score = 10,
+            seed = allTimeBestSeed
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Switch to 3x3 Easy via Settings
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("grid_size_3x3").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // 2. Play a new 3x3 Easy run to Score 6 (qualifies >= 5, but < all-time best 10)
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val nonBestRunSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val pads3x3 = padsForGridSize(GridSize.THREE_BY_THREE)
+        val indicesRound7 = ChallengeSeed.generateSequenceForRound(
+            seed = nonBestRunSeed,
+            padCount = pads3x3.size,
+            difficulty = GameDifficulty.EASY,
+            round = 7
+        )
+
+        for (round in 1..6) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads3x3[indicesRound7[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Miss on Round 7 Step 1 -> enters GAME_OVER at Score 6
+        composeTestRule.mainClock.advanceTimeBy(450L + 7 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val wrongPad = pads3x3.first { it.id != pads3x3[indicesRound7[0]].id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(500L)
+        composeTestRule.waitForIdle()
+
+        // All-time best in SharedPreferences must still be 10 with seed 101010
+        assertEquals(10, readMigratedBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY))
+        assertEquals(allTimeBestSeed, readMigratedBestSeed(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY))
+
+        // 3. Assertion A: Sharing directly from Game Over encodes the just-played run (score = 6, seed = nonBestRunSeed)
+        composeTestRule.onNodeWithTag("share_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("locked_run_summary_text")
+            .assertIsDisplayed()
+            .assertTextContains("3×3 Classic Easy - your score 6", substring = true)
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        val gameOverShare = ChallengeStorage.getPendingShare(context)
+        assertNotNull(gameOverShare)
+        val parsedGameOver = ChallengeSeed.parseChallengeCode(gameOverShare!!.code)
+        assertNotNull(parsedGameOver)
+        assertEquals("Game Over share must encode the just-played score of 6", 6, parsedGameOver!!.targetScore)
+        assertEquals("Game Over share must encode the just-played seed S_6", nonBestRunSeed, parsedGameOver.seedInt)
+
+        // Dismiss "Did you share it?" dialog
+        composeTestRule.onNodeWithTag("did_you_share_no_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 4. Assertion B: Sharing later from the Leaderboard tab encodes the all-time best (score = 10, seed = 101010)
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Only 1 board option exists for 3x3 Classic Easy (the all-time best of 10, not 6)
+        composeTestRule.onNodeWithTag("board_option_0")
+            .assertIsDisplayed()
+            .assertTextContains("3x3 Classic · Easy", substring = true)
+            .assertTextContains("10", substring = true)
+        composeTestRule.onNodeWithTag("board_option_1").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        val leaderboardShare = ChallengeStorage.getPendingShare(context)
+        assertNotNull(leaderboardShare)
+        val parsedLeaderboard = ChallengeSeed.parseChallengeCode(leaderboardShare!!.code)
+        assertNotNull(parsedLeaderboard)
+        assertEquals("Leaderboard share must encode the all-time best score of 10", 10, parsedLeaderboard!!.targetScore)
+        assertEquals("Leaderboard share must encode the all-time best seed S_10", allTimeBestSeed, parsedLeaderboard.seedInt)
+    }
+
+    @Test
+    fun pass5_28_sleepingScores_recommendationsFilterShareAndChainStacking() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Seed Rival VORTEX (chainId = "VRX") with multiple grid targets:
+        //    - 4x4 Easy: target 10 (LOST)
+        //    - 2x2 Hard: target 9 (TIED)
+        //    - 3x3 Easy (most recent / lastGrid): target 8 (LOST)
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "VORTEX",
+            userScore = 6,
+            targetScore = 10,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "VRX",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "VORTEX",
+            userScore = 9,
+            targetScore = 9,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.HARD,
+            chainId = "VRX",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "VORTEX",
+            userScore = 5,
+            targetScore = 8,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "VRX",
+            maxTries = 3
+        )
+
+        // Also seed Rival TITAN (2x2 Easy target = 15, where player has no qualifying score > 15)
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "TITAN",
+            userScore = 7,
+            targetScore = 15,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "TTN",
+            maxTries = 3
+        )
+
+        // 2. Seed player's stored board scores via writeBestScore:
+        //    - 3x3 Classic Easy: score 12, seed 33312 -> QUALIFIES for VORTEX (12 > 8, same grid + Easy)
+        //    - 2x2 Classic Hard: score 9, seed 22209  -> DOES NOT QUALIFY (9 == 9, not strictly greater)
+        //    - 4x4 Classic Hard: score 15, seed 44415 -> DOES NOT QUALIFY (difficulty mismatch: Hard vs VORTEX's Easy on 4x4)
+        //    - 5x4 Classic Easy: score 14, seed 54014 -> DOES NOT QUALIFY (VORTEX has no lastTarget on 5x4)
+        //    - 3x3 Progressive Easy: score 20, seed 33320 -> DOES NOT QUALIFY (Progressive pace excluded)
+        //    - 2x2 Classic Easy: score 10, seed 22210 -> DOES NOT QUALIFY for TITAN (10 <= 15) or VORTEX (difficulty mismatch vs 2x2 Hard)
+        writeBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY, score = 12, seed = 33312)
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.HARD, score = 9, seed = 22209)
+        writeBestScore(prefs, GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.HARD, score = 15, seed = 44415)
+        writeBestScore(prefs, GridSize.FIVE_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.EASY, score = 14, seed = 54014)
+        writeBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.PROGRESSIVE, GameDifficulty.EASY, score = 20, seed = 33320)
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 10, seed = 22210)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Navigate to Leaderboard -> Rivalry tab
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Proof 4: Open RivalMatchSetupDialog for TITAN -> no qualifying score exists, so recommendation section is hidden
+        composeTestRule.onNodeWithTag("rival_dynamic_button_TITAN").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_recommendations_section").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_setup_close_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Proof 1: Open RivalMatchSetupDialog for VORTEX -> recommendation section is shown with ONLY 3x3 Easy chip
+        composeTestRule.onNodeWithTag("rival_dynamic_button_VORTEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_recommendations_section").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_3x3_easy")
+            .assertIsDisplayed()
+            .assertTextContains("3×3 Easy · You 12 vs their 8", substring = true)
+
+        // Non-qualifying boards must NOT appear as recommendation chips
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_hard").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_4x4_hard").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_5x4_easy").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertDoesNotExist()
+
+        // Proof 2: Tap the recommendation chip -> opens ShareTriesSelectorDialog filtered ONLY to VORTEX's qualifying scores
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_3x3_easy").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+
+        // Only 1 board option is shown in the filtered dialog (3x3 Classic Easy 12)
+        composeTestRule.onNodeWithTag("board_option_0")
+            .assertIsDisplayed()
+            .assertTextContains("3x3 Classic · Easy", substring = true)
+            .assertTextContains("12", substring = true)
+        composeTestRule.onNodeWithTag("board_option_1").assertDoesNotExist()
+
+        // Mint the T-code via Copy Code
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        val pendingShare = ChallengeStorage.getPendingShare(context)
+        assertNotNull("Pending share must be created when copying recommended score", pendingShare)
+        val parsed = ChallengeSeed.parseChallengeCode(pendingShare!!.code)
+        assertNotNull("Minted T-code must be valid 7-segment code", parsed)
+        assertFalse("Minted code must be a playable T-code (isRevenge = false)", parsed!!.isRevenge)
+        assertEquals("3x3", parsed.gridTag.lowercase())
+        assertEquals(GameDifficulty.EASY, parsed.difficulty)
+        assertEquals("Minted code target must equal stored score 12", 12, parsed.targetScore)
+        assertEquals("Minted code seed must equal original stored seed 33312", 33312, parsed.seedInt)
+        assertEquals("Minted code chainId must preserve VORTEX's lastChainId VRX", "VRX", parsed.chainId)
+
+        // Verify KEY_CHAIN_TARGETS stores target = 12 for (chainId = "VRX", seedInt = 33312)
+        assertEquals(12, ChallengeStorage.lookupOutboundChainTarget(context, "VRX"))
+        assertEquals(12, ChallengeStorage.lookupOutboundChainTarget(context, "VRX", seedInt = 33312))
+
+        // Confirm "Yes, Shared" in DidYouShareDialog -> saves to KEY_AWAITING
+        composeTestRule.onNodeWithTag("did_you_share_yes_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val awaitingList = ChallengeStorage.loadAwaitingChallenges(context)
+        assertTrue(
+            "KEY_AWAITING must contain the VRX challenge with target 12",
+            awaitingList.any { it.chainId == "VRX" && it.targetScore == 12 && it.gridSizeTag.equals("3x3", ignoreCase = true) }
+        )
+
+        // Proof 3: Zero Gameplay Invariant -> app stayed on Hall of Fame / Leaderboard screen and no run started
+        composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("in_game_challenge_banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_29_masterPolish_allFiveCatchesVerified() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Proof 1 (Catch 1 - No Records Regression):
+        // Save high score on Progressive 2x2 Easy (score 14) and no Classic scores
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.PROGRESSIVE, GameDifficulty.EASY, score = 14, seed = 22214)
+
+        val allBoards = getAllBoardScores(prefs)
+        val shareableBoards = getShareableBoardScores(prefs)
+        assertTrue("getAllBoardScores must preserve Progressive score for Records tab", allBoards.any { it.paceName == "Progressive" && it.score == 14 })
+        assertTrue("getShareableBoardScores must NOT contain Progressive scores", shareableBoards.isEmpty())
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Navigate to Leaderboard -> Records tab (Solo, 2x2)
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tab_records").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("record_score_easy_prog")
+            .assertIsDisplayed()
+            .assertTextContains("14", substring = true)
+
+        // 2. Proof 2 (Catch 2 - Zero Classic Boards Empty State):
+        // Switch to Rivalry tab and tap Share Challenge with no Classic scores >= 5
+        composeTestRule.onNodeWithTag("tab_rivalry").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("share_no_classic_scores_card")
+            .assertIsDisplayed()
+            .assertTextContains("No Classic scores of 5+ yet — play a Classic run to create a challenge.", substring = true)
+        composeTestRule.onNodeWithTag("generate_card_button").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3. Proof 3 (Catch 3 - Recommendation Carousel Sort Order):
+        // Seed Rival TITAN (lastGrid = "3x3", target = 6)
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "TITAN",
+            userScore = 5,
+            targetScore = 8,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "TTN",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "TITAN",
+            userScore = 4,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "TTN",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "TITAN",
+            userScore = 5,
+            targetScore = 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "TTN",
+            maxTries = 3
+        )
+
+        // Seed Classic scores:
+        // - 4x4 Easy score 15 (vs rival 4x4 target 8 -> margin +7)
+        // - 3x3 Easy score 12 (vs rival 3x3 target 6 -> margin +6, rival lastGrid)
+        // - 2x2 Easy score 8  (vs rival 2x2 target 5 -> margin +3)
+        writeBestScore(prefs, GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.EASY, score = 15, seed = 44415)
+        writeBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY, score = 12, seed = 33312)
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 8, seed = 22208)
+
+        // Navigate Home and back to Leaderboard to reload rivals state with TITAN
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_dynamic_button_TITAN").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendations_carousel").assertIsDisplayed()
+
+        val titanRecord = ChallengeStorage.findRivalByName(context, "TITAN")!!
+        val recs = ChallengeStorage.computeSleepingScoresForRival(titanRecord, getShareableBoardScores(prefs))
+        assertEquals("Recommendations count must be 3", 3, recs.size)
+        assertEquals("Chip 0 must be 4x4 with margin +7", "4x4", recs[0].boardOption.gridTag)
+        assertEquals("Chip 1 must be 3x3 with margin +6 (rival lastGrid)", "3x3", recs[1].boardOption.gridTag)
+        assertEquals("Chip 2 must be 2x2 with margin +3", "2x2", recs[2].boardOption.gridTag)
+
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_4x4_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_3x3_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_close_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 4. Proof 4 (Catch 4 - Microcopy in Share Dialog):
+        composeTestRule.onNodeWithTag("rivalry_share_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Duels are played at Classic pace.", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 5. Proof 5 (Final Addition - Game Over Progressive Pace-Leak Closure):
+        // Navigate to Home, switch Pace to Progressive via settings
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pace_mode_progressive").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // Play a 2x2 Progressive run to score 6
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val runSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val indicesRound7 = ChallengeSeed.generateSequenceForRound(
+            seed = runSeed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 7
+        )
+
+        for (round in 1..6) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[indicesRound7[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Miss on Round 7 Step 1 -> Game Over at score 6 in Progressive pace
+        composeTestRule.mainClock.advanceTimeBy(450L + 7 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val wrongPad = pads2x2.first { it.id != pads2x2[indicesRound7[0]].id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(500L)
+        composeTestRule.waitForIdle()
+
+        // Tap Share Challenge from Game Over
+        composeTestRule.onNodeWithTag("share_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must display the Progressive blocked card and disable action buttons
+        composeTestRule.onNodeWithTag("share_progressive_blocked_card")
+            .assertIsDisplayed()
+            .assertTextContains("Duels are played at Classic pace — replay in Classic to share this score.", substring = true)
+        composeTestRule.onNodeWithTag("generate_card_button").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").assertIsNotEnabled()
+    }
+
+    @Test
+    fun pass5_30_soloVoluntaryGameOver_bankScoreAndSeed() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Start 2x2 Classic Solo run
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val runSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val indicesRound9 = ChallengeSeed.generateSequenceForRound(
+            seed = runSeed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 9
+        )
+
+        // Play rounds 1..8 to reach score 8
+        for (round in 1..8) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[indicesRound9[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // Mid-round 9: Open pause menu
+        composeTestRule.mainClock.advanceTimeBy(200L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert Solo >= 5 shows End Run & Keep Score and Quit & Discard
+        composeTestRule.onNodeWithTag("pause_end_run_keep_score_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_quit_discard_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").assertDoesNotExist()
+
+        // Tap End Run & Keep Score
+        composeTestRule.onNodeWithTag("pause_end_run_keep_score_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must transition to Game Over with Final Score 8
+        composeTestRule.onAllNodes(hasText("Final Score: 8", substring = true))[0].assertIsDisplayed()
+
+        // Verify score 8 and seed banked in SharedPreferences
+        assertEquals("Best score must be 8", 8, prefs.getInt("best_2x2_classic_EASY", 0))
+        assertEquals("Best seed must match runSeed", runSeed, prefs.getInt("best_seed_2x2_classic_EASY", 0))
+
+        // Return Home
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must NOT show Continue Solo button on Home screen
+        composeTestRule.onNodeWithTag("continue_run_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_30_soloLowScore_retainsQuitToHome() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Start Solo run (score 0 < 5)
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Open Pause menu at score 0
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert score < 5 retains Quit to Home, with no voluntary game over buttons
+        composeTestRule.onNodeWithTag("pause_quit_home_button")
+            .assertIsDisplayed()
+            .assertTextContains("Quit to Home")
+        composeTestRule.onNodeWithTag("pause_end_run_keep_score_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_discard_button").assertDoesNotExist()
+
+        // Tap Quit to Home
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must be on Home with no Continue button
+        composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("continue_run_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_30_passAndPlayAndRivals_isolationRegressions() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. 2P Pass & Play Isolation:
+        composeTestRule.onNodeWithTag("mode_2p").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("handoff_ready_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Pause in 2P:
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_end_run_keep_score_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_discard_button").assertDoesNotExist()
+
+        // Save & Exit in 2P:
+        composeTestRule.onNodeWithTag("pause_save_exit_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("continue_run_button").assertIsDisplayed()
+
+        // Clear run
+        composeTestRule.onNodeWithTag("continue_run_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("handoff_ready_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Outbound Rival Isolation:
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "BLAZE",
+            userScore = 4,
+            targetScore = 6,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "BLZ",
+            maxTries = 3
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_BLAZE").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_continue_last_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Pause in Rival Run:
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_quit_home_button")
+            .assertIsDisplayed()
+            .assertTextContains("Exit to Rivalry")
+        composeTestRule.onNodeWithTag("pause_save_exit_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_end_run_keep_score_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_quit_discard_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pause_resume_button").performClick()
+        composeTestRule.waitForIdle()
+    }
 }
+
 
 
 

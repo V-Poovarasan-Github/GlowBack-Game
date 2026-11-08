@@ -58,6 +58,7 @@ import com.example.challenge.InGameChallengeBanner
 import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
+import com.example.challenge.ShareSource
 import com.example.challenge.ShareTriesSelectorDialog
 import com.example.challenge.flashDelayMs
 
@@ -522,6 +523,9 @@ internal const val KEY_SCORES_MIGRATED_V2 = "scores_migrated_v2"
 internal fun bestScoreKeyFor(gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY): String =
     "best_${gridSize.keyPrefix}_${paceMode.keySuffix}_${difficulty.name}"
 
+internal fun bestSeedKeyFor(gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY): String =
+    "best_seed_${gridSize.keyPrefix}_${paceMode.keySuffix}_${difficulty.name}"
+
 internal fun checkAndMigrateScoresV2(prefs: SharedPreferences) {
     if (prefs.getBoolean(KEY_SCORES_MIGRATED_V2, false)) return
     val editor = prefs.edit()
@@ -550,12 +554,65 @@ internal fun readMigratedBestScore(prefs: SharedPreferences, gridSize: GridSize,
     return prefs.getInt(key, 0)
 }
 
-internal fun writeBestScore(prefs: SharedPreferences, gridSize: GridSize, paceMode: PaceMode, difficulty: GameDifficulty = GameDifficulty.EASY, score: Int) {
+internal fun readMigratedBestSeed(
+    prefs: SharedPreferences,
+    gridSize: GridSize,
+    paceMode: PaceMode,
+    difficulty: GameDifficulty = GameDifficulty.EASY,
+    currentScore: Int = readMigratedBestScore(prefs, gridSize, paceMode, difficulty)
+): Int {
+    checkAndMigrateScoresV2(prefs)
+    val seedKey = bestSeedKeyFor(gridSize, paceMode, difficulty)
+    val storedSeed = prefs.getInt(seedKey, 0)
+    if (storedSeed > 0) return storedSeed and ChallengeSeed.MAX_SEED
+    if (currentScore > 0) {
+        val healedSeed = ChallengeSeed.generateRandomSeed()
+        prefs.edit().putInt(seedKey, healedSeed).apply()
+        return healedSeed
+    }
+    return 0
+}
+
+internal fun writeBestScore(
+    prefs: SharedPreferences,
+    gridSize: GridSize,
+    paceMode: PaceMode,
+    difficulty: GameDifficulty = GameDifficulty.EASY,
+    score: Int,
+    seed: Int = 0
+) {
+    checkAndMigrateScoresV2(prefs)
     val editor = prefs.edit().putInt(bestScoreKeyFor(gridSize, paceMode, difficulty), score)
+    val seedKey = bestSeedKeyFor(gridSize, paceMode, difficulty)
+    val safeSeed = (seed and ChallengeSeed.MAX_SEED)
+    if (safeSeed > 0) {
+        editor.putInt(seedKey, safeSeed)
+    } else if (score > 0 && prefs.getInt(seedKey, 0) <= 0) {
+        editor.putInt(seedKey, ChallengeSeed.generateRandomSeed())
+    }
     if (score > prefs.getInt(KEY_BEST_SCORE, 0)) {
         editor.putInt(KEY_BEST_SCORE, score)
     }
     editor.apply()
+}
+
+internal fun getBestBoardRecord(
+    prefs: SharedPreferences,
+    gridTag: String,
+    difficulty: GameDifficulty,
+    paceMode: PaceMode = PaceMode.CLASSIC
+): BoardScoreOption? {
+    val grid = GridSize.entries.find { it.keyPrefix.equals(gridTag, ignoreCase = true) } ?: return null
+    val score = readMigratedBestScore(prefs, grid, paceMode, difficulty)
+    if (score <= 0) return null
+    val seed = readMigratedBestSeed(prefs, grid, paceMode, difficulty, score)
+    return BoardScoreOption(
+        gridTag = grid.keyPrefix,
+        paceName = paceMode.shortLabel,
+        difficulty = difficulty,
+        score = score,
+        seed = seed
+    )
 }
 
 internal fun getAllBoardScores(prefs: SharedPreferences): List<BoardScoreOption> {
@@ -567,13 +624,28 @@ internal fun getAllBoardScores(prefs: SharedPreferences): List<BoardScoreOption>
                 val score = readMigratedBestScore(prefs, grid, pace, diff)
                 if (score >= 5) {
                     val gridTag = grid.keyPrefix
-                    list.add(BoardScoreOption(gridTag, pace.shortLabel, diff, score))
+                    val seed = readMigratedBestSeed(prefs, grid, pace, diff, score)
+                    list.add(BoardScoreOption(gridTag, pace.shortLabel, diff, score, seed))
                 }
             }
         }
     }
     return list.sortedByDescending { it.score }
 }
+
+/**
+ * PASS 5.29: Strictly shareable board scores (Classic pace only, score >= 5, seed > 0).
+ * Preserves getAllBoardScores(prefs) intact for the Records tab / Solo scoreboard.
+ */
+internal fun getShareableBoardScores(prefs: SharedPreferences): List<BoardScoreOption> {
+    return getAllBoardScores(prefs).filter { it.paceName.equals("Classic", ignoreCase = true) }
+}
+
+internal fun computeSleepingScoresForRival(
+    rival: RivalRecord,
+    allBoardScores: List<BoardScoreOption>
+): List<com.example.challenge.SleepingScoreRecommendation> =
+    ChallengeStorage.computeSleepingScoresForRival(rival, allBoardScores)
 
 private val GlowDarkColorScheme = darkColorScheme(
     primary = Color(0xFF38BDF8), onPrimary = Color(0xFF0F172A),
@@ -604,18 +676,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var showSplash by remember { mutableStateOf(!isTestEnv && !skipSplashForTesting) }
+            var isSplashDismissed by remember { mutableStateOf(isTestEnv || skipSplashForTesting) }
 
             if (showSplash) {
                 LaunchedEffect(Unit) {
                     delay(1200)
                     showSplash = false
+                    delay(300L + 250L) // 300ms fade transition + 250ms breathing room
+                    isSplashDismissed = true
                 }
             }
 
             MaterialTheme(colorScheme = GlowDarkColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        GlowbackGameScreen(launchCount = launchCount)
+                        GlowbackGameScreen(launchCount = launchCount, isSplashDismissed = isSplashDismissed)
                         AnimatedVisibility(
                             visible = showSplash,
                             enter = EnterTransition.None,
@@ -653,10 +728,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun SimonSaysGameScreen(modifier: Modifier = Modifier) = GlowbackGameScreen(modifier = modifier, launchCount = 4)
+fun SimonSaysGameScreen(modifier: Modifier = Modifier) = GlowbackGameScreen(modifier = modifier, launchCount = 4, isSplashDismissed = true)
 
 @Composable
-fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
+fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSplashDismissed: Boolean = true) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val haptic = LocalHapticFeedback.current
@@ -789,7 +864,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     var activeDialog by remember {
         mutableStateOf(if (ChallengeStorage.getPendingShare(context) != null) ActiveDialog.DID_YOU_SHARE else ActiveDialog.NONE)
     }
-    var isShareFromGameOver by remember { mutableStateOf(false) }
+    var activeShareSource by remember { mutableStateOf<ShareSource>(ShareSource.FromBoardSelector) }
     var pendingReplyAfterNameSetup by remember { mutableStateOf(false) }
     var awaitingChallengeForDialog by remember {
         mutableStateOf(ChallengeStorage.getPendingShare(context))
@@ -930,7 +1005,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     }
 
     fun requestShareChallenge(fromGameOver: Boolean = false) {
-        isShareFromGameOver = fromGameOver
         if (fromGameOver) {
             if (isRevengeRun && currentScore <= revengeTargetScore) {
                 val rivalLabel = (currentRivalNameForShare ?: "Rival").uppercase()
@@ -941,6 +1015,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 ).show()
                 return
             }
+            activeShareSource = ShareSource.FromRunSnapshot(
+                gridTag = gridSize.keyPrefix,
+                gridLabel = gridSize.label,
+                score = currentScore,
+                difficulty = difficultyMode,
+                seed = currentRunSeed,
+                pace = paceMode,
+                lockedRivalName = activeChallenge?.rivalName ?: currentRivalNameForShare,
+                lockedChainId = activeChallenge?.chainId?.ifEmpty { null } ?: currentRivalChainId?.ifEmpty { null }
+            )
             if (currentScore < 5) {
                 Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
                 activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
@@ -949,6 +1033,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             }
             return
         }
+        activeShareSource = ShareSource.FromBoardSelector
         val boardScores = getAllBoardScores(sharedPrefs)
         val maxScore = boardScores.maxOfOrNull { it.score } ?: 0
         if (maxScore < 5) {
@@ -1174,8 +1259,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 }
                 val restoredSeed = found?.seed ?: state.soloRunSeed ?: ChallengeSeed.generateRandomSeed()
                 currentRunSeed = restoredSeed
+                val drawsToAdvance = if (difficultyMode == GameDifficulty.HARD) {
+                    sequence.size * (sequence.size + 1) / 2
+                } else {
+                    sequence.size
+                }
                 challengeRng = java.util.Random(restoredSeed.toLong()).apply {
-                    repeat(sequence.size) { nextInt(padPool.size) }
+                    repeat(drawsToAdvance) { nextInt(padPool.size) }
                 }
                 soloRng = challengeRng
             } else {
@@ -1183,8 +1273,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 challengeRng = null
                 val restoredSeed = state.soloRunSeed ?: ChallengeSeed.generateRandomSeed()
                 currentRunSeed = restoredSeed
+                val drawsToAdvance = if (difficultyMode == GameDifficulty.HARD) {
+                    sequence.size * (sequence.size + 1) / 2
+                } else {
+                    sequence.size
+                }
                 soloRng = java.util.Random(restoredSeed.toLong()).apply {
-                    repeat(sequence.size) { nextInt(padPool.size) }
+                    repeat(drawsToAdvance) { nextInt(padPool.size) }
                 }
             }
             currentScore = (sequence.size - 1).coerceAtLeast(0)
@@ -1222,7 +1317,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     fun updateBestScoreIfNeeded(newScore: Int) {
         if (newScore > bestScore) {
             bestScore = newScore
-            writeBestScore(sharedPrefs, gridSize, paceMode, difficultyMode, newScore)
+            writeBestScore(sharedPrefs, gridSize, paceMode, difficultyMode, newScore, currentRunSeed)
+        } else if (newScore > 0 && newScore == bestScore && sharedPrefs.getInt(bestSeedKeyFor(gridSize, paceMode, difficultyMode), 0) <= 0) {
+            writeBestScore(sharedPrefs, gridSize, paceMode, difficultyMode, newScore, currentRunSeed)
         }
     }
 
@@ -1513,7 +1610,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             selectedShareTries = 3
             val rng = java.util.Random(newSeed.toLong())
             soloRng = rng
-            sequence.add(activePadPool[rng.nextInt(activePadPool.size)])
+            val currentPads = padsForGridSize(gridSize)
+            sequence.add(currentPads[rng.nextInt(currentPads.size)])
             roundTrigger++
             gameState = GameState.WATCHING
         } else {
@@ -1522,7 +1620,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             players.addAll(List(gameMode.playerCount) { i -> PlayerSlot(i, "P${i + 1}", PLAYER_COLORS[i], isAlive = true, roundsSurvived = 0) })
             activePlayerIndex = 0
             isRedemptionTurnActive = false
-            sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+            val currentPads = padsForGridSize(gridSize)
+            sequence.add(currentPads[Random.nextInt(currentPads.size)])
             isHandoffVisible = true
             gameState = GameState.WATCHING
         }
@@ -1679,28 +1778,34 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         delay(260L)
                         allPadsConfettiFlash = false
                         delay(240L)
+                        val currentPads = padsForGridSize(gridSize)
                         if (difficultyMode == GameDifficulty.HARD) {
                             sequence.clear()
                             val newTargetLen = completedRound + 1
+                            val priorDraws = completedRound * (completedRound + 1) / 2
                             val rng = if (activeChallenge != null) {
-                                challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).also { challengeRng = it }
+                                challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).apply {
+                                    repeat(priorDraws) { nextInt(currentPads.size) }
+                                }.also { challengeRng = it }
                             } else {
-                                soloRng ?: java.util.Random(currentRunSeed.toLong()).also { soloRng = it }
+                                soloRng ?: java.util.Random(currentRunSeed.toLong()).apply {
+                                    repeat(priorDraws) { nextInt(currentPads.size) }
+                                }.also { soloRng = it }
                             }
                             repeat(newTargetLen) {
-                                sequence.add(activePadPool[rng.nextInt(activePadPool.size)])
+                                sequence.add(currentPads[rng.nextInt(currentPads.size)])
                             }
                         } else {
                             val nextPad = if (activeChallenge != null) {
                                 val rng = challengeRng ?: java.util.Random(activeChallenge!!.seed.toLong()).apply {
-                                    repeat(sequence.size) { nextInt(activePadPool.size) }
+                                    repeat(completedRound) { nextInt(currentPads.size) }
                                 }.also { challengeRng = it }
-                                activePadPool[rng.nextInt(activePadPool.size)]
+                                currentPads[rng.nextInt(currentPads.size)]
                             } else {
                                 val rng = soloRng ?: java.util.Random(currentRunSeed.toLong()).apply {
-                                    repeat(sequence.size) { nextInt(activePadPool.size) }
+                                    repeat(completedRound) { nextInt(currentPads.size) }
                                 }.also { soloRng = it }
-                                activePadPool[rng.nextInt(activePadPool.size)]
+                                currentPads[rng.nextInt(currentPads.size)]
                             }
                             sequence.add(nextPad)
                         }
@@ -1735,14 +1840,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                             activePlayerIndex = nextIdx
                             playerStepIndex = 0
+                            val currentPads = padsForGridSize(gridSize)
                             if (difficultyMode == GameDifficulty.HARD) {
                                 val targetLen = completedRound + 1
                                 sequence.clear()
                                 repeat(targetLen) {
-                                    sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                    sequence.add(currentPads[Random.nextInt(currentPads.size)])
                                 }
                             } else {
-                                sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                sequence.add(currentPads[Random.nextInt(currentPads.size)])
                             }
                             isHandoffVisible = true
                             saveActiveRun()
@@ -1854,9 +1960,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                                 playerStepIndex = 0
                                 if (difficultyMode == GameDifficulty.HARD) {
                                     val curLen = sequence.size
+                                    val currentPads = padsForGridSize(gridSize)
                                     sequence.clear()
                                     repeat(curLen) {
-                                        sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                        sequence.add(currentPads[Random.nextInt(currentPads.size)])
                                     }
                                 }
                                 isHandoffVisible = true
@@ -1872,9 +1979,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             playerStepIndex = 0
                             if (difficultyMode == GameDifficulty.HARD) {
                                 val curLen = sequence.size
+                                val currentPads = padsForGridSize(gridSize)
                                 sequence.clear()
                                 repeat(curLen) {
-                                    sequence.add(activePadPool[Random.nextInt(activePadPool.size)])
+                                    sequence.add(currentPads[Random.nextInt(currentPads.size)])
                                 }
                             }
                             isHandoffVisible = true
@@ -1900,7 +2008,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
         hasSentChallengeReply = false
-        isShareFromGameOver = false
+        activeShareSource = ShareSource.FromBoardSelector
         isPausedMidGame = false
         isMatchComplete = false
         matchStandings = emptyList()
@@ -2065,7 +2173,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
                             hasSentChallengeReply = false
-                            isShareFromGameOver = false
+                            activeShareSource = ShareSource.FromBoardSelector
                             isMatchComplete = false
                             matchStandings = emptyList()
                             resetRunState()
@@ -2090,6 +2198,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             if (currentScreen == AppScreen.LEADERBOARD) {
+            val leaderboardBoards = remember(sharedPrefs, activeDialog, gameState) {
+                getShareableBoardScores(sharedPrefs)
+            }
             HallOfFameScreen(
                 onNavigateBack = { currentScreen = AppScreen.HOME },
                 onStartRevenge = { rival ->
@@ -2116,6 +2227,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                         startRevengeGame(rival, targetGrid, chosenDifficulty)
                     }
                 },
+                onShareRivalRecommendation = { rival, qualifyingBoards, initialIndex ->
+                    val resolvedChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }
+                    activeShareSource = ShareSource.FromRivalRecommendation(
+                        rivalName = rival.name,
+                        chainId = resolvedChainId,
+                        qualifyingBoards = qualifyingBoards,
+                        initialIndex = initialIndex
+                    )
+                    activeDialog = ActiveDialog.TRIES_SELECTOR
+                },
                 onPlayAwaiting = { _ ->
                     currentScreen = AppScreen.HOME
                 },
@@ -2130,6 +2251,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     startChallenge(item)
                 },
                 sharedPrefs = sharedPrefs,
+                allBoardScores = leaderboardBoards,
                 refreshTrigger = Pair(activeDialog, gameState),
                 modifier = Modifier
                     .fillMaxSize()
@@ -2456,8 +2578,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             }
                         }
 
-                        // ONBOARDING POPUP: Displayed on Home screen for first 3 launches
-                        if (gameState == GameState.IDLE && showOnboardingPopup) {
+                        // ONBOARDING POPUP: Displayed on Home screen for first 3 launches ONLY after splash is fully dismissed
+                        if (gameState == GameState.IDLE && showOnboardingPopup && isSplashDismissed) {
                             OnboardingPopupDialog(onDismiss = { showOnboardingPopup = false })
                         }
                     }
@@ -2577,7 +2699,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
                             hasSentChallengeReply = false
-                            isShareFromGameOver = false
+                            activeShareSource = ShareSource.FromBoardSelector
                             isMatchComplete = false
                             matchStandings = emptyList()
                             resetRunState()
@@ -2762,55 +2884,75 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
             )
         }
         ActiveDialog.TRIES_SELECTOR -> {
-            // PASS 5.19 Part 1 Bug 1: Explicitly require isShareFromGameOver AND currentScreen == HOME AND gameState == GAME_OVER
-            val isFromGameOver = isShareFromGameOver && currentScreen == AppScreen.HOME && gameState == GameState.GAME_OVER
-            val diffLabel = if (difficultyMode == GameDifficulty.HARD) "Hard" else "Easy"
-            val lockedSummary = if (isFromGameOver) {
-                "This challenge: ${gridSize.label} Classic $diffLabel - your score $currentScore"
+            // PASS 5.27 & PASS 5.28: Deterministic ShareSource routing
+            val runSnapshot = (activeShareSource as? ShareSource.FromRunSnapshot)
+                ?.takeIf { currentScreen == AppScreen.HOME && gameState == GameState.GAME_OVER }
+            val rivalRecSource = activeShareSource as? ShareSource.FromRivalRecommendation
+            val isFromGameOver = runSnapshot != null
+            val allBoards = remember(sharedPrefs, activeDialog) { getShareableBoardScores(sharedPrefs) }
+            val effectiveBoards = when {
+                isFromGameOver -> emptyList()
+                rivalRecSource != null -> rivalRecSource.qualifyingBoards
+                else -> allBoards
+            }
+            val initialBoardIdx = rivalRecSource?.initialIndex ?: 0
+            val isProgressiveBlocked = runSnapshot?.pace == PaceMode.PROGRESSIVE
+            val diffLabel = if ((runSnapshot?.difficulty ?: difficultyMode) == GameDifficulty.HARD) "Hard" else "Easy"
+            val lockedSummary = if (runSnapshot != null) {
+                if (isProgressiveBlocked) {
+                    "This run: ${runSnapshot.gridLabel} Progressive $diffLabel - your score ${runSnapshot.score}"
+                } else {
+                    "This challenge: ${runSnapshot.gridLabel} Classic $diffLabel - your score ${runSnapshot.score}"
+                }
             } else null
 
             ShareTriesSelectorDialog(
                 initialTries = selectedShareTries,
-                boardOptions = if (isFromGameOver) emptyList() else getAllBoardScores(sharedPrefs),
+                initialBoardIndex = initialBoardIdx,
+                boardOptions = effectiveBoards,
                 lockedRunSummary = lockedSummary,
-                currentScoreToShare = currentScore.coerceAtLeast(1),
+                isProgressiveBlocked = isProgressiveBlocked,
+                currentScoreToShare = (runSnapshot?.score ?: effectiveBoards.getOrNull(initialBoardIdx)?.score ?: currentScore).coerceAtLeast(1),
                 requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
                 awaitingChallengeForDialog = awaitingChallengeForDialog,
                 onDismiss = {
-                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
                 },
                 onDismissDidYouShare = {
                     ChallengeStorage.clearPendingShare(context)
                     awaitingChallengeForDialog = null
-                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
                 },
                 onConfirmDidYouShare = { confirmedItem ->
                     ChallengeStorage.saveAwaitingChallenge(context, confirmedItem)
                     ChallengeStorage.clearPendingShare(context)
                     awaitingChallengeForDialog = null
-                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
                     Toast.makeText(context, "Challenge saved! Waiting for rival...", Toast.LENGTH_SHORT).show()
                 },
                 onCopyOnly = { chosenTries, senderName, chosenBoard ->
                     selectedShareTries = chosenTries
-                    val gridTag = if (isFromGameOver) gridSize.keyPrefix else (chosenBoard?.gridTag ?: gridSize.keyPrefix)
-                    val scoreToShare = if (isFromGameOver) {
-                        currentScore
-                    } else {
-                        chosenBoard?.score ?: currentScore
-                    }
+                    val fallbackBoard = chosenBoard ?: effectiveBoards.getOrNull(initialBoardIdx) ?: effectiveBoards.firstOrNull()
+                    val gridTag = runSnapshot?.gridTag ?: fallbackBoard?.gridTag ?: gridSize.keyPrefix
+                    val scoreToShare = runSnapshot?.score ?: fallbackBoard?.score ?: currentScore
                     if (scoreToShare < 5) {
-                        isShareFromGameOver = false
                         activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
                         Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
                         return@ShareTriesSelectorDialog
                     }
-                    val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
-                    val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
-                    val chainId = activeChallenge?.chainId?.ifEmpty { null }
+                    val chosenDiff = runSnapshot?.difficulty ?: fallbackBoard?.difficulty ?: difficultyMode
+                    val seedToUse = when {
+                        runSnapshot != null && runSnapshot.seed > 0 -> runSnapshot.seed
+                        fallbackBoard != null && fallbackBoard.seed > 0 -> fallbackBoard.seed
+                        else -> {
+                            val resolvedGrid = GridSize.entries.find { it.keyPrefix.equals(gridTag, ignoreCase = true) } ?: gridSize
+                            readMigratedBestSeed(sharedPrefs, resolvedGrid, PaceMode.CLASSIC, chosenDiff, scoreToShare)
+                                .takeIf { it > 0 } ?: currentRunSeed
+                        }
+                    }
+                    val chainId = runSnapshot?.lockedChainId
+                        ?: rivalRecSource?.chainId?.ifEmpty { null }
+                        ?: activeChallenge?.chainId?.ifEmpty { null }
                         ?: currentRivalChainId?.ifEmpty { null }
                         ?: ChallengeSeed.generateChainId()
                     val code = ChallengeSeed.formatChallengeCode(
@@ -2825,6 +2967,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     )
                     hasSharedCurrentRivalRun = true
                     ChallengeStorage.recordCreatedCode(context, code)
+                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
+                    val shareRival = runSnapshot?.lockedRivalName
+                        ?: rivalRecSource?.rivalName
+                        ?: activeChallenge?.rivalName
+                        ?: currentRivalNameForShare
+                    if (!shareRival.isNullOrBlank()) {
+                        ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                    }
                     runCatching {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", code))
@@ -2845,23 +2995,29 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 },
                 onGenerateCard = { chosenTries, senderName, chosenBoard ->
                     selectedShareTries = chosenTries
-                    val gridTag = if (isFromGameOver) gridSize.keyPrefix else (chosenBoard?.gridTag ?: gridSize.keyPrefix)
-                    val scoreToShare = if (isFromGameOver) {
-                        currentScore
-                    } else {
-                        chosenBoard?.score ?: currentScore
-                    }
+                    val fallbackBoard = chosenBoard ?: effectiveBoards.getOrNull(initialBoardIdx) ?: effectiveBoards.firstOrNull()
+                    val gridTag = runSnapshot?.gridTag ?: fallbackBoard?.gridTag ?: gridSize.keyPrefix
+                    val scoreToShare = runSnapshot?.score ?: fallbackBoard?.score ?: currentScore
                     if (scoreToShare < 5) {
-                        isShareFromGameOver = false
                         activeDialog = ActiveDialog.FIRST_TIME_SHARE_GATE
                         Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
                         return@ShareTriesSelectorDialog
                     }
-                    val chosenDiff = if (isFromGameOver) difficultyMode else (chosenBoard?.difficulty ?: difficultyMode)
+                    val chosenDiff = runSnapshot?.difficulty ?: fallbackBoard?.difficulty ?: difficultyMode
                     // PASS 5.19 Stage B #2: Force Classic pace for all async challenges
                     val chosenPace = "Classic"
-                    val seedToUse = if (isFromGameOver) currentRunSeed else ChallengeSeed.generateRandomSeed()
-                    val chainId = activeChallenge?.chainId?.ifEmpty { null }
+                    val seedToUse = when {
+                        runSnapshot != null && runSnapshot.seed > 0 -> runSnapshot.seed
+                        fallbackBoard != null && fallbackBoard.seed > 0 -> fallbackBoard.seed
+                        else -> {
+                            val resolvedGrid = GridSize.entries.find { it.keyPrefix.equals(gridTag, ignoreCase = true) } ?: gridSize
+                            readMigratedBestSeed(sharedPrefs, resolvedGrid, PaceMode.CLASSIC, chosenDiff, scoreToShare)
+                                .takeIf { it > 0 } ?: currentRunSeed
+                        }
+                    }
+                    val chainId = runSnapshot?.lockedChainId
+                        ?: rivalRecSource?.chainId?.ifEmpty { null }
+                        ?: activeChallenge?.chainId?.ifEmpty { null }
                         ?: currentRivalChainId?.ifEmpty { null }
                         ?: ChallengeSeed.generateChainId()
                     // PASS 5.17 Item 1 & 3: Sharing a new challenge (including Get Revenge, Tie-Breaker, Send Challenge)
@@ -2878,6 +3034,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     )
                     hasSharedCurrentRivalRun = true
                     ChallengeStorage.recordCreatedCode(context, code)
+                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
+                    val shareRival = runSnapshot?.lockedRivalName
+                        ?: rivalRecSource?.rivalName
+                        ?: activeChallenge?.rivalName
+                        ?: currentRivalNameForShare
+                    if (!shareRival.isNullOrBlank()) {
+                        ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                    }
                     val awaiting = AwaitingChallenge(
                         chainId = chainId,
                         code = code,
@@ -2891,10 +3055,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     // Requirement 2: Close dialog so NOTHING renders while system share sheet is open.
                     // "Did you share it?" will trigger on ON_RESUME after user returns from the chooser.
                     awaitingChallengeForDialog = null
-                    isShareFromGameOver = false
                     activeDialog = ActiveDialog.NONE
 
-                    val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
                     coroutineScope.launch {
                         ChallengeShareHelper.shareChallenge(
                             context = context,
@@ -2926,6 +3088,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                 currentGridSize = gridSize,
                 currentPaceMode = paceMode,
                 currentGameMode = gameMode,
+                currentScore = currentScore,
                 isMidRun = gameState == GameState.WATCHING || gameState == GameState.PLAYING,
                 isChallengeMode = activeChallenge != null,
                 isRevengeMode = (isOutboundRivalRun || isRevengeRun) && activeChallenge == null,
@@ -2977,6 +3140,17 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1) {
                     resetRunState()
                     gameState = GameState.IDLE
                     activeDialog = ActiveDialog.NONE
+                },
+                onEndRunAndKeepScore = {
+                    updateBestScoreIfNeeded(currentScore)
+                    tapFlashJob?.cancel()
+                    activePadId = null
+                    allPadsConfettiFlash = false
+                    isRoundClearCelebration = false
+                    resumedBannerNote = null
+                    discardActiveRun()
+                    activeDialog = ActiveDialog.NONE
+                    gameState = GameState.GAME_OVER
                 },
                 onQuitToHome = {
                     if ((isOutboundRivalRun || isRevengeRun) && activeChallenge == null) {
@@ -4471,6 +4645,7 @@ private fun SettingsSheetDialog(
     currentGridSize: GridSize,
     currentPaceMode: PaceMode,
     currentGameMode: GameMode = GameMode.SOLO,
+    currentScore: Int = 0,
     isMidRun: Boolean,
     isChallengeMode: Boolean = false,
     isRevengeMode: Boolean = false,
@@ -4482,6 +4657,7 @@ private fun SettingsSheetDialog(
     onToggleDailyNotifications: (Boolean) -> Unit = {},
     onResumeRun: () -> Unit = {},
     onSaveAndExit: () -> Unit = {},
+    onEndRunAndKeepScore: () -> Unit = {},
     onQuitToHome: () -> Unit = {},
     onExitChallenge: () -> Unit = {},
     onRestartRun: () -> Unit = {},
@@ -4584,26 +4760,67 @@ private fun SettingsSheetDialog(
                                 }
                             }
 
-                            Button(
-                                onClick = onQuitToHome,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(46.dp)
-                                    .testTag("pause_quit_home_button"),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0F172A),
-                                    contentColor = Color(0xFFEF4444)
-                                ),
-                                border = BorderStroke(1.5.dp, Color(0xFFEF4444))
-                            ) {
-                                Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    if (isOutboundRivalRun || isRevengeMode) "Exit to Rivalry" else "Quit to Home",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
+                            // PASS 5.30: Solo Voluntary Game Over ("End Run & Keep Score")
+                            // For Normal Solo runs where currentScore >= 5, offer "End Run & Keep Score" and "Quit & Discard".
+                            // For score < 5 (and all other modes), retain standard "Quit to Home" / "Exit to Rivalry".
+                            val isNormalSolo = (currentGameMode == GameMode.SOLO && !isOutboundRivalRun && !isRevengeMode && !isChallengeMode)
+                            if (isNormalSolo && currentScore >= 5) {
+                                Button(
+                                    onClick = onEndRunAndKeepScore,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("pause_end_run_keep_score_button"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF10B981),
+                                        contentColor = Color(0xFF090D16)
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("End Run & Keep Score", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                                }
+
+                                Button(
+                                    onClick = onQuitToHome,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("pause_quit_discard_button"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0F172A),
+                                        contentColor = Color(0xFFEF4444)
+                                    ),
+                                    border = BorderStroke(1.5.dp, Color(0xFFEF4444))
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Quit & Discard", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                            } else {
+                                Button(
+                                    onClick = onQuitToHome,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("pause_quit_home_button"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0F172A),
+                                        contentColor = Color(0xFFEF4444)
+                                    ),
+                                    border = BorderStroke(1.5.dp, Color(0xFFEF4444))
+                                ) {
+                                    Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        if (isOutboundRivalRun || isRevengeMode) "Exit to Rivalry" else "Quit to Home",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
 
                             Button(
