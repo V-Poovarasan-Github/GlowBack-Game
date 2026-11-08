@@ -465,7 +465,7 @@ fun ChallengeCard(
                     Text(
                         text = item.gridSizeTag.uppercase(),
                         color = Color(0xFF38BDF8),
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -510,7 +510,7 @@ fun ChallengeCard(
                 Text(
                     text = triesText,
                     color = triesColor,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -872,7 +872,7 @@ fun EnterChallengeDialog(
                         rawCode = if (extracted != null && extracted != sanitized) {
                             extracted
                         } else {
-                            sanitized.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                            sanitized.uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '_' }
                         }
                         errorMessage = null
                     },
@@ -1200,7 +1200,7 @@ fun SameNameSecondReplyCardContent(
                 OutlinedTextField(
                     value = customNameInput,
                     onValueChange = { input ->
-                        val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
+                        val cleaned = input.replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
                         customNameInput = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
                         customNameError = null
                     },
@@ -1295,7 +1295,7 @@ fun LegacyCodeNameCardContent(
     onSubmitName: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var nameInput by remember { mutableStateOf(initialName.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }.take(10)) }
+    var nameInput by remember { mutableStateOf(initialName.replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }.take(10)) }
     var isLegacySubmitFlashing by remember { mutableStateOf(false) }
 
     Card(
@@ -1330,7 +1330,7 @@ fun LegacyCodeNameCardContent(
             OutlinedTextField(
                 value = nameInput,
                 onValueChange = { input ->
-                    val cleaned = input.replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
+                    val cleaned = input.replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
                     nameInput = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
                 },
                 label = { Text("Rival's Name") },
@@ -1787,7 +1787,7 @@ fun PasteRivalCodeDialog(
                         codeInput = if (extracted != null && extracted != sanitized) {
                             extracted
                         } else {
-                            sanitized.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                            sanitized.uppercase().filter { ch -> ch in 'A'..'Z' || ch in '0'..'9' || ch == '-' || ch == '_' }
                         }
                         errorMessage = null
                     },
@@ -3680,7 +3680,7 @@ fun RivalCard(
                             Text(
                                 text = chipText,
                                 color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.testTag("rival_grid_chip_${rival.name}_$gridKey")
                             )

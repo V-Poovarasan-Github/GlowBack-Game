@@ -309,6 +309,7 @@ object ChallengeShareHelper {
         )
 
         val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
+        cleanOldSharedFiles(cacheFolder, 24L)
         val imageFile = File(cacheFolder, "glowback_challenge_${code}.png")
         FileOutputStream(imageFile).use { out ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -368,6 +369,7 @@ object ChallengeShareHelper {
         )
 
         val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
+        cleanOldSharedFiles(cacheFolder, 24L)
         val imageFile = File(cacheFolder, "glowback_result_${code}.png")
         FileOutputStream(imageFile).use { out ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -395,6 +397,24 @@ object ChallengeShareHelper {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(chooser)
+        }
+    }
+
+    /**
+     * Deletes cached share images older than [maxAgeHours] to prevent unbounded disk growth.
+     */
+    fun cleanOldSharedFiles(cacheFolder: File, maxAgeHours: Long = 24L) {
+        try {
+            val now = System.currentTimeMillis()
+            val maxAgeMillis = maxAgeHours * 60 * 60 * 1000L
+            val files = cacheFolder.listFiles() ?: return
+            for (file in files) {
+                if (file.isFile && (now - file.lastModified()) > maxAgeMillis) {
+                    file.delete()
+                }
+            }
+        } catch (_: Exception) {
+            // Best effort cache cleanup
         }
     }
 }

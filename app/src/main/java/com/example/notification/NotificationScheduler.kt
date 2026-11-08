@@ -31,7 +31,7 @@ object NotificationScheduler {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Daily Glowback Reminder"
             val descriptionText = "Daily memory training, high score challenges, and brain teasers."
-            val importance = NotificationManager.IMPORTANCE_HIGH
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description = descriptionText
                 enableLights(true)
@@ -90,30 +90,6 @@ object NotificationScheduler {
      */
     fun cancelReminder(context: Context) {
         getWorkManager(context)?.cancelUniqueWork(UNIQUE_WORK_NAME)
-    }
-
-    /**
-     * Debug testing trigger: fires a notification in [delaySeconds] seconds (e.g. 5s)
-     * so testing does not require waiting 24 hours. Bypasses Smart Skip and foreground suppression.
-     */
-    fun triggerInstantTest(context: Context, delaySeconds: Long = 5) {
-        createNotificationChannel(context)
-
-        val constraints = Constraints.Builder()
-            .setRequiresBatteryNotLow(false)
-            .build()
-
-        val testRequest = OneTimeWorkRequestBuilder<NotificationWorker>()
-            .setInitialDelay(delaySeconds, TimeUnit.SECONDS)
-            .setConstraints(constraints)
-            .addTag("glowback_test_reminder")
-            .build()
-
-        getWorkManager(context)?.enqueueUniqueWork(
-            "test_glowback_reminder",
-            ExistingWorkPolicy.REPLACE,
-            testRequest
-        )
     }
 
     private fun getWorkManager(context: Context): WorkManager? {
@@ -215,8 +191,7 @@ object NotificationScheduler {
             .setContentTitle("Glowback")
             .setContentText(bodyText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()

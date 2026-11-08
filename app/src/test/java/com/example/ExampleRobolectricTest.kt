@@ -1,6 +1,9 @@
 package com.example
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeStorage
@@ -42,6 +45,12 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36], qualifiers = "w411dp-h891dp")
 class ExampleRobolectricTest {
 
+    companion object {
+        init {
+            MainActivity.skipSplashForTesting = true
+        }
+    }
+
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
@@ -51,6 +60,7 @@ class ExampleRobolectricTest {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
         com.example.challenge.RunStateStorage.clearRunState(context)
         context.getSharedPreferences("glowback_challenges_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test
@@ -4174,6 +4184,183 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("pause_quit_discard_button").assertDoesNotExist()
         composeTestRule.onNodeWithTag("pause_resume_button").performClick()
         composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun testStorage_fifoCapsAndRetention() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. 200 outbound codes FIFO cap
+        for (i in 1..250) {
+            ChallengeStorage.recordCreatedCode(context, "2x2-$i-T3E-HERO-K7Q-8X2AB-C")
+        }
+        val myCodes = ChallengeStorage.getMyCreatedCodes(context)
+        assertEquals("My created codes must be capped at 200 FIFO", 200, myCodes.size)
+        assertTrue(myCodes.any { it.equals("2x2-250-T3E-HERO-K7Q-8X2AB-C", ignoreCase = true) })
+        assertFalse(myCodes.any { it.equals("2x2-1-T3E-HERO-K7Q-8X2AB-C", ignoreCase = true) })
+
+        // 2. 500 consumed codes FIFO cap
+        for (i in 1..550) {
+            ChallengeStorage.markCodeConsumed(context, "3x3-$i-T3E-RIVAL-K7Q-8X2AB-C")
+        }
+        val consumed = ChallengeStorage.getConsumedCodes(context)
+        assertEquals("Consumed codes must be capped at 500 FIFO", 500, consumed.size)
+        assertTrue(consumed.any { it.equals("3x3-550-T3E-RIVAL-K7Q-8X2AB-C", ignoreCase = true) })
+        assertFalse(consumed.any { it.equals("3x3-1-T3E-RIVAL-K7Q-8X2AB-C", ignoreCase = true) })
+
+        // 3. 30-day outbound chain target expiry
+        val expiredChainId = "EXP"
+        val thirtyOneDaysAgo = System.currentTimeMillis() - (31L * 24 * 60 * 60 * 1000L)
+        ChallengeStorage.saveOutboundChainTarget(context, expiredChainId, targetScore = 15, createdAt = thirtyOneDaysAgo, seedInt = 12345)
+
+        val lookup = ChallengeStorage.inspectOutboundChainTarget(context, expiredChainId, seedInt = 12345)
+        assertEquals("Outbound chain targets older than 30 days must report EXPIRED", ChallengeStorage.ChainLookupStatus.EXPIRED, lookup.status)
+
+        // 4. Orphaned in-progress reconciliation sets outcome to LOST
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ORPHAN",
+                lastStatus = "IN_PROGRESS",
+                inProgressMaxTries = 3,
+                inProgressTriesLeft = 0,
+                inProgressCode = "2x2-10-T3E-ORPHAN-K7Q-8X2AB-C",
+                lastUserScore = 5,
+                lastTarget = 10,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastChainId = "K7Q"
+            )
+        )
+        ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
+        val reconciled = ChallengeStorage.findRivalByName(context, "ORPHAN")
+        assertNotNull(reconciled)
+        assertEquals("Orphan with 0 tries left must be reconciled to LOST", "LOST", reconciled?.lastStatus)
+        assertEquals(1, reconciled?.losses)
+    }
+
+    @Test
+    fun testSoloRecordIsolation_truthTableAndIntegration() {
+        val dummyChallenge = ChallengeItem(
+            code = "2x2-10-T3E-RIVAL-K7Q-8X2AB-C",
+            rivalName = "RIVAL",
+            gridSizeTag = "2x2",
+            targetScore = 10,
+            maxTries = 3,
+            attemptsLeft = 3,
+            bestScore = 0,
+            seed = 88888,
+            difficulty = GameDifficulty.EASY,
+            chainId = "K7Q"
+        )
+
+        // 1. Pure Solo: returns true
+        assertTrue(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = false, isRevengeRun = false, gameMode = GameMode.SOLO))
+
+        // 2. Inbound challenge: returns false
+        assertFalse(shouldUpdateSoloBest(activeChallenge = dummyChallenge, isOutboundRivalRun = false, isRevengeRun = false, gameMode = GameMode.SOLO))
+
+        // 3. Outbound rival run: returns false
+        assertFalse(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = true, isRevengeRun = false, gameMode = GameMode.SOLO))
+
+        // 4. Revenge run: returns false
+        assertFalse(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = false, isRevengeRun = true, gameMode = GameMode.SOLO))
+
+        // 5. Pass & Play multiplayer: returns false
+        assertFalse(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = false, isRevengeRun = false, gameMode = GameMode.TWO_PLAYERS))
+        assertFalse(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = false, isRevengeRun = false, gameMode = GameMode.THREE_PLAYERS))
+        assertFalse(shouldUpdateSoloBest(activeChallenge = null, isOutboundRivalRun = false, isRevengeRun = false, gameMode = GameMode.FOUR_PLAYERS))
+
+        // 6. Integration: start in-game challenge with seed 88888, advance score, verify Solo SharedPreferences remains untouched
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val soloPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val initialSoloBest = soloPrefs.getInt(KEY_BEST_SCORE, 0)
+        val soloSeedKey = bestSeedKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY)
+        val initialSoloSeed = soloPrefs.getInt(soloSeedKey, 0)
+
+        val challengeCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 10,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 88888,
+            senderName = "RIVAL",
+            chainId = "K7Q"
+        )
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(challengeCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Solo KEY_BEST_SCORE must not be updated during challenge run", initialSoloBest, soloPrefs.getInt(KEY_BEST_SCORE, 0))
+        assertEquals("Solo best seed must not be polluted by challenge seed", initialSoloSeed, soloPrefs.getInt(soloSeedKey, 0))
+        assertFalse("Solo seed must not equal challenge seed 88888", soloPrefs.getInt(soloSeedKey, 0) == 88888)
+
+        // Exit challenge to return to clean state
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_button").performClick()
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun testManifest_screenOrientationAndConfigChanges() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val pm = context.packageManager
+        val activityInfo = pm.getActivityInfo(ComponentName(context, MainActivity::class.java), PackageManager.GET_META_DATA)
+
+        assertEquals("MainActivity must be locked to portrait", ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, activityInfo.screenOrientation)
+
+        val expectedFlags = ActivityInfo.CONFIG_ORIENTATION or
+            ActivityInfo.CONFIG_SCREEN_SIZE or
+            ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE or
+            ActivityInfo.CONFIG_SCREEN_LAYOUT or
+            ActivityInfo.CONFIG_KEYBOARD_HIDDEN or
+            ActivityInfo.CONFIG_UI_MODE or
+            ActivityInfo.CONFIG_FONT_SCALE or
+            ActivityInfo.CONFIG_DENSITY or
+            ActivityInfo.CONFIG_LAYOUT_DIRECTION or
+            ActivityInfo.CONFIG_LOCALE
+
+        assertTrue(
+            "MainActivity configChanges must include orientation, screen sizes, layout, keyboard, uiMode, fontScale, density, layoutDirection, and locale",
+            (activityInfo.configChanges and expectedFlags) == expectedFlags
+        )
+    }
+
+    @Test
+    fun testPlaybackSafety_midPlaybackRestartNoConcurrentModificationException() {
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Start Solo game
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Open pause sheet and restart mid-playback
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify game restarted cleanly and is in WATCHING or PLAYING state without ConcurrentModificationException
+        composeTestRule.onNodeWithTag("settings_button").assertIsDisplayed()
     }
 }
 

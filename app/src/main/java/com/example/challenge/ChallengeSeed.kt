@@ -2,6 +2,15 @@ package com.example.challenge
 
 import java.util.Random
 
+private val ZERO_WIDTH_REGEX = Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]")
+private val UNICODE_DASH_REGEX = Regex("[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]")
+private val V2_EXTRACTION_REGEX = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,4}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
+private val V1_EXTRACTION_REGEX = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
+private val V0_EXTRACTION_REGEX = Regex("""(?<![A-Za-z0-9_-])\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b(?!-[A-Za-z0-9_])""", RegexOption.IGNORE_CASE)
+private val GRID_REGEX = Regex("^([234]x[234]|5x4)$")
+private val TD_MATCH_REGEX = Regex("^([TR])([135F])([EH])$")
+private val TD_LEGACY_MATCH_REGEX = Regex("^([TR])?([135F])?([EH])?$")
+
 /**
  * Deterministic seed generator, Base32 encoder/decoder, and checksum calculator for Glowback.
  * Format v2 (7 segments): [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[5-char Seed]-[1-char Checksum]
@@ -21,13 +30,13 @@ object ChallengeSeed {
      * Sanitizes a player's display name:
      * - Replaces spaces with underscores
      * - Converts to uppercase
-     * - Retains only letters, digits, and underscores
+     * - Retains only letters, digits, and underscores (ASCII only)
      * - Limits to 10 characters
      * - Defaults to "HERO" if empty
      */
     fun sanitizePlayerName(rawName: String?): String {
         if (rawName.isNullOrBlank()) return "HERO"
-        val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it.isLetterOrDigit() || it == '_' }
+        val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }.trim('_')
         val truncated = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
         return truncated.ifEmpty { "HERO" }
     }
@@ -128,9 +137,6 @@ object ChallengeSeed {
      *
      * Returns null if invalid structure, invalid characters, or failed checksum.
      */
-    private val ZERO_WIDTH_REGEX = Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]")
-    private val UNICODE_DASH_REGEX = Regex("[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]")
-
     /**
      * Strips invisible zero-width formatting characters (e.g. from WhatsApp/Telegram/iOS copy-paste)
      * and normalizes Unicode en-dashes/em-dashes/minus signs to standard ASCII '-'.
@@ -156,24 +162,21 @@ object ChallengeSeed {
         }
 
         // Format v2 7-segment: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
-        val v2Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,4}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
-        v2Regex.find(cleanedInput)?.let { m ->
+        V2_EXTRACTION_REGEX.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             // Hard stop: if a 7-segment v2 code structure is present, return it ONLY if checksum passes, otherwise null (never fall back to v0)
             return if (parseInternal(cand) != null) cand else null
         }
 
         // 5-segment Legacy format: [Grid]-[Target]-[T/R][tries][Diff]-[Seed]-[Checksum]
-        val v1Regex = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
-        v1Regex.find(cleanedInput)?.let { m ->
+        V1_EXTRACTION_REGEX.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             // Hard stop: if a 5-segment v1 code structure is present, return it ONLY if checksum passes, otherwise null
             return if (parseInternal(cand) != null) cand else null
         }
 
         // 4-segment / 3-segment Legacy format — negative lookahead (?!-[A-Za-z0-9_]) ensures a 5/6/7-segment code can never have its first 4 segments sliced off
-        val v0Regex = Regex("""(?<![A-Za-z0-9_-])\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b(?!-[A-Za-z0-9_])""", RegexOption.IGNORE_CASE)
-        v0Regex.find(cleanedInput)?.let { m ->
+        V0_EXTRACTION_REGEX.find(cleanedInput)?.let { m ->
             val cand = m.value.trim()
             if (parseInternal(cand) != null) return cand
         }
@@ -205,16 +208,16 @@ object ChallengeSeed {
         // 7-segment Format v2: [Grid]-[Target]-[TD]-[NAME]-[CHAIN]-[Seed]-[Checksum]
         if (parts.size == 7) {
             val gridTag = parts[0].lowercase()
-            if (!Regex("^([234]x[234]|5x4)$").matches(gridTag)) return null
+            if (!GRID_REGEX.matches(gridTag)) return null
 
-            // REPLY-CODE EXEMPTION: Inbound parser accepts targetScore >= 1 so reply codes
+            // REPLY-CODE EXEMPTION: Inbound parser accepts targetScore in 1..999 so reply codes
             // (where a friend lost early at score 1..4) and legacy codes remain valid,
             // even though outbound initial challenge creation requires score >= 5.
             val targetScore = parts[1].toIntOrNull() ?: return null
-            if (targetScore <= 0) return null
+            if (targetScore !in 1..999) return null
 
             val td = parts[2]
-            val tdMatch = Regex("^([TR])([135F])([EH])$").matchEntire(td) ?: return null
+            val tdMatch = TD_MATCH_REGEX.matchEntire(td) ?: return null
             val typePrefix = tdMatch.groupValues[1].uppercase()
             val isRevenge = typePrefix == "R"
             val triesChar = tdMatch.groupValues[2]
@@ -259,14 +262,14 @@ object ChallengeSeed {
         // 5-segment Format v1 (Legacy): [Grid]-[Target]-[T/R][tries][Difficulty]-[Seed]-[Checksum]
         if (parts.size == 5) {
             val gridTag = parts[0].lowercase()
-            if (!Regex("^([234]x[234]|5x4)$").matches(gridTag)) return null
+            if (!GRID_REGEX.matches(gridTag)) return null
 
-            // REPLY-CODE EXEMPTION: Accept inbound targetScore >= 1
+            // REPLY-CODE EXEMPTION: Accept inbound targetScore in 1..999
             val targetScore = parts[1].toIntOrNull() ?: return null
-            if (targetScore <= 0) return null
+            if (targetScore !in 1..999) return null
 
             val td = parts[2]
-            val tdMatch = Regex("^([TR])?([135F])?([EH])?$").matchEntire(td) ?: return null
+            val tdMatch = TD_LEGACY_MATCH_REGEX.matchEntire(td) ?: return null
             val typePrefix = tdMatch.groupValues[1].uppercase().ifEmpty { "T" }
             val isRevenge = typePrefix == "R"
             val triesChar = tdMatch.groupValues[2]
@@ -308,13 +311,13 @@ object ChallengeSeed {
         // Option B: [Grid]-[Target]-[Seed]-[Checksum] (e.g. 2x2-12-8X2A-C)
         if (parts.size == 4) {
             val gridTag = parts[0].lowercase()
-            if (!Regex("^([234]x[234]|5x4)$").matches(gridTag)) return null
+            if (!GRID_REGEX.matches(gridTag)) return null
 
             val targetScore = parts[1].toIntOrNull() ?: return null
-            if (targetScore <= 0) return null
+            if (targetScore !in 1..999) return null
 
             // Check if parts[2] is a TD spec: e.g. T5, T3, T3H, TFE, TFH, R3H
-            val tdMatch = Regex("^([TR])?([135F])?([EH])?$").matchEntire(parts[2])
+            val tdMatch = TD_LEGACY_MATCH_REGEX.matchEntire(parts[2])
             val seedFromPart3 = decodeSeed(parts[3])
             if (tdMatch != null && seedFromPart3 != null) {
                 val typePrefix = tdMatch.groupValues[1].uppercase().ifEmpty { "T" }
@@ -368,10 +371,10 @@ object ChallengeSeed {
         // 3-segment legacy format: [Grid]-[Target]-[Seed] (e.g. 3x3-15-B4Y9)
         if (parts.size == 3) {
             val gridTag = parts[0].lowercase()
-            if (!Regex("^([234]x[234]|5x4)$").matches(gridTag)) return null
+            if (!GRID_REGEX.matches(gridTag)) return null
 
             val targetScore = parts[1].toIntOrNull() ?: return null
-            if (targetScore <= 0) return null
+            if (targetScore !in 1..999) return null
 
             val seedStr = parts[2]
             val seedInt = decodeSeed(seedStr) ?: return null

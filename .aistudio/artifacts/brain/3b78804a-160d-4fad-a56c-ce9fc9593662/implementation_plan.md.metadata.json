@@ -1,6 +1,6 @@
 {
-  "summary":  "Architectural plan for PASS 5.30: Solo Voluntary Game Over ('End Run & Keep Score') in pause menu. Enables players in a hurry to cleanly bank and finalize scores of 5+ to records and seeds without forcing accidental score loss or cheat-prone save-and-resume. Preserves 100% isolation for 2P/3P/4P Pass & Play, Inbound Duels, and Outbound Rival runs.",
-  "updatedAt":  "2026-11-08T06:16:34.873652534Z",
+  "summary":  "Final revised implementation plan incorporating approved test adjustments: checksum mutation test specifies guaranteed detection paths (target score digit shifts) and statistical bounds without format changes, Step 6 adds assembleDebug verification for fresh clones without keystore or env vars, and transparent reporting of all executed and non-executed commands.",
+  "updatedAt":  "2026-11-08T15:23:35.485231944Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

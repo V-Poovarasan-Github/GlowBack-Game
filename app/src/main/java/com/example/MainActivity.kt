@@ -596,6 +596,13 @@ internal fun writeBestScore(
     editor.apply()
 }
 
+internal fun shouldUpdateSoloBest(
+    activeChallenge: ChallengeItem?,
+    isOutboundRivalRun: Boolean,
+    isRevengeRun: Boolean,
+    gameMode: GameMode
+): Boolean = activeChallenge == null && !isOutboundRivalRun && !isRevengeRun && gameMode == GameMode.SOLO
+
 internal fun getBestBoardRecord(
     prefs: SharedPreferences,
     gridTag: String,
@@ -668,15 +675,11 @@ class MainActivity : ComponentActivity() {
         NotificationScheduler.createNotificationChannel(this)
 
         enableEdgeToEdge()
-        val isTestEnv = try {
-            Class.forName("org.robolectric.Robolectric") != null
-        } catch (_: Throwable) {
-            false
-        }
+        val shouldSkipSplash = intent.getBooleanExtra(EXTRA_SKIP_SPLASH, false) || skipSplashForTesting
 
         setContent {
-            var showSplash by remember { mutableStateOf(!isTestEnv && !skipSplashForTesting) }
-            var isSplashDismissed by remember { mutableStateOf(isTestEnv || skipSplashForTesting) }
+            var showSplash by remember { mutableStateOf(!shouldSkipSplash) }
+            var isSplashDismissed by remember { mutableStateOf(shouldSkipSplash) }
 
             if (showSplash) {
                 LaunchedEffect(Unit) {
@@ -705,6 +708,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_SKIP_SPLASH = "com.example.EXTRA_SKIP_SPLASH"
+        @androidx.annotation.VisibleForTesting
         var skipSplashForTesting: Boolean = false
     }
 
@@ -1315,6 +1320,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     }
 
     fun updateBestScoreIfNeeded(newScore: Int) {
+        if (!shouldUpdateSoloBest(activeChallenge, isOutboundRivalRun, isRevengeRun, gameMode)) return
         if (newScore > bestScore) {
             bestScore = newScore
             writeBestScore(sharedPrefs, gridSize, paceMode, difficultyMode, newScore, currentRunSeed)
@@ -1641,6 +1647,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
 
     fun startWatchMyRoundReplay() {
         if (gameState != GameState.GAME_OVER || sequence.isEmpty() || isReplayingLostRound) return
+        val steps = sequence.toList()
         ghostReplayJob?.cancel()
         ghostReplayJob = coroutineScope.launch {
             isReplayingLostRound = true
@@ -1648,7 +1655,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             activePadId = null
             ghostReplayStep = 0
             delay(300L)
-            for ((index, pad) in sequence.withIndex()) {
+            for ((index, pad) in steps.withIndex()) {
+                ensureActive()
                 if (gameState != GameState.GAME_OVER) break
                 ghostReplayStep = index + 1
                 activePadId = pad.id
@@ -1666,11 +1674,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
 
     LaunchedEffect(gameState, roundTrigger, isLifecyclePaused, isRoundClearCelebration, isHandoffVisible, isChallengeReadyGateVisible, isVictoryDecisionVisible) {
         if (gameState == GameState.WATCHING && sequence.isNotEmpty() && !isLifecyclePaused && !isRoundClearCelebration && !isHandoffVisible && !isChallengeReadyGateVisible && !isVictoryDecisionVisible) {
+            val steps = sequence.toList()
+            val playbackRoundTrigger = roundTrigger
             activePadId = null
             wrongShakePadId = null
             delay(450L)
-            for (pad in sequence) {
-                if (isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible || isChallengeReadyGateVisible || isVictoryDecisionVisible) return@LaunchedEffect
+            for (pad in steps) {
+                ensureActive()
+                if (roundTrigger != playbackRoundTrigger || isLifecyclePaused || gameState != GameState.WATCHING || isHandoffVisible || isChallengeReadyGateVisible || isVictoryDecisionVisible) return@LaunchedEffect
                 activePadId = pad.id
                 if (feedbackEnabled && effectiveVolume > 0f) {
                     audioSynth.playPadSpecTone(pad, effectiveVolume)
@@ -1679,7 +1690,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 activePadId = null
                 delay(gapDurationMs)
             }
-            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible && !isChallengeReadyGateVisible && !isVictoryDecisionVisible) {
+            if (!isLifecyclePaused && gameState == GameState.WATCHING && !isHandoffVisible && !isChallengeReadyGateVisible && !isVictoryDecisionVisible && roundTrigger == playbackRoundTrigger) {
                 playerStepIndex = 0
                 gameState = GameState.PLAYING
             }
@@ -2258,25 +2269,28 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     .padding(innerPadding)
             )
         } else {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Brush.radialGradient(listOf(Color(0xFF1E293B), Color(0xFF0F172A), Color(0xFF090D16)), radius = 1400f))
                     .padding(innerPadding)
             ) {
+                val isShortWindow = maxHeight < 550.dp
+                val contentVerticalPadding = if (isShortWindow) 4.dp else 10.dp
+                val itemSpacing = if (isShortWindow) 4.dp else 10.dp
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .widthIn(max = maxContentWidth)
                         .align(Alignment.Center)
-                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                        .padding(horizontal = 20.dp, vertical = contentVerticalPadding),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(itemSpacing)
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(if (isShortWindow) 4.dp else 8.dp)
                     ) {
                         TopTitleRow(
                             feedbackMode = feedbackMode,
@@ -2513,12 +2527,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         val (targetWidth, targetHeight) = if (is5x4) {
                             val maxCapW = (90.dp * 4) + (gridSize.spacingDp.dp * 3)
                             val widthByHeight = maxHeight * (4f / 5f)
-                            val chosenW = minOf(maxWidth, widthByHeight, maxCapW)
-                            chosenW to (chosenW * (5f / 4f))
+                            val chosenW = minOf(maxWidth, widthByHeight, maxCapW).coerceAtLeast(0.dp)
+                            chosenW to (chosenW * (5f / 4f)).coerceAtLeast(0.dp)
                         } else {
                             val perPadCap = if (gridSize == GridSize.TWO_BY_TWO) 180.dp else 150.dp
                             val maxBoardCap = (perPadCap * gridSize.dimension) + (gridSize.spacingDp.dp * (gridSize.dimension - 1))
-                            val side = minOf(maxWidth, maxHeight, maxBoardCap)
+                            val side = minOf(maxWidth, maxHeight, maxBoardCap).coerceAtLeast(0.dp)
                             side to side
                         }
                         val animatedGridWidth by animateDpAsState(
@@ -4519,7 +4533,7 @@ private fun PodiumColumn(
                 ) {
                     Text(
                         text = if (totalPlayers >= 4) "CHAMP" else "CHAMPION",
-                        fontSize = 9.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 0.4.sp,
                         maxLines = 1,
