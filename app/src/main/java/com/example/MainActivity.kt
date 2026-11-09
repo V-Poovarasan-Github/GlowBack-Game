@@ -95,6 +95,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -107,6 +114,7 @@ enum class AppScreen { HOME, LEADERBOARD }
 enum class GameState { IDLE, WATCHING, PLAYING, GAME_OVER }
 enum class ActiveDialog {
     NONE,
+    FIRST_NAME_SETUP,
     TRIES_SELECTOR,
     ENTER_CHALLENGE,
     FIRST_TIME_SHARE_GATE,
@@ -993,6 +1001,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var activeDialog by remember {
         mutableStateOf(if (ChallengeStorage.getPendingShare(context) != null) ActiveDialog.DID_YOU_SHARE else ActiveDialog.NONE)
     }
+    var pendingStartAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    fun ensurePlayerNameConfigured(onReady: () -> Unit) {
+        if (ChallengeStorage.hasConfiguredName(context)) {
+            onReady()
+        } else {
+            pendingStartAction = onReady
+            activeDialog = ActiveDialog.FIRST_NAME_SETUP
+        }
+    }
     var activeShareSource by remember { mutableStateOf<ShareSource>(ShareSource.FromBoardSelector) }
     var pendingReplyAfterNameSetup by remember { mutableStateOf(false) }
     var awaitingChallengeForDialog by remember {
@@ -1585,57 +1603,59 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     }
 
     fun startChallenge(item: ChallengeItem) {
-        resetRunState()
-        isOutboundRivalRun = false
-        isRevengeRun = false
-        revengeTargetScore = 0
-        hasSharedCurrentRivalRun = false
-        val existingInProgress = ChallengeStorage.findInProgressChallenge(
-            context = context,
-            code = item.code,
-            chainId = item.chainId,
-            rivalName = item.rivalName,
-            seedInt = item.seed
-        )
-        val resolvedItem = if (existingInProgress != null && item.attemptsLeft == item.maxTries && existingInProgress.attemptsLeft < item.maxTries) {
-            existingInProgress.copy(rivalName = item.rivalName)
-        } else {
-            item
-        }
-        ChallengeStorage.saveInProgressChallenge(context, resolvedItem)
-        savedChallenges = ChallengeStorage.loadChallenges(context)
-        activeChallenge = resolvedItem
-        currentRivalNameForShare = resolvedItem.rivalName
-        currentRivalChainId = resolvedItem.chainId.ifEmpty { null }
-        difficultyMode = resolvedItem.difficulty
-        challengeAttemptsLeft = resolvedItem.attemptsLeft
-        isChallengeWon = false
-        isChallengeTied = false
-        isChallengeLost = false
-        hasRecordedChallengeOutcome = false
-        hasSentChallengeReply = false
-        gameMode = GameMode.SOLO
+        ensurePlayerNameConfigured {
+            resetRunState()
+            isOutboundRivalRun = false
+            isRevengeRun = false
+            revengeTargetScore = 0
+            hasSharedCurrentRivalRun = false
+            val existingInProgress = ChallengeStorage.findInProgressChallenge(
+                context = context,
+                code = item.code,
+                chainId = item.chainId,
+                rivalName = item.rivalName,
+                seedInt = item.seed
+            )
+            val resolvedItem = if (existingInProgress != null && item.attemptsLeft == item.maxTries && existingInProgress.attemptsLeft < item.maxTries) {
+                existingInProgress.copy(rivalName = item.rivalName)
+            } else {
+                item
+            }
+            ChallengeStorage.saveInProgressChallenge(context, resolvedItem)
+            savedChallenges = ChallengeStorage.loadChallenges(context)
+            activeChallenge = resolvedItem
+            currentRivalNameForShare = resolvedItem.rivalName
+            currentRivalChainId = resolvedItem.chainId.ifEmpty { null }
+            difficultyMode = resolvedItem.difficulty
+            challengeAttemptsLeft = resolvedItem.attemptsLeft
+            isChallengeWon = false
+            isChallengeTied = false
+            isChallengeLost = false
+            hasRecordedChallengeOutcome = false
+            hasSentChallengeReply = false
+            gameMode = GameMode.SOLO
 
-        val targetGrid = when (resolvedItem.gridSizeTag.lowercase()) {
-            "3x3" -> GridSize.THREE_BY_THREE
-            "4x4" -> GridSize.FOUR_BY_FOUR
-            "5x4" -> GridSize.FIVE_BY_FOUR
-            else -> GridSize.TWO_BY_TWO
-        }
-        gridSize = targetGrid
-        // PASS 5.19 Stage B #2: Force Classic pace for all async challenges
-        paceMode = PaceMode.CLASSIC
+            val targetGrid = when (resolvedItem.gridSizeTag.lowercase()) {
+                "3x3" -> GridSize.THREE_BY_THREE
+                "4x4" -> GridSize.FOUR_BY_FOUR
+                "5x4" -> GridSize.FIVE_BY_FOUR
+                else -> GridSize.TWO_BY_TWO
+            }
+            gridSize = targetGrid
+            // PASS 5.19 Stage B #2: Force Classic pace for all async challenges
+            paceMode = PaceMode.CLASSIC
 
-        val rng = java.util.Random(resolvedItem.seed.toLong())
-        currentRunSeed = resolvedItem.seed
-        challengeRng = rng
-        soloRng = rng
-        val pads = padsForGridSize(targetGrid)
-        sequence.add(pads[rng.nextInt(pads.size)])
-        isChallengeReadyGateVisible = true
-        roundTrigger++
-        gameState = GameState.WATCHING
-        saveActiveRun()
+            val rng = java.util.Random(resolvedItem.seed.toLong())
+            currentRunSeed = resolvedItem.seed
+            challengeRng = rng
+            soloRng = rng
+            val pads = padsForGridSize(targetGrid)
+            sequence.add(pads[rng.nextInt(pads.size)])
+            isChallengeReadyGateVisible = true
+            roundTrigger++
+            gameState = GameState.WATCHING
+            saveActiveRun()
+        }
     }
 
     fun startRevengeGame(
@@ -1643,57 +1663,59 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         targetGrid: GridSize? = null,
         targetDifficulty: GameDifficulty? = null
     ) {
-        // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3 + PASS 5.19 Stage B #2 + PASS 5.22:
-        // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rivalScoreOnGrid; must beat target to share).
-        // - "👑 Send Challenge" (WON) / unplayed grid: Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
-        // - Preserve rival.lastChainId in currentRivalChainId so all rally matches stack on the same Rival Card.
-        // - Force Classic pace for all revenge runs.
-        resetRunState()
-        val resolvedGrid = targetGrid ?: when (rival.lastGrid.lowercase()) {
-            "3x3" -> GridSize.THREE_BY_THREE
-            "4x4" -> GridSize.FOUR_BY_FOUR
-            "5x4" -> GridSize.FIVE_BY_FOUR
-            else -> GridSize.TWO_BY_TWO
-        }
-        val resolvedDifficulty = targetDifficulty ?: rival.lastDifficulty
-        gridSize = resolvedGrid
-        difficultyMode = resolvedDifficulty
-        paceMode = PaceMode.CLASSIC
-        activeChallenge = null
-        challengeRng = null
-        currentRivalNameForShare = rival.name
-        currentRivalChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }
+        ensurePlayerNameConfigured {
+            // PASS 5.13 Item 3 & 8 + PASS 5.17 Item 1 & 3 + PASS 5.19 Stage B #2 + PASS 5.22:
+            // - "⚡ Get Revenge" (LOST) and "🤝 Tie-Breaker" (TIED): Use Revenge Gate (isRevengeRun = true, revengeTargetScore = rivalScoreOnGrid; must beat target to share).
+            // - "👑 Send Challenge" (WON) / unplayed grid: Use standard Solo Gate (isRevengeRun = false, revengeTargetScore = 0; score >= 5 to share).
+            // - Preserve rival.lastChainId in currentRivalChainId so all rally matches stack on the same Rival Card.
+            // - Force Classic pace for all revenge runs.
+            resetRunState()
+            val resolvedGrid = targetGrid ?: when (rival.lastGrid.lowercase()) {
+                "3x3" -> GridSize.THREE_BY_THREE
+                "4x4" -> GridSize.FOUR_BY_FOUR
+                "5x4" -> GridSize.FIVE_BY_FOUR
+                else -> GridSize.TWO_BY_TWO
+            }
+            val resolvedDifficulty = targetDifficulty ?: rival.lastDifficulty
+            gridSize = resolvedGrid
+            difficultyMode = resolvedDifficulty
+            paceMode = PaceMode.CLASSIC
+            activeChallenge = null
+            challengeRng = null
+            currentRivalNameForShare = rival.name
+            currentRivalChainId = rival.lastChainId.ifEmpty { ChallengeSeed.generateChainId() }
 
-        val gridTag = when (resolvedGrid) {
-            GridSize.THREE_BY_THREE -> "3x3"
-            GridSize.FOUR_BY_FOUR -> "4x4"
-            GridSize.FIVE_BY_FOUR -> "5x4"
-            else -> "2x2"
-        }
-        val (gridRivalScore, _, gridStatus) = ChallengeStorage.getGridTargetInfo(rival, gridTag)
-        val needsRevengeGate = (gridStatus == "LOST" || gridStatus == "TIED") && gridRivalScore > 0
-        isOutboundRivalRun = true
-        hasSharedCurrentRivalRun = false
-        isRevengeRun = needsRevengeGate
-        revengeTargetScore = if (needsRevengeGate) gridRivalScore else 0
+            val gridTag = when (resolvedGrid) {
+                GridSize.THREE_BY_THREE -> "3x3"
+                GridSize.FOUR_BY_FOUR -> "4x4"
+                GridSize.FIVE_BY_FOUR -> "5x4"
+                else -> "2x2"
+            }
+            val (gridRivalScore, _, gridStatus) = ChallengeStorage.getGridTargetInfo(rival, gridTag)
+            val needsRevengeGate = (gridStatus == "LOST" || gridStatus == "TIED") && gridRivalScore > 0
+            isOutboundRivalRun = true
+            hasSharedCurrentRivalRun = false
+            isRevengeRun = needsRevengeGate
+            revengeTargetScore = if (needsRevengeGate) gridRivalScore else 0
 
-        isChallengeWon = false
-        isChallengeTied = false
-        isChallengeLost = false
-        hasRecordedChallengeOutcome = false
-        hasSentChallengeReply = false
-        gameMode = GameMode.SOLO
-        selectedShareTries = 3
-        val seed = ChallengeSeed.generateRandomSeed()
-        currentRunSeed = seed
-        val rng = java.util.Random(seed.toLong())
-        soloRng = rng
-        val pads = padsForGridSize(resolvedGrid)
-        sequence.add(pads[rng.nextInt(pads.size)])
-        isChallengeReadyGateVisible = true
-        roundTrigger++
-        gameState = GameState.WATCHING
-        saveActiveRun()
+            isChallengeWon = false
+            isChallengeTied = false
+            isChallengeLost = false
+            hasRecordedChallengeOutcome = false
+            hasSentChallengeReply = false
+            gameMode = GameMode.SOLO
+            selectedShareTries = 3
+            val seed = ChallengeSeed.generateRandomSeed()
+            currentRunSeed = seed
+            val rng = java.util.Random(seed.toLong())
+            soloRng = rng
+            val pads = padsForGridSize(resolvedGrid)
+            sequence.add(pads[rng.nextInt(pads.size)])
+            isChallengeReadyGateVisible = true
+            roundTrigger++
+            gameState = GameState.WATCHING
+            saveActiveRun()
+        }
     }
 
     fun actuallyStartNewGame() {
@@ -1760,13 +1782,15 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     }
 
     fun startNewGame() {
-        if (gameState == GameState.IDLE) {
-            clearRevengeState()
-        }
-        if (activeRunState != null && activeRunState!!.modeName != GameMode.SOLO.name) {
-            activeDialog = ActiveDialog.DISCARD_CONFIRM
-        } else {
-            actuallyStartNewGame()
+        ensurePlayerNameConfigured {
+            if (gameState == GameState.IDLE) {
+                clearRevengeState()
+            }
+            if (activeRunState != null && activeRunState!!.modeName != GameMode.SOLO.name) {
+                activeDialog = ActiveDialog.DISCARD_CONFIRM
+            } else {
+                actuallyStartNewGame()
+            }
         }
     }
 
@@ -2992,6 +3016,25 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     // ROOT DIALOG MUTUAL EXCLUSION: Rendered at root Scaffold level, exactly one active at a time
     when (activeDialog) {
         ActiveDialog.NONE -> Unit
+        ActiveDialog.FIRST_NAME_SETUP -> {
+            FirstNameSetupDialog(
+                onConfirm = { chosenName ->
+                    ChallengeStorage.setMyName(context, chosenName)
+                    activeDialog = ActiveDialog.NONE
+                    val action = pendingStartAction
+                    pendingStartAction = null
+                    action?.invoke()
+                },
+                onSkip = {
+                    // CRITICAL: Treat system back button as Skip, do not just close!
+                    ChallengeStorage.setMyName(context, "HERO")
+                    activeDialog = ActiveDialog.NONE
+                    val action = pendingStartAction
+                    pendingStartAction = null
+                    action?.invoke()
+                }
+            )
+        }
         ActiveDialog.FIRST_TIME_SHARE_GATE -> {
             FirstTimeShareGateDialog(
                 currentBestScore = if (gameState == GameState.GAME_OVER) currentScore else maxOf(currentScore, bestScore),
@@ -5786,6 +5829,142 @@ private fun VictoryDecisionDialog(
                     )
                 ) {
                     Text("▶ Keep Playing", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FirstNameSetupDialog(
+    onConfirm: (String) -> Unit,
+    onSkip: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {
+            // CRITICAL: Treat system back button as Skip, do not just close!
+            onSkip()
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        val focusRequester = remember { FocusRequester() }
+        var nameInput by rememberSaveable { mutableStateOf("") }
+        var isSubmitting by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .widthIn(max = 400.dp)
+                .border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(22.dp))
+                .testTag("first_name_dialog"),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    text = "Create your player name",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "This name appears on challenges you share. You can change it later in Settings.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { input ->
+                        val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
+                        nameInput = cleaned
+                    },
+                    placeholder = { Text("e.g. HERO", color = Color(0xFF64748B)) },
+                    singleLine = true,
+                    supportingText = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Text(
+                                text = "${nameInput.length}/10",
+                                color = Color(0xFF64748B),
+                                fontSize = 12.sp
+                            )
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (nameInput.isNotBlank() && !isSubmitting) {
+                                isSubmitting = true
+                                onConfirm(nameInput)
+                            }
+                        }
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF00E5FF),
+                        unfocusedBorderColor = Color(0xFF334155),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                        .semantics { contentDescription = "Player name" }
+                        .testTag("first_name_input")
+                )
+
+                Button(
+                    onClick = {
+                        if (nameInput.isNotBlank() && !isSubmitting) {
+                            isSubmitting = true
+                            onConfirm(nameInput)
+                        }
+                    },
+                    enabled = nameInput.isNotBlank() && !isSubmitting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("first_name_confirm_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color(0xFF090D16),
+                        disabledContainerColor = Color(0xFF334155),
+                        disabledContentColor = Color(0xFF64748B)
+                    )
+                ) {
+                    Text("Let's play", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+
+                TextButton(
+                    onClick = {
+                        if (!isSubmitting) {
+                            isSubmitting = true
+                            onSkip()
+                        }
+                    },
+                    modifier = Modifier.testTag("first_name_skip_button")
+                ) {
+                    Text("Skip", color = Color(0xFF94A3B8), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

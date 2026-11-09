@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import android.media.AudioTrack
@@ -67,6 +68,7 @@ class ExampleRobolectricTest {
         com.example.challenge.RunStateStorage.clearRunState(context)
         context.getSharedPreferences("glowback_challenges_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "TESTER")
     }
 
     @Test
@@ -538,6 +540,7 @@ class ExampleRobolectricTest {
 
         // Seed a best score so the player passes the first-time score gate, then verify ChallengerNameSetupDialog -> ShareTriesSelectorDialog
         prefs.edit().putInt(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY), 5).apply()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
         composeTestRule.onNodeWithTag("empty_share_button").performClick()
         composeTestRule.waitForIdle()
 
@@ -4829,6 +4832,162 @@ class ExampleRobolectricTest {
         } finally {
             synth.release()
         }
+    }
+
+    @Test
+    fun testFirstNameDialog_freshInstall_showsDialogAndBlocksStart() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        assertFalse(ChallengeStorage.hasConfiguredName(context))
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("first_name_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Create your player name").assertIsDisplayed()
+        composeTestRule.onNodeWithText("This name appears on challenges you share. You can change it later in Settings.").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("first_name_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("first_name_skip_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFirstNameDialog_enteringNameAndConfirm_savesAndStartsGame() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("first_name_input").performTextInput("ACE")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("ACE", ChallengeStorage.getMyName(context))
+        assertTrue(ChallengeStorage.hasConfiguredName(context))
+        composeTestRule.onNodeWithTag("first_name_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("start_game_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pad_green").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFirstNameDialog_skipSavesHeroAndStarts() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("first_name_skip_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("HERO", ChallengeStorage.getMyName(context))
+        assertTrue(ChallengeStorage.hasConfiguredName(context))
+        composeTestRule.onNodeWithTag("first_name_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("start_game_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pad_green").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFirstNameDialog_confirmButtonDisabledWhenEmpty() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Empty at start -> confirm button is disabled
+        composeTestRule.onNodeWithTag("first_name_confirm_button").assertIsNotEnabled()
+
+        // Entering punctuation -> filtered out to empty -> button remains disabled
+        composeTestRule.onNodeWithTag("first_name_input").performTextInput("@#$")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").assertIsNotEnabled()
+
+        // Entering valid characters -> enabled
+        composeTestRule.onNodeWithTag("first_name_input").performTextInput("NOVA")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").assertIsEnabled()
+
+        // Clearing input -> disabled again
+        composeTestRule.onNodeWithTag("first_name_input").performTextReplacement("")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").assertIsNotEnabled()
+    }
+
+    @Test
+    fun testFirstNameDialog_preConfiguredNameNeverShows() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "VETERAN")
+        assertTrue(ChallengeStorage.hasConfiguredName(context))
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("first_name_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("start_game_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("pad_green").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFirstNameDialog_settingsFieldSync() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "NEXUS")
+        composeTestRule.waitForIdle()
+
+        // Open settings sheet
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify settings input displays existing name and updates storage when changed
+        composeTestRule.onNodeWithTag("settings_my_name_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_my_name_input").performTextReplacement("PHOENIX")
+        composeTestRule.waitForIdle()
+
+        assertEquals("PHOENIX", ChallengeStorage.getMyName(context))
+        assertTrue(ChallengeStorage.hasConfiguredName(context))
+    }
+
+    @Test
+    fun testFirstNameDialog_challengeAndRevenge_showsDialogThenContinues() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        assertFalse(ChallengeStorage.hasConfiguredName(context))
+
+        composeTestRule.waitForIdle()
+        // Open Rivalry tab and click Paste Code button
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput("2x2-12-8X2A")
+        composeTestRule.onNodeWithTag("challenge_rival_input").performTextInput("Alex")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirm LegacyCodeNameDialog
+        composeTestRule.onNodeWithTag("legacy_dialog_submit").performClick()
+        composeTestRule.waitForIdle()
+
+        // Now first_name_dialog must intercept before starting the challenge!
+        composeTestRule.onNodeWithTag("first_name_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("first_name_input").performTextInput("CHALLENGER")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("first_name_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify name is saved and in-game challenge banner is displayed
+        assertEquals("CHALLENGER", ChallengeStorage.getMyName(context))
+        composeTestRule.onNodeWithTag("first_name_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
     }
 }
 
