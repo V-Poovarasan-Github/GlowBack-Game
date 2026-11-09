@@ -36,7 +36,7 @@ object ChallengeSeed {
      */
     fun sanitizePlayerName(rawName: String?): String {
         if (rawName.isNullOrBlank()) return "HERO"
-        val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }.trim('_')
+        val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
         val truncated = if (cleaned.length > 10) cleaned.substring(0, 10) else cleaned
         return truncated.ifEmpty { "HERO" }
     }

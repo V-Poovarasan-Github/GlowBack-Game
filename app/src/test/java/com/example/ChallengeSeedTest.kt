@@ -318,12 +318,13 @@ class ChallengeSeedTest {
     fun testSanitizePlayerName_asciiFilteringAndRoundTrip() {
         assertEquals("JOS", ChallengeSeed.sanitizePlayerName("José"))
         assertEquals("HERO", ChallengeSeed.sanitizePlayerName("🚀🔥✨"))
-        assertEquals("PRO_GAMER", ChallengeSeed.sanitizePlayerName("🎮 Pro Gamer 🎯"))
+        assertEquals("_PRO_GAMER", ChallengeSeed.sanitizePlayerName("🎮 Pro Gamer 🎯"))
+        assertEquals("_BOB_", ChallengeSeed.sanitizePlayerName("_bob_"))
         assertEquals("ABCDEFGHIJ", ChallengeSeed.sanitizePlayerName("abcdefghijk_extra"))
         assertEquals("HERO", ChallengeSeed.sanitizePlayerName(null))
         assertEquals("HERO", ChallengeSeed.sanitizePlayerName(""))
         assertEquals("HERO", ChallengeSeed.sanitizePlayerName("   "))
-        assertEquals("HERO", ChallengeSeed.sanitizePlayerName("___"))
+        assertEquals("___", ChallengeSeed.sanitizePlayerName("___"))
 
         val name = ChallengeSeed.sanitizePlayerName("Neon King!")
         assertEquals("NEON_KING", name)

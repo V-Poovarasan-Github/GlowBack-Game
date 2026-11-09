@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
+import com.example.challenge.ChallengeShareHelper
 import com.example.challenge.ChallengeStorage
 import com.example.challenge.GameDifficulty
 import com.example.challenge.GridStat
@@ -14,6 +15,7 @@ import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
 import com.example.notification.NotificationContentProvider
 import com.example.notification.NotificationScheduler
+import java.io.File
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -4342,6 +4344,86 @@ class ExampleRobolectricTest {
     }
 
     @Test
+    fun testSoloRecordIsolation_positiveUpdateAndNoOverwriteOnLowerScore() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val soloPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        soloPrefs.edit().clear().commit()
+
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val perConfigKey = bestSeedKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY)
+        val perConfigScoreKey = "best_2x2_classic_EASY"
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Run 1: Pure Solo run scores 1 point
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        val run1Seed = ChallengeSeed.lastGeneratedRandomSeed
+        val indicesRun1 = ChallengeSeed.generateSequenceForRound(
+            seed = run1Seed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 2
+        )
+
+        // Wait for round 1 sequence playback (450ms intro + 650ms step + 500ms transition)
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+
+        // Tap the correct pad for round 1
+        composeTestRule.onNodeWithTag(pads2x2[indicesRun1[0]].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(200L)
+        composeTestRule.waitForIdle()
+
+        // Round 1 cleared -> score becomes 1
+        assertEquals("KEY_BEST_SCORE must update to 1 on pure Solo run", 1, soloPrefs.getInt(KEY_BEST_SCORE, 0))
+        assertEquals("Per-config best score must update to 1", 1, soloPrefs.getInt(perConfigScoreKey, 0))
+        assertEquals("Per-config best seed must match run1Seed", run1Seed, soloPrefs.getInt(perConfigKey, 0))
+
+        // Fail on round 2 to finish run 1 (advance 2600ms to cover 700ms round clear celebration + 450ms intro + 2x650ms steps)
+        composeTestRule.mainClock.advanceTimeBy(2600L)
+        composeTestRule.waitForIdle()
+        // Tap wrong pad
+        val wrongPadTag = pads2x2.first { it.id != pads2x2[indicesRun1[0]].id }.testTagId
+        composeTestRule.onNodeWithTag(wrongPadTag).performClick()
+        composeTestRule.mainClock.advanceTimeBy(800L)
+        composeTestRule.waitForIdle()
+
+        // Return Home
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(200L)
+        composeTestRule.waitForIdle()
+
+        // 2. Run 2: Second run fails at score 0 (lower score)
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+        val run2Seed = ChallengeSeed.lastGeneratedRandomSeed
+        val indicesRun2 = ChallengeSeed.generateSequenceForRound(
+            seed = run2Seed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 1
+        )
+        val wrongPadRun2 = pads2x2.first { it.id != pads2x2[indicesRun2[0]].id }.testTagId
+        composeTestRule.onNodeWithTag(wrongPadRun2).performClick()
+        composeTestRule.mainClock.advanceTimeBy(800L)
+        composeTestRule.waitForIdle()
+
+        // Assert lower score on second run did NOT overwrite the higher score (1) or original seed
+        assertEquals("KEY_BEST_SCORE must remain 1 after lower-scoring run", 1, soloPrefs.getInt(KEY_BEST_SCORE, 0))
+        assertEquals("Per-config score must remain 1", 1, soloPrefs.getInt(perConfigScoreKey, 0))
+        assertEquals("Per-config seed must remain run1Seed", run1Seed, soloPrefs.getInt(perConfigKey, 0))
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
     fun testPlaybackSafety_midPlaybackRestartNoConcurrentModificationException() {
         composeTestRule.waitForIdle()
         runCatching {
@@ -4349,18 +4431,248 @@ class ExampleRobolectricTest {
             composeTestRule.waitForIdle()
         }
 
-        // Start Solo game
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+
+        // Disable autoAdvance to control playback timing precisely
+        composeTestRule.mainClock.autoAdvance = false
+
+        // Start Solo game and reach Round 2 (2 steps in playback: 450ms intro + step 1 [650ms] + step 2 [650ms] = 1750ms)
         composeTestRule.onNodeWithTag("start_game_button").performClick()
+        val runSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val indicesR1 = ChallengeSeed.generateSequenceForRound(
+            seed = runSeed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 1
+        )
+        // Finish Round 1 playback
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+        // Clear Round 1 to enter Round 2 (2-step sequence)
+        composeTestRule.onNodeWithTag(pads2x2[indicesR1[0]].testTagId).performClick()
+        // Advance 750ms past round clear celebration + 450ms intro + 300ms into step 1 (after step 1 starts, before step 2 finishes)
+        composeTestRule.mainClock.advanceTimeBy(1500L)
         composeTestRule.waitForIdle()
 
-        // Open pause sheet and restart mid-playback
+        // We are now mid-playback of Round 2 (after step 1, before step 2 finishes).
+        // Open pause settings sheet mid-playback and tap Restart
         composeTestRule.onNodeWithTag("settings_button").performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(50L)
         composeTestRule.waitForIdle()
 
-        // Verify game restarted cleanly and is in WATCHING or PLAYING state without ConcurrentModificationException
-        composeTestRule.onNodeWithTag("settings_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(50L)
+        composeTestRule.waitForIdle()
+
+        // Verify game restarted cleanly to a fresh Round 1 in WATCHING state, and old Round 2 playback did NOT flip phase to PLAYING
+        composeTestRule.onNodeWithTag("status_header_text").assertTextContains("Watch Carefully!", substring = true)
+        composeTestRule.onNodeWithText("Your Turn!").assertDoesNotExist()
+
+        // Now advance past the full new Round 1 playback duration (1500ms) and verify no crash occurs
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("status_header_text").assertTextContains("Your Turn!", substring = true)
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun testCleanOldSharedFiles_edgeCasesAndSweep() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempFolder = File(context.cacheDir, "test_shared_challenges_${System.currentTimeMillis()}")
+        tempFolder.mkdirs()
+
+        try {
+            val now = System.currentTimeMillis()
+            val oldFile = File(tempFolder, "old_card.png").apply {
+                createNewFile()
+                setLastModified(now - (25L * 3600_000L)) // 25 hours old
+            }
+            val newFile = File(tempFolder, "new_card.png").apply {
+                createNewFile()
+                setLastModified(now - (2L * 3600_000L)) // 2 hours old
+            }
+
+            // Perform sweep with 24-hour threshold
+            ChallengeShareHelper.cleanOldSharedFiles(tempFolder, maxAgeHours = 24L)
+
+            assertFalse("File older than 24h must be deleted", oldFile.exists())
+            assertTrue("File newer than 24h must be kept", newFile.exists())
+
+            // Missing folder does not throw
+            val nonExistentFolder = File(context.cacheDir, "non_existent_dir_12345")
+            ChallengeShareHelper.cleanOldSharedFiles(nonExistentFolder, maxAgeHours = 24L)
+
+            // Non-deletable file / directory handles gracefully without aborting remaining sweep
+            val lockedSubDir = File(tempFolder, "locked_dir.png").apply {
+                mkdir()
+                setLastModified(now - (30L * 3600_000L))
+            }
+            val oldFile2 = File(tempFolder, "old_card_2.png").apply {
+                createNewFile()
+                setLastModified(now - (30L * 3600_000L))
+            }
+            ChallengeShareHelper.cleanOldSharedFiles(tempFolder, maxAgeHours = 24L)
+            assertFalse("Second old file must still be deleted even if locked directory exists", oldFile2.exists())
+        } finally {
+            tempFolder.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testIsSelfChallenge_validationAndCaseInsensitivity() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "CYBER_ACE")
+
+        val myCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 12,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 54321,
+            senderName = "CYBER_ACE",
+            chainId = "ABC"
+        )
+        ChallengeStorage.recordCreatedCode(context, myCode)
+
+        // Exact code created on this device is detected as self challenge
+        assertTrue("Own generated code must be detected as self challenge", ChallengeStorage.isSelfChallenge(context, myCode))
+        // Case-insensitive check
+        assertTrue("Self challenge check must be case-insensitive", ChallengeStorage.isSelfChallenge(context, myCode.lowercase()))
+
+        // Different code with different seed and sender is NOT self challenge
+        val rivalCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 12,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 99999,
+            senderName = "VIPER",
+            chainId = "XYZ"
+        )
+        assertFalse("Rival code must not be self challenge", ChallengeStorage.isSelfChallenge(context, rivalCode))
+    }
+
+    @Test
+    fun testIsCodeConsumed_lifecycleAnd500FifoCap() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        val testCode = "2x2-10-T3E-RIVAL-K7Q-8X2AB-C"
+        assertFalse("Code must not be consumed initially", ChallengeStorage.isCodeConsumed(context, testCode))
+
+        ChallengeStorage.markCodeConsumed(context, testCode)
+        assertTrue("Code must be consumed after markCodeConsumed", ChallengeStorage.isCodeConsumed(context, testCode))
+        assertTrue("isCodeConsumed must be case-insensitive", ChallengeStorage.isCodeConsumed(context, testCode.lowercase()))
+
+        // Test 500 FIFO eviction: add 550 codes
+        for (i in 1..550) {
+            ChallengeStorage.markCodeConsumed(context, "3x3-$i-T3E-RIVAL-K7Q-8X2AB-C")
+        }
+        val consumedList = ChallengeStorage.getConsumedCodes(context)
+        assertEquals("Consumed list must be capped at 500", 500, consumedList.size)
+        assertTrue("Newest code must be in consumed list", consumedList.any { it.equals("3x3-550-T3E-RIVAL-K7Q-8X2AB-C", ignoreCase = true) })
+        assertFalse("Oldest code (index 1) must be evicted", consumedList.any { it.equals("3x3-1-T3E-RIVAL-K7Q-8X2AB-C", ignoreCase = true) })
+    }
+
+    @Test
+    fun testRecordMatchOutcome_and_recordReplyOutcome_truthTableAndNoDoubleCount() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. recordMatchOutcome: WIN (userScore > targetScore)
+        val rWin = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "RIVAL_WIN",
+            userScore = 10,
+            targetScore = 8,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "W01"
+        )
+        assertNotNull(rWin)
+        assertEquals("Outcome must be WON", "WON", rWin?.lastStatus)
+        assertEquals(1, rWin?.wins)
+        assertEquals(0, rWin?.losses)
+        assertEquals(0, rWin?.ties)
+
+        // 2. recordMatchOutcome: LOSS (userScore < targetScore)
+        val rLoss = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "RIVAL_LOSS",
+            userScore = 5,
+            targetScore = 8,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "L01"
+        )
+        assertNotNull(rLoss)
+        assertEquals("Outcome must be LOST", "LOST", rLoss?.lastStatus)
+        assertEquals(0, rLoss?.wins)
+        assertEquals(1, rLoss?.losses)
+        assertEquals(0, rLoss?.ties)
+
+        // 3. recordMatchOutcome: TIE / DRAW (userScore == targetScore)
+        val rTie = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "RIVAL_TIE",
+            userScore = 8,
+            targetScore = 8,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "T01"
+        )
+        assertNotNull(rTie)
+        assertEquals("Outcome must be TIED", "TIED", rTie?.lastStatus)
+        assertEquals(0, rTie?.wins)
+        assertEquals(0, rTie?.losses)
+        assertEquals(1, rTie?.ties)
+
+        // 4. recordReplyOutcome:
+        // When pasting an inbound reply code, responderScore < myOriginalTarget -> I WON (I Defended)
+        val repWin = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "REP_RIVAL_WIN",
+            myOriginalTarget = 15,
+            responderScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "R01"
+        )
+        assertEquals("I defend my score -> WON", "WON", repWin.lastStatus)
+        assertEquals(1, repWin.wins)
+
+        // responderScore > myOriginalTarget -> I LOST
+        val repLoss = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "REP_RIVAL_LOSS",
+            myOriginalTarget = 10,
+            responderScore = 15,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "R02"
+        )
+        assertEquals("Rival beat my score -> LOST", "LOST", repLoss.lastStatus)
+        assertEquals(1, repLoss.losses)
+
+        // responderScore == myOriginalTarget -> TIED
+        val repTie = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "REP_RIVAL_TIE",
+            myOriginalTarget = 10,
+            responderScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "R03"
+        )
+        assertEquals("Equal scores -> TIED", "TIED", repTie.lastStatus)
+        assertEquals(1, repTie.ties)
+
+        // 5. Code consumption guard against double-counting:
+        // Once a challenge code or reply code is consumed, pasting it again is blocked by isCodeConsumed.
+        val replyCode = ChallengeSeed.formatChallengeCode("2x2", 10, 3, GameDifficulty.EASY, 9999, "GUARD", "G01", isRevenge = true)
+        assertFalse(ChallengeStorage.isCodeConsumed(context, replyCode))
+        ChallengeStorage.markCodeConsumed(context, replyCode)
+        assertTrue("Consumed code must be recognized to prevent double counting", ChallengeStorage.isCodeConsumed(context, replyCode))
     }
 }
 

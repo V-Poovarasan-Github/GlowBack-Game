@@ -710,7 +710,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_SKIP_SPLASH = "com.example.EXTRA_SKIP_SPLASH"
         @androidx.annotation.VisibleForTesting
-        var skipSplashForTesting: Boolean = false
+        internal var skipSplashForTesting: Boolean = false
     }
 
     override fun onResume() {
