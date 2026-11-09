@@ -31,10 +31,14 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
+import android.media.AudioTrack
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -4673,6 +4677,158 @@ class ExampleRobolectricTest {
         assertFalse(ChallengeStorage.isCodeConsumed(context, replyCode))
         ChallengeStorage.markCodeConsumed(context, replyCode)
         assertTrue("Consumed code must be recognized to prevent double counting", ChallengeStorage.isCodeConsumed(context, replyCode))
+    }
+
+    @Test
+    fun testAudioSynthesizer_rapidBurst50PerPad_and_poolCapLruEviction() {
+        val synth = GlowAudioSynthesizer(GridSize.TWO_BY_TWO)
+        try {
+            synth.flushAudioQueueForTesting()
+
+            // Call playPadSpecTone for every pad across the 20-pad grid 50 times in quick succession
+            for (round in 0 until 50) {
+                for (pad in GRID_20_PADS) {
+                    synth.playPadSpecTone(pad, 0.85f)
+                }
+            }
+            synth.flushAudioQueueForTesting()
+
+            val poolSize = synth.poolSizeForTesting()
+            assertTrue("Pool size must never exceed MAX_POOL_SIZE (12)", poolSize <= GlowAudioSynthesizer.MAX_POOL_SIZE)
+            assertEquals("Pool size after playing 20 distinct pads must equal MAX_POOL_SIZE", GlowAudioSynthesizer.MAX_POOL_SIZE, poolSize)
+
+            val snapshot = synth.pooledTracksSnapshotForTesting()
+            assertEquals("Pool must hold at most one track per tone buffer", snapshot.keys.distinct().size, snapshot.size)
+            for ((_, track) in snapshot) {
+                assertNotEquals("Active pooled tracks must remain initialized (not STATE_UNINITIALIZED)", AudioTrack.STATE_UNINITIALIZED, track.state)
+            }
+
+            // Verify LRU eviction: playing the 20 pads in order means the last 12 pads (indices 8..19) remain in the pool
+            val expectedRetainedBuffers = GRID_20_PADS.takeLast(GlowAudioSynthesizer.MAX_POOL_SIZE)
+                .map { GlowAudioSynthesizer.getOrSynthesizeTone(it.frequencyHz) }
+                .toSet()
+            assertEquals("LRU pool must retain the 12 most-recently played pad buffers", expectedRetainedBuffers, snapshot.keys)
+        } finally {
+            synth.release()
+        }
+    }
+
+    @Test
+    fun testAudioSynthesizer_replacedTrackIsReleased_and_selfHealOnUninitializedTrack() {
+        val synth = GlowAudioSynthesizer(GridSize.TWO_BY_TWO)
+        try {
+            synth.flushAudioQueueForTesting()
+            val greenPad = CLASSIC_2X2_PADS.first()
+            val greenPcm = GlowAudioSynthesizer.getOrSynthesizeTone(greenPad.frequencyHz)
+
+            val initialTrack = synth.getOrCreateTrackForTesting(greenPcm, forceRecreate = false)
+            assertNotEquals("Initial track must not be STATE_UNINITIALIZED", AudioTrack.STATE_UNINITIALIZED, initialTrack.state)
+
+            // Replace track via forceRecreate = true (simulating self-heal replacement)
+            val replacedTrack = synth.getOrCreateTrackForTesting(greenPcm, forceRecreate = true)
+            assertNotSame("Force-recreated track must be a new AudioTrack instance", initialTrack, replacedTrack)
+            assertEquals("Old replaced track must be released (STATE_UNINITIALIZED)", AudioTrack.STATE_UNINITIALIZED, initialTrack.state)
+            assertNotEquals("New replacement track must not be STATE_UNINITIALIZED", AudioTrack.STATE_UNINITIALIZED, replacedTrack.state)
+            assertSame("Pool must store the replacement track for the tone buffer", replacedTrack, synth.pooledTracksSnapshotForTesting()[greenPcm])
+
+            // Corrupt the pooled track externally by releasing it, then trigger playPadSpecTone and confirm it self-heals
+            replacedTrack.release()
+            assertEquals(AudioTrack.STATE_UNINITIALIZED, replacedTrack.state)
+            synth.playPadSpecTone(greenPad, 0.85f)
+            synth.flushAudioQueueForTesting()
+
+            val healedTrack = synth.pooledTracksSnapshotForTesting()[greenPcm]
+            assertNotNull("Pool must contain a healed track after playing corrupted buffer", healedTrack)
+            assertNotSame("Healed track must replace the corrupted track", replacedTrack, healedTrack)
+            assertNotEquals("Healed track must not be STATE_UNINITIALIZED", AudioTrack.STATE_UNINITIALIZED, healedTrack!!.state)
+        } finally {
+            synth.release()
+        }
+    }
+
+    @Test
+    fun testAudioSynthesizer_releaseEmptiesPool_and_postReleasePlayAndFlushAreSafeNoOps() {
+        val synth = GlowAudioSynthesizer(GridSize.TWO_BY_TWO)
+        synth.flushAudioQueueForTesting()
+
+        val tracksBeforeRelease = synth.pooledTracksSnapshotForTesting().values.toList()
+        assertTrue("Pool must be non-empty before release()", tracksBeforeRelease.isNotEmpty())
+
+        synth.release()
+
+        assertEquals("release() must leave the pool empty", 0, synth.poolSizeForTesting())
+        for (track in tracksBeforeRelease) {
+            assertEquals("All pooled tracks must be released on synth.release()", AudioTrack.STATE_UNINITIALIZED, track.state)
+        }
+
+        // Calling play/preWarm/flush after release() must not throw and must not create any tracks
+        for (pad in CLASSIC_2X2_PADS) {
+            synth.playPadSpecTone(pad, 0.85f)
+        }
+        synth.playErrorBuzz(0.85f)
+        synth.playRoundClearArpeggio(0.85f)
+        synth.preWarmForGrid(GridSize.THREE_BY_THREE)
+        synth.flushAudioQueueForTesting()
+
+        assertEquals("Play calls after release() must create no tracks", 0, synth.poolSizeForTesting())
+    }
+
+    @Test
+    fun testAudioSynthesizer_gridSwitchReleasesOldGridTracks_and_matchesComputedDistinctBufferCounts() {
+        val synth = GlowAudioSynthesizer(GridSize.TWO_BY_TWO)
+        try {
+            synth.flushAudioQueueForTesting()
+
+            val expected2x2Buffers = synth.distinctBuffersForGrid(GridSize.TWO_BY_TWO)
+            val expected2x2Count = minOf(GlowAudioSynthesizer.MAX_POOL_SIZE, expected2x2Buffers.size)
+            assertEquals(
+                "2x2 pre-warm pool size must match computed distinct-buffer count",
+                expected2x2Count,
+                synth.poolSizeForTesting()
+            )
+            val snapshot2x2 = synth.pooledTracksSnapshotForTesting()
+            assertEquals(expected2x2Buffers.toSet(), snapshot2x2.keys)
+
+            // Switch to 3x3 grid and verify tracks belonging only to 2x2 are released
+            val expected3x3Buffers = synth.distinctBuffersForGrid(GridSize.THREE_BY_THREE)
+            val expected3x3Count = minOf(GlowAudioSynthesizer.MAX_POOL_SIZE, expected3x3Buffers.size)
+            val onlyIn2x2Buffers = expected2x2Buffers.filter { it !in expected3x3Buffers.toSet() }
+            assertTrue("There must be at least one tone in 2x2 not used by 3x3", onlyIn2x2Buffers.isNotEmpty())
+            val tracksOnlyIn2x2 = onlyIn2x2Buffers.mapNotNull { snapshot2x2[it] }
+
+            synth.preWarmForGrid(GridSize.THREE_BY_THREE)
+            synth.flushAudioQueueForTesting()
+
+            assertEquals(
+                "3x3 pre-warm pool size must match computed distinct-buffer count",
+                expected3x3Count,
+                synth.poolSizeForTesting()
+            )
+            val snapshot3x3 = synth.pooledTracksSnapshotForTesting()
+            assertEquals(expected3x3Buffers.take(GlowAudioSynthesizer.MAX_POOL_SIZE).toSet(), snapshot3x3.keys)
+
+            for (oldTrack in tracksOnlyIn2x2) {
+                assertEquals(
+                    "Track belonging only to old 2x2 grid must be released on switch to 3x3",
+                    AudioTrack.STATE_UNINITIALIZED,
+                    oldTrack.state
+                )
+            }
+
+            // Switch to 5x4 grid (20 pads + 2 effects > MAX_POOL_SIZE) and verify cap is respected
+            val expected5x4Buffers = synth.distinctBuffersForGrid(GridSize.FIVE_BY_FOUR)
+            val expected5x4Count = minOf(GlowAudioSynthesizer.MAX_POOL_SIZE, expected5x4Buffers.size)
+            synth.preWarmForGrid(GridSize.FIVE_BY_FOUR)
+            synth.flushAudioQueueForTesting()
+
+            assertEquals(
+                "5x4 pre-warm pool size must match computed distinct-buffer count capped at MAX_POOL_SIZE",
+                expected5x4Count,
+                synth.poolSizeForTesting()
+            )
+        } finally {
+            synth.release()
+        }
     }
 }
 

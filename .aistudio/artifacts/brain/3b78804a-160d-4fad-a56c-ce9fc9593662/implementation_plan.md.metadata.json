@@ -1,6 +1,6 @@
 {
-  "summary":  "Final revised implementation plan incorporating approved test adjustments: checksum mutation test specifies guaranteed detection paths (target score digit shifts) and statistical bounds without format changes, Step 6 adds assembleDebug verification for fresh clones without keystore or env vars, and transparent reporting of all executed and non-executed commands.",
-  "updatedAt":  "2026-11-08T15:23:35.485231944Z",
+  "summary":  "Updated implementation plan adding the 3 approved refinements: (1) tests compare against computed distinct-buffer counts rather than hardcoded 6/11, (2) flushAudioQueueForTesting() is a safe no-op after release(), and (3) big-grid on-demand creation remains as planned.",
+  "updatedAt":  "2026-11-09T11:00:33.510363164Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

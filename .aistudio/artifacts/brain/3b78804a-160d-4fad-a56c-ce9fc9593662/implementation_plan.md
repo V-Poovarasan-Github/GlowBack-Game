@@ -1,251 +1,140 @@
-# Glowback Final Production-Readiness Plan (Approved Revisions)
+# Glowback — `GlowAudioSynthesizer` Android 12+ Pad Tone Reliability Plan
 
-## Summary
-Executes the final production-readiness hardening for Glowback (offline Android memory-arcade game built with Jetpack Compose and SharedPreferences). Enforces zero additional runtime dependencies, retains the 7-segment challenge code format byte-for-byte, and implements safety-first test verification prior to any refactoring.
+This plan implements the exact 7 required changes in `GlowAudioSynthesizer` (`MainActivity.kt`), hooks `preWarmForGrid(gridSize)` into `GlowbackGameScreen`, and adds deterministic Robolectric tests verifying pool invariants, LRU eviction, track lifecycle, and grid switching.
 
 ---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Approved Adjustments & Invariants:**
-> 1. **Checksum Mutation Verification (Golden Test)**:
->    - The golden test will **not** assert that 100% of single-character mutations are rejected, as the 5-bit checksum ($2^5 = 32$) mathematically collides in approximately 1 out of 32 cases (e.g., characters with delta 32 under odd-position weighting).
->    - The test will assert mutations that are **guaranteed to be caught** (such as target score digit $+1$ where delta is non-multiple of 32, grid tag shifts, or invalid alphabet characters) and test a statistical bound ($\ge 90\%$ rejection over all single-character mutations).
->    - `computeChecksum` and the 7-segment code format remain **100% untouched**.
-> 2. **Field Filter Separation**:
->    - **Paste-CODE fields** (ChallengeUI lines ~875 and ~1790): Filter with an ASCII code filter keeping `A-Z`, `0-9`, `'-'`, and `'_'`.
->    - **Name fields** (ChallengeUI lines ~1203, ~1298, ~1333): Filter with the ASCII name filter keeping `A-Z`, `0-9`, and `'_'` (max 10 chars, matching `NAME_REGEX`).
-> 3. **Target Score Range Check (1..999)**:
->    - Inside `parseInternal`, enforce `if (targetScore !in 1..999) return null` across **all four** segment-count branches (7, 5, 4, and 3 segments). Add tests verifying 999 is accepted and 1000 is rejected.
-> 4. **Fresh-Clone Debug Signing & Assembly**:
->    - In `build.gradle.kts`, debug signing does not depend on a gitignored `debug.keystore`. In Step 6, run `gradle :app:assembleDebug` without any signing environment variables and verify it builds successfully.
-> 5. **Decoupled Splash Testing**:
->    - Remove `Class.forName("org.robolectric.Robolectric")` and `skipSplashForTesting` from production release code, decoupling test splash handling cleanly.
-> 6. **Short Window Pad Grid Safety**:
->    - Responsive geometry ensures pad grid and parent containers adapt in short or wide windows (split-screen, landscape tablet) without clipping or pushing buttons off-screen.
-> 7. **Execution Transparency**:
->    - Every command executed will be reported with exact output and passing counts; any step not executed will be explicitly stated.
+> **Strict Scope Enforcement**
+> Only `GlowAudioSynthesizer` in `MainActivity.kt`, its `LaunchedEffect(gridSize)` warm-up hook in `GlowbackGameScreen`, and Robolectric unit tests will be modified.
+>
+> **Untouched by design**:
+> - `KEY_LAUNCH_COUNT` and the welcome card (`OnboardingPopupDialog`) logic
+> - `backup_rules.xml` and `data_extraction_rules.xml`
+> - `app/build.gradle.kts` and all signing configurations
+> - Tone frequencies, durations, amplitudes, and volumes
+> - All UI, layouts, and animations
+
+> [!NOTE]
+> **Approved Refinements Incorporated**
+> 1. **Computed Distinct-Buffer Counts in Tests**: Grid warm-up and switching tests compute the expected pool size dynamically from the distinct tone buffers of the grid plus `errorBuzzPcm` and `clearArpeggioPcm` capped at `MAX_POOL_SIZE` (rather than hardcoding `6` or `11`).
+> 2. **Safe Post-Release Queue Flush**: `flushAudioQueueForTesting()` checks `isReleased` and catches any executor/cancellation rejection so calling it after `release()` is a guaranteed safe no-op.
+> 3. **Big-Grid On-Demand Creation Preserved**: Grids whose total distinct buffers exceed `MAX_POOL_SIZE = 12` (`4×4` and `5×4`) pre-warm up to the 12-track cap and create any remaining unpooled pad tones on demand via `getOrCreateTrack` with LRU eviction.
+
+> [!NOTE]
+> **Limitations of Self-Heal & JVM Testing**
+> - The self-heal check only detects negative error codes and `playState != AudioTrack.PLAYSTATE_PLAYING` after `play()`; it cannot detect a hardware/HAL bug where an `AudioTrack` reports `PLAYSTATE_PLAYING` while outputting silence.
+> - Robolectric runs on the JVM without audio hardware, so the audible fix can only be confirmed on a physical Android device.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **The Objective**: Eliminate production failure modes (rotation wipe/forfeits, concurrency crashes, cross-context seed leaks, and cache bloat) while hardening parser performance, accessibility font sizes, and build configuration for a clean Google Play release.
-- **Scope of Changes**:
-  - **Manifest & Window Safety**: `screenOrientation="portrait"` + full `configChanges` to prevent Activity recreation on phones, tablets, foldables, and split-screen.
-  - **Responsive Grid Geometry**: Pad grid and containers adapt smoothly to short heights and wide aspect ratios without clipping.
-  - **Playback Concurrency**: Immutable snapshotting (`val steps = sequence.toList()`) with active cancellation checks in playback effects.
-  - **Solo Isolation**: `shouldUpdateSoloBest` predicate guarding all Solo personal bests and seeds from friend challenges and rival duels.
-  - **Notification Respect**: `IMPORTANCE_DEFAULT` and `PRIORITY_DEFAULT` without heads-up popups.
-  - **FileProvider Hardening**: Scope cache path strictly to `shared_challenges/` and prune old PNG cards (> 24h).
-  - **Parser Optimization**: Hoist Regex instances, enforce ASCII-only player names and codes, and reject targets $> 999$.
+- **What It Does**: Eliminates cross-thread `AudioTrack` races, fixes `MODE_STATIC` buffer rewinding, caps simultaneous open `AudioTrack` instances at 12 with LRU eviction, queues per-track warm-ups for the active grid so taps interleave without blocking, and logs/self-heals track errors.
+- **Target Audience / Persona**: Players on Android 12+ phones experiencing occasional silent pad taps.
+- **Key Value**: Serialized, deterministic `AudioTrack` lifecycle management that stays within OEM `AudioFlinger` track limits while keeping active-grid tones pre-warmed.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-### Resilient Layout in Short & Wide Windows
-
-```
-   Tall Window / Portrait Phone                  Short Window / Split-Screen / Landscape
-┌─────────────────────────────┐         ┌──────────────────────────────────────────────────┐
-│  GLOWBACK         [🔊] [⚙]  │         │  GLOWBACK [🔊][⚙] ● RIVAL: FALCON  TARGET: 6    │
-│  ● RIVAL: FALCON  TARGET: 6 │         │  (Compact Header 4dp spacing)                    │
-│  2×2 CLASSIC  SCORE: 4      │         │                                                  │
-│                             │   ──►   │           ┌─────┐   ┌─────┐                      │
-│      ┌─────┐   ┌─────┐      │         │           │  ▲  │   │  ●  │                      │
-│      │  ▲  │   │  ●  │      │         │           └─────┘   └─────┘                      │
-│      └─────┘   └─────┘      │         │           ┌─────┐   ┌─────┐                      │
-│      ┌─────┐   ┌─────┐      │         │           │  ■  │   │  ◆  │                      │
-│      │  ■  │   │  ◆  │      │         │           └─────┘   └─────┘                      │
-│      └─────┘   └─────┘      │         │       (Calculated side fits within maxHeight)    │
-│                             │         │  [Play Again] [Home]      [Bottom Navigation]    │
-│     [Bottom Navigation]     │         └──────────────────────────────────────────────────┘
-└─────────────────────────────┘            Pads Never Clipped • Touch Targets >= 48dp
-```
-
-### Visual & Touch Safety
-- **Adaptive Spacing**: When vertical height is constrained (split-screen or landscape where `maxHeight < 550.dp`), vertical arrangement spacing contracts from 10dp to 4dp.
-- **Aspect Ratio Clamping**: In `BoxWithConstraints`, the pad grid side is clamped against available `maxHeight` so pads never push action buttons off-screen or get clipped.
-- **Typography**: Four text labels previously styled at 9–10sp (MainActivity ~4522; ChallengeUI ~468, 513, 3683) are scaled to $\ge 11\text{sp}$ to ensure readability under large system font scaling.
+- **Key User Flows**:
+  1. **Startup & Grid Switch Pre-Warm**: `LaunchedEffect(gridSize) { audioSynth.preWarmForGrid(gridSize) }` enqueues one audio-thread job per tone buffer so user taps can execute between warm-up steps without waiting for an entire batch.
+  2. **Pad Tap & Sequence Playback**: Every tone request runs sequentially on the single audio thread, rewinds via `reloadStaticData()` (or `setPlaybackHeadPosition(0)` if negative), self-heals once on error or non-`PLAYING` state, and maintains at most 12 open tracks via LRU eviction.
+- **Visual Identity & Theme**:
+  - No UI, layout, color, or animation changes.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+## 3. Required Technical Changes (Items 1–7)
 
-| Decision | Chosen Approach | Rationale | Rejected Alternative |
-| :--- | :--- | :--- | :--- |
-| **Activity Lifecycle on Rotation** | `android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|fontScale|density|layoutDirection|locale"` | Prevents Activity destruction on orientation/density/font change; prevents challenge forfeit | Migrating all game state to `rememberSaveable` (prone to partial serialization bugs) |
-| **Solo Best Score Isolation** | Pure function `shouldUpdateSoloBest(...)` | Guarantees friend challenge seeds never leak into Solo records or Sleeping Scores | Manual ad-hoc `if` checks across call sites |
-| **Playback Concurrency** | Immutable snapshot `sequence.toList()` + `ensureActive()` | Eliminates `ConcurrentModificationException` when player taps Restart mid-playback | Catching CME or blocking state clearing |
-| **Name vs Code Filtering** | ASCII name filter for names; ASCII code filter for paste fields | Allows `-` in codes while preventing invalid symbols in names | Applying name filter to code paste fields (breaks paste!) |
-| **Target Score Range** | `targetScore in 1..999` in all 4 `parseInternal` branches | Prevents integer overflow, formatting corruption, or absurd values across all code versions | Only checking in v2 branch |
-| **Debug Keystore Fallback** | Fall back to standard AGP debug keystore if file missing | Guarantees fresh git clone builds without requiring a committed binary keystore | Hardcoding file path that fails build on clone |
+### 1. Single Audio Thread
+- Replace `Dispatchers.Default` with `private val audioExecutor = Executors.newSingleThreadExecutor()` and `private val audioDispatcher = audioExecutor.asCoroutineDispatcher()`, with `private val audioScope = CoroutineScope(SupervisorJob() + audioDispatcher)`.
+- Track an `@Volatile private var isReleased = false` flag so calls after `release()` safely no-op without allocating tracks.
+- In `release()`, set `isReleased = true`, cancel `audioScope`, stop and `release()` all tracks in the pool, clear the pool, and call `audioDispatcher.close()`.
 
----
+### 2. Correct `MODE_STATIC` Rewind in `playStaticPcmInternal`
+1. Obtain the track via `getOrCreateTrack(pcmBuffer, forceRecreate = false)`.
+2. If `track.playState == AudioTrack.PLAYSTATE_PLAYING`, call `track.stop()`.
+3. Call `val reloadRes = track.reloadStaticData()`. If `reloadRes < 0`, call `track.setPlaybackHeadPosition(0)`.
+4. Call `track.setVolume(vol)`, then `track.play()`.
+5. Remove `track.flush()`.
 
-## 4. Technical Architecture & Phased Execution
+### 3. Self-Heal and Logging
+- If `reloadStaticData()` failed **and** `setPlaybackHeadPosition(0) < 0`, or `setVolume(vol) < 0`, or `track.playState != AudioTrack.PLAYSTATE_PLAYING` after `play()`, recreate the track via `getOrCreateTrack(pcmBuffer, forceRecreate = true)`, call `setVolume(vol)`, and call `play()` once.
+- Catch any `Throwable` with `Log.w("GlowAudio", "Audio playback failed", t)` so failures are visible in Logcat and never crash the app.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                   PHASED IMPLEMENTATION PIPELINE                       │
-├────────────────────────────────────────────────────────────────────────┤
-│  Step 0: Write Golden Parser Tests against UNCHANGED ChallengeSeed    │
-│          └─► Run gradle :app:testDebugUnitTest (must pass 100%)       │
-│                                                                        │
-│  Step 1: Stability & Window Layout Fixes                               │
-│          ├─ Manifest configChanges & portrait lock                     │
-│          ├─ Pad grid short-window responsive constraints               │
-│          ├─ Sequence playback snapshot (sequence.toList())            │
-│          └─ shouldUpdateSoloBest guard on updateBestScoreIfNeeded      │
-│          └─► Run test suite                                           │
-│                                                                        │
-│  Step 2: Notification Tuning                                           │
-│          ├─ IMPORTANCE_DEFAULT & PRIORITY_DEFAULT                      │
-│          ├─ Remove DEFAULT_ALL & remove triggerInstantTest            │
-│          └─► Run test suite                                           │
-│                                                                        │
-│  Step 3: Sharing / FileProvider Hardening                              │
-│          ├─ Remove cache_root from file_paths.xml                      │
-│          ├─ 24h age-based sweep in ChallengeShareHelper               │
-│          └─► Run test suite                                           │
-│                                                                        │
-│  Step 4: Cleanup & Hardening                                           │
-│          ├─ Hoist all Regexes in ChallengeSeed                         │
-│          ├─ Target score 1..999 check across all 4 branches           │
-│          ├─ Separate ASCII code filter vs ASCII name filter            │
-│          ├─ Decouple test splash handling (no Class.forName in release)│
-│          ├─ Fresh-clone debug signing fallback & plugin cleanup        │
-│          └─ Scale 9-10sp typography to >= 11sp                         │
-│          └─► Run test suite                                           │
-│                                                                        │
-│  Step 5: Full Test Suite Expansion (5.1 - 5.6)                         │
-│          └─► Run gradle :app:testDebugUnitTest                         │
-│                                                                        │
-│  Step 6: Verification & Final Report                                   │
-│          ├─ gradle :app:assembleDebug (no signing env vars)            │
-│          ├─ gradle :app:testDebugUnitTest                              │
-│          ├─ gradle :app:lintRelease                                    │
-│          ├─ Verify merged manifest (zero INTERNET permission)          │
-│          └─ Produce comprehensive release readiness audit report        │
-└────────────────────────────────────────────────────────────────────────┘
-```
+### 4. One Pool Entry Point (`getOrCreateTrack`)
+- All `AudioTrack` creation goes exclusively through `private fun getOrCreateTrack(pcmBuffer: ShortArray, forceRecreate: Boolean = false): AudioTrack`, called only on the single audio thread.
+- If an existing track in the pool has `state != AudioTrack.STATE_INITIALIZED` or `forceRecreate == true`, stop (if playing) and `release()` the old track before storing the newly created track.
+- Guarantees at most one `AudioTrack` per `ShortArray` tone buffer.
+
+### 5. Pool Cap with LRU Eviction (Max 12 Tracks)
+- Maintain the pool in an access-ordered `LinkedHashMap<ShortArray, AudioTrack>(16, 0.75f, true)` (synchronized on `poolLock` for thread-safe inspection during `release()` and tests) capped at `MAX_POOL_SIZE = 12`.
+- Accessing a track in `getOrCreateTrack` updates its recency order.
+- Before inserting a new track when `pool.size >= MAX_POOL_SIZE`, evict the eldest (least-recently-used) entry, stopping and calling `release()` on the evicted `AudioTrack`.
+- Tones not currently in the pool on larger grids (`4×4` or `5×4`) are created on demand via `getOrCreateTrack` with LRU eviction.
+
+### 6. Per-Track Queued Warm-Up for the Active Grid (`preWarmForGrid`)
+- Add `fun preWarmForGrid(gridSize: GridSize)`:
+  - Compute the desired buffers for `gridSize`: `errorBuzzPcm`, `clearArpeggioPcm`, and `padsForGridSize(gridSize).map { getOrSynthesizeTone(it.frequencyHz) }.distinct()`, capped at `MAX_POOL_SIZE = 12`.
+  - First, launch an audio-thread job that releases and removes any pooled track whose `ShortArray` buffer is not in the active grid's target set.
+  - Next, for each buffer in the target warm-up set, launch **one separate `audioScope.launch` job per track** calling `getOrCreateTrack(pcmBuffer)`. Because each track warm-up is its own job on the single-threaded dispatcher queue, any user tap (`playPadSpecTone`) queued during warm-up runs immediately after the current single track creation rather than waiting for all tracks to finish.
+- In `GlowbackGameScreen`, hook up `LaunchedEffect(gridSize) { audioSynth.preWarmForGrid(gridSize) }` right next to `val audioSynth = remember { GlowAudioSynthesizer() }` and `DisposableEffect(Unit) { onDispose { audioSynth.release() } }`.
+
+### 7. Run-Path Verification Summary
+Every code path that starts or resumes a run in `GlowbackGameScreen` interacts with `gridSize` as follows:
+1. **Solo (`startNewGame()` -> `actuallyStartNewGame()` at line 1604)**: Uses the current `gridSize` state (`padsForGridSize(gridSize)`). `gridSize` was already pre-warmed at initial composition (`LaunchedEffect(gridSize)`) or when changed in Settings (`resetToIdleForConfigChange` at line 1342, which updates `gridSize = newGridSize`). If the user starts a second Solo run on the same grid, `gridSize` does not change because its tracks are already warm in the pool.
+2. **Pass-and-Play 2P / 3P / 4P (`actuallyStartNewGame()` at line 1623 & `resumeActiveRun(state)` at line 1228)**:
+   - New match (line 1623): Uses current `gridSize`, already pre-warmed by `LaunchedEffect(gridSize)`.
+   - Resumed match (`resumeActiveRun`, line 1243): Sets `gridSize = restoredGrid`, triggering `LaunchedEffect(gridSize)` if the saved match's grid differs from the current grid.
+3. **Outbound Rival Run (`startRevengeGame(...)` with `needsRevengeGate = false` at line 1516, and retry in `actuallyStartNewGame()` at line 1609)**:
+   - `startRevengeGame` sets `gridSize = resolvedGrid` (line 1534), triggering `LaunchedEffect(gridSize)` if the grid changed.
+   - Retry in `actuallyStartNewGame()` (line 1609) stays on the same `gridSize` whose tracks are already in the pool.
+4. **Inbound Challenge (`startChallenge(item)` at line 1462, and retry in `actuallyStartNewGame()` at line 1581)**:
+   - Both set `gridSize = targetGrid` (lines 1500 and 1593), updating the exact `gridSize` state observed by `LaunchedEffect(gridSize)`.
+5. **Revenge (`startRevengeGame(...)` with `needsRevengeGate = true` at line 1516)**:
+   - Sets `gridSize = resolvedGrid` (line 1534), updating the `gridSize` state observed by `LaunchedEffect(gridSize)`.
+6. **Replay (`startWatchMyRoundReplay()` at line 1648)**:
+   - Replays the `sequence` from the just-completed round in `GameState.GAME_OVER` without changing `gridSize`. This is safe because the active grid's tracks are already warm in the pool from the round that just ended, and any evicted tone on 16/20-pad grids falls back to `getOrCreateTrack(pcmBuffer)`.
 
 ---
 
-## 5. Granular Implementation Steps
+## 4. Technical Architecture & Verification
 
-### Step 0: Golden Tests Safety Net
-- In `ChallengeSeedTest.kt`:
-  - Round-trip test: `formatChallengeCode` -> `parseChallengeCode` across:
-    - 4 Grids: `2x2`, `3x3`, `4x4`, `5x4`
-    - 4 Tries: `F` (0), `1`, `3`, `5`
-    - 2 Difficulties: `EASY`, `HARD`
-    - 2 Types: `T` (Outbound), `R` (Reply)
-    - Total: $4 \times 4 \times 2 \times 2 = 64$ permutations.
-  - Guaranteed mutation detection: Target score digit $+1$ returns `null`.
-  - Statistical mutation bound: Over all single-character mutations, $\ge 90\%$ return `null`.
-  - WhatsApp text extraction with zero-width characters and Unicode dashes.
-  - Legacy 3-segment, 4-segment, and 5-segment code parsing.
-  - Name edge cases (empty, whitespace, max length, underscores).
-- **Gate**: Run `gradle :app:testDebugUnitTest` and verify all tests pass on unchanged code.
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    GlowAudioSynthesizer (Single Thread)                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│  LaunchedEffect(gridSize) ──► preWarmForGrid(gridSize)                  │
+│    ├─► Job 0: Prune & release tracks not in active grid target set      │
+│    ├─► Job 1..N: One job per buffer ──► getOrCreateTrack(pcm)           │
+│    │     (User taps interleave between individual warm-up jobs)         │
+│                                                                         │
+│  playPadSpecTone / playErrorBuzz / playRoundClearArpeggio               │
+│    └─► audioScope.launch (SingleThreadExecutor):                        │
+│          └─► playStaticPcmInternal(pcmBuffer, vol)                      │
+│                ├─► track = getOrCreateTrack(pcmBuffer) [LRU cap = 12]   │
+│                ├─► if (PLAYSTATE_PLAYING) track.stop()                  │
+│                ├─► if (reloadStaticData() < 0) setPlaybackHeadPosition(0)│
+│                ├─► setVolume(vol) -> play()                             │
+│                └─► if (error < 0 || playState != PLAYSTATE_PLAYING):    │
+│                      └─► getOrCreateTrack(pcmBuffer, forceRecreate=true)│
+│                            -> setVolume(vol) -> play()                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-### Step 1: Stability & Window Layout Fixes
-1. **`app/src/main/AndroidManifest.xml`**:
-   - Add `android:screenOrientation="portrait"` to `MainActivity`.
-   - Add `android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|fontScale|density|layoutDirection|locale"`.
-2. **`MainActivity.kt` (Short Window Layout)**:
-   - In `BoxWithConstraints` pad grid container:
-     - Check available `maxHeight` vs `maxWidth`.
-     - In short windows (`maxHeight < 550.dp`), reduce vertical arrangement spacing in parent `Column` from 10dp to 4dp and ensure pad grid height calculation clamps strictly to `maxHeight - safetyMargin`, preventing layout overflow or button clipping in split-screen/landscape tablet windows.
-3. **`MainActivity.kt` (Playback Concurrency)**:
-   - In sequence playback `LaunchedEffect`:
-     ```kotlin
-     val steps = sequence.toList()
-     val currentTrigger = roundTrigger
-     for (pad in steps) {
-         currentCoroutineContext().ensureActive()
-         if (isLifecyclePaused || gameState != GameState.WATCHING || roundTrigger != currentTrigger ||
-             isHandoffVisible || isChallengeReadyGateVisible || isVictoryDecisionVisible) return@LaunchedEffect
-         ...
-     }
-     ```
-   - Apply the same snapshotting to `startWatchMyRoundReplay`.
-4. **`MainActivity.kt` (Solo Isolation)**:
-   - Extract `shouldUpdateSoloBest`:
-     ```kotlin
-     internal fun shouldUpdateSoloBest(
-         activeChallenge: ChallengeItem?,
-         isOutboundRivalRun: Boolean,
-         isRevengeRun: Boolean,
-         gameMode: GameMode
-     ): Boolean = activeChallenge == null && !isOutboundRivalRun && !isRevengeRun && gameMode == GameMode.SOLO
-     ```
-   - Guard `updateBestScoreIfNeeded`:
-     ```kotlin
-     fun updateBestScoreIfNeeded(newScore: Int) {
-         if (!shouldUpdateSoloBest(activeChallenge, isOutboundRivalRun, isRevengeRun, gameMode)) return
-         ...
-     }
-     ```
-   - Audit all call sites (around lines 1740, 1884, 2838, 3145, 3357) to ensure none bypass the guard.
-- **Gate**: Run test suite.
+### Robolectric Test Suite
+We will expose `internal` inspection helpers on `GlowAudioSynthesizer`:
+- `internal fun poolSizeForTesting(): Int`
+- `internal fun pooledTracksSnapshotForTesting(): Map<ShortArray, AudioTrack>`
+- `internal fun flushAudioQueueForTesting()` — submits a no-op barrier task to `audioExecutor` and awaits completion, returning immediately as a safe no-op if `isReleased` is true or if the executor is shut down.
 
-### Step 2: Notifications
-- In `NotificationScheduler.kt`:
-  - `val importance = NotificationManager.IMPORTANCE_DEFAULT`
-  - `.setPriority(NotificationCompat.PRIORITY_DEFAULT)`
-  - Remove `.setDefaults(NotificationCompat.DEFAULT_ALL)`
-  - Remove dead debug helper `triggerInstantTest`
-- **Gate**: Run test suite.
-
-### Step 3: Sharing / FileProvider
-- In `app/src/main/res/xml/file_paths.xml`:
-  - Remove `<cache-path name="cache_root" path="." />`
-- In `ChallengeShareHelper.kt`:
-  - Add `cleanOldSharedFiles(cacheFolder: File, maxAgeHours: Long = 24)` on `Dispatchers.IO` before writing a new PNG file.
-  - Ensure the newly created bitmap file is never deleted.
-- **Gate**: Run test suite.
-
-### Step 4: Cleanup & Hardening
-1. **`ChallengeSeed.kt`**:
-   - Hoist all Regexes (`V2_EXTRACTION_REGEX`, `V1_EXTRACTION_REGEX`, `V0_EXTRACTION_REGEX`, `GRID_REGEX`, `TD_MATCH_REGEX`, `TD_REPLY_MATCH_REGEX`, `ZERO_WIDTH_REGEX`, `UNICODE_DASH_REGEX`) to private constants.
-   - Enforce ASCII-only in `sanitizePlayerName`:
-     ```kotlin
-     val cleaned = rawName.trim().replace(' ', '_').uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
-     ```
-   - In `parseInternal`, add target score check to **all four** branches (7, 5, 4, and 3 segments):
-     ```kotlin
-     val targetScore = parts[1].toIntOrNull() ?: return null
-     if (targetScore !in 1..999) return null
-     ```
-2. **`ChallengeUI.kt`**:
-   - **Code fields** (lines ~875 and ~1790): Use ASCII code filter keeping `A-Z`, `0-9`, `'-'`, and `'_'`.
-   - **Name fields** (lines ~1203, ~1298, ~1333): Use ASCII name filter keeping `A-Z`, `0-9`, and `'_'` (max 10 chars, matching `NAME_REGEX`).
-3. **`MainActivity.kt` (Splash Decoupling)**:
-   - Remove `Class.forName("org.robolectric.Robolectric")` and `skipSplashForTesting` from production code.
-   - Support test splash skipping via Intent extra `intent.getBooleanExtra("EXTRA_SKIP_SPLASH", false)` or test configuration so release code has zero reflection/hacks while Compose UI tests run smoothly.
-4. **`app/build.gradle.kts`**:
-   - Remove unused plugins `alias(libs.plugins.secrets)` and `alias(libs.plugins.google.services)` and their configurations.
-   - Configure debug signing to check if `debug.keystore` exists: if present, use it; otherwise fall back to standard built-in debug config so fresh clones build debug immediately.
-   - Update `signingConfigs.release` to only fail on release-packaging tasks if credentials are missing.
-5. **Typography scaling**:
-   - Raise 9–10sp text elements in `MainActivity.kt` (~line 4522) and `ChallengeUI.kt` (~lines 468, 513, 3683) to $\ge 11\text{sp}$.
-- **Gate**: Run test suite.
-
-### Step 5: Test Suite Expansion
-Add comprehensive Robolectric and unit tests:
-1. Golden round-trip parser tests (64 permutations + target 999 accepted + target 1000 rejected).
-2. `sanitizePlayerName` tests for Unicode stripping, name length, and round-trip preservation.
-3. `ChallengeStorage` tests: `recordMatchOutcome` (free-tries loss returns null, tie, win), `recordReplyOutcome`, `isCodeConsumed`, `isSelfChallenge`, FIFO caps (200 / 500), 30-day chain-target expiry, 3-day awaiting expiry, and orphan reconciliation.
-4. `shouldUpdateSoloBest` truth table test + integration test with active challenge seed 88888.
-5. Manifest reflection test asserting all 10 `configChanges` flags.
-6. Playback concurrency UI test: starting a game, tapping Restart mid-playback with `autoAdvance = false`, advancing clock, asserting no `ConcurrentModificationException`.
-
-### Step 6: Verification & Audit Report
-- Run `./gradlew :app:assembleDebug` without signing environment variables.
-- Run `./gradlew :app:testDebugUnitTest`.
-- Run `./gradlew :app:lintRelease`.
-- Inspect merged release manifest to verify zero `INTERNET` permission.
-- Produce comprehensive release audit report detailing lines changed, test counts, and non-modified items (`allowBackup`, opt-in defaults, localization).
+And verify:
+1. Calling `playPadSpecTone` for every pad 50 times in quick succession does not throw.
+2. Pool size never exceeds 12 (`MAX_POOL_SIZE`), even after playing all 20 pads of the `5×4` grid, and holds at most one `AudioTrack` per tone buffer.
+3. A replaced track (via `forceRecreate` / self-heal or LRU eviction) has `release()` called (`track.state == AudioTrack.STATE_UNINITIALIZED`).
+4. `release()` leaves the pool empty (`poolSizeForTesting() == 0`), and a subsequent `playPadSpecTone` + `flushAudioQueueForTesting()` call after `release()` is a safe no-op that creates no tracks (`poolSizeForTesting() == 0`) and does not throw.
+5. Switching grids via `preWarmForGrid(GridSize.TWO_BY_TWO)` followed by `preWarmForGrid(GridSize.THREE_BY_THREE)` releases tracks belonging only to the old grid and leaves a pool size equal to the computed distinct-buffer count (`minOf(MAX_POOL_SIZE, distinctBuffersForGrid.size)`).

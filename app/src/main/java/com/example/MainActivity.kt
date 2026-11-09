@@ -8,7 +8,9 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -281,9 +283,11 @@ fun padsForGridSize(gridSize: GridSize): List<PadSpec> = when (gridSize) {
     GridSize.FIVE_BY_FOUR -> GRID_20_PADS
 }
 
-class GlowAudioSynthesizer {
+class GlowAudioSynthesizer(initialGridSize: GridSize = GridSize.TWO_BY_TWO) {
     companion object {
         const val SAMPLE_RATE = 22050
+        internal const val MAX_POOL_SIZE = 12
+        private const val LOG_TAG = "GlowAudio"
         private const val FADE_MS = 10
 
         internal fun synthesizeWavePcm(freqHz: Double, durationMs: Int, amp: Double, oddHarmonics: Boolean = false): ShortArray {
@@ -334,8 +338,13 @@ class GlowAudioSynthesizer {
             sharedFrequencyCache.getOrPut(freqHz) { synthesizeWavePcm(freqHz, 240, 0.72) }
     }
 
-    private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val staticTrackPool = ConcurrentHashMap<ShortArray, AudioTrack>()
+    private val audioExecutor = Executors.newSingleThreadExecutor()
+    private val audioDispatcher = audioExecutor.asCoroutineDispatcher()
+    private val audioScope = CoroutineScope(SupervisorJob() + audioDispatcher)
+    private val poolLock = Any()
+    private val staticTrackPool = LinkedHashMap<ShortArray, AudioTrack>(16, 0.75f, true)
+    @Volatile
+    private var isReleased = false
 
     val frequencyPcmBuffers: Map<Double, ShortArray> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         (CLASSIC_2X2_PADS + GRID_16_PADS + GRID_20_PADS)
@@ -356,16 +365,101 @@ class GlowAudioSynthesizer {
     }
 
     init {
-        // Pre-synthesize PCM buffers and pre-allocate AudioTrack pool on background dispatcher (Dispatchers.Default)
-        // so cold-start on low-end devices never blocks the main UI thread
+        preWarmForGrid(initialGridSize)
+    }
+
+    internal fun distinctBuffersForGrid(gridSize: GridSize): List<ShortArray> {
+        val padBuffers = padsForGridSize(gridSize)
+            .map { getOrSynthesizeTone(it.frequencyHz) }
+            .distinct()
+        return (padBuffers + listOf(errorBuzzPcm, clearArpeggioPcm)).distinct()
+    }
+
+    fun preWarmForGrid(gridSize: GridSize) {
+        if (isReleased) return
+        val allGridBuffers = distinctBuffersForGrid(gridSize)
+        val allowedSet = allGridBuffers.toSet()
+        val padBuffers = padsForGridSize(gridSize)
+            .map { getOrSynthesizeTone(it.frequencyHz) }
+            .distinct()
+        val warmUpBuffers = (padBuffers.take((MAX_POOL_SIZE - 2).coerceAtLeast(0)) + listOf(errorBuzzPcm, clearArpeggioPcm))
+            .distinct()
+            .take(MAX_POOL_SIZE)
+
+        // First job: release any pooled tracks that belong to tones not used by the active grid
         audioScope.launch {
-            for (pcm in frequencyPcmBuffers.values) {
-                runCatching {
-                    staticTrackPool[pcm] = createStaticTrack(pcm)
+            if (isReleased) return@launch
+            try {
+                synchronized(poolLock) {
+                    val iter = staticTrackPool.entries.iterator()
+                    while (iter.hasNext()) {
+                        val entry = iter.next()
+                        if (entry.key !in allowedSet) {
+                            iter.remove()
+                            safeStopAndRelease(entry.value)
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                if (t !is CancellationException) {
+                    Log.w(LOG_TAG, "Audio warm-up prune failed", t)
                 }
             }
-            runCatching { staticTrackPool[errorBuzzPcm] = createStaticTrack(errorBuzzPcm) }
-            runCatching { staticTrackPool[clearArpeggioPcm] = createStaticTrack(clearArpeggioPcm) }
+        }
+
+        // Queue warm-up as one audio-thread job per track so user taps can run between warm-up steps
+        for (pcm in warmUpBuffers) {
+            audioScope.launch {
+                if (isReleased) return@launch
+                try {
+                    getOrCreateTrack(pcm, forceRecreate = false)
+                } catch (t: Throwable) {
+                    if (t !is CancellationException) {
+                        Log.w(LOG_TAG, "Audio warm-up track creation failed", t)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun safeStopAndRelease(track: AudioTrack) {
+        runCatching {
+            if (track.state != AudioTrack.STATE_UNINITIALIZED && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                track.stop()
+            }
+        }
+        runCatching {
+            track.release()
+        }
+    }
+
+    private fun getOrCreateTrack(pcmBuffer: ShortArray, forceRecreate: Boolean = false): AudioTrack {
+        synchronized(poolLock) {
+            if (isReleased) {
+                throw CancellationException("GlowAudioSynthesizer is released")
+            }
+            val existing = staticTrackPool[pcmBuffer]
+            if (existing != null) {
+                if (!forceRecreate && existing.state != AudioTrack.STATE_UNINITIALIZED) {
+                    return existing
+                }
+                staticTrackPool.remove(pcmBuffer)
+                safeStopAndRelease(existing)
+            }
+            while (staticTrackPool.size >= MAX_POOL_SIZE) {
+                val eldestKey = staticTrackPool.entries.firstOrNull()?.key ?: break
+                val evicted = staticTrackPool.remove(eldestKey)
+                if (evicted != null) {
+                    safeStopAndRelease(evicted)
+                }
+            }
+            val created = createStaticTrack(pcmBuffer)
+            if (isReleased) {
+                safeStopAndRelease(created)
+                throw CancellationException("GlowAudioSynthesizer is released")
+            }
+            staticTrackPool[pcmBuffer] = created
+            return created
         }
     }
 
@@ -393,65 +487,95 @@ class GlowAudioSynthesizer {
     }
 
     fun playPadSpecTone(pad: PadSpec, volume: Float = 0.85f) {
+        if (isReleased) return
         val vol = volume.coerceIn(0f, 1f)
         if (vol <= 0f) return
         audioScope.launch {
+            if (isReleased) return@launch
             val pcm = getOrSynthesizeTone(pad.frequencyHz)
             playStaticPcmInternal(pcm, vol)
         }
     }
 
     fun playPadTone(color: GlowColor, volume: Float = 0.85f) {
+        if (isReleased) return
         val vol = volume.coerceIn(0f, 1f)
         if (vol <= 0f) return
         audioScope.launch {
+            if (isReleased) return@launch
             val pcm = getOrSynthesizeTone(color.frequencyHz)
             playStaticPcmInternal(pcm, vol)
         }
     }
 
-    fun playErrorBuzz(volume: Float = 0.85f) = playStaticPcmAsync( { errorBuzzPcm }, volume)
-    fun playRoundClearArpeggio(volume: Float = 0.85f) = playStaticPcmAsync( { clearArpeggioPcm }, volume)
+    fun playErrorBuzz(volume: Float = 0.85f) = playStaticPcmAsync({ errorBuzzPcm }, volume)
+    fun playRoundClearArpeggio(volume: Float = 0.85f) = playStaticPcmAsync({ clearArpeggioPcm }, volume)
 
     private fun playStaticPcmAsync(pcmProvider: () -> ShortArray, volume: Float) {
+        if (isReleased) return
         val vol = volume.coerceIn(0f, 1f)
         if (vol <= 0f) return
         audioScope.launch {
+            if (isReleased) return@launch
             playStaticPcmInternal(pcmProvider(), vol)
         }
     }
 
     private fun playStaticPcmInternal(pcmBuffer: ShortArray, vol: Float) {
+        if (isReleased) return
         try {
-            var track = staticTrackPool[pcmBuffer]
-            if (track == null || track.state != AudioTrack.STATE_INITIALIZED) {
-                track = createStaticTrack(pcmBuffer)
-                staticTrackPool[pcmBuffer] = track
+            val track = getOrCreateTrack(pcmBuffer, forceRecreate = false)
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                track.stop()
             }
-            synchronized(track) {
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    track.stop()
-                }
-                track.flush()
-                track.playbackHeadPosition = 0
-                track.setVolume(vol)
-                track.play()
+            val reloadRes = track.reloadStaticData()
+            val posRes = if (reloadRes < 0) track.setPlaybackHeadPosition(0) else AudioTrack.SUCCESS
+            val volRes = track.setVolume(vol)
+            track.play()
+
+            if (reloadRes < 0 || posRes < 0 || volRes < 0 || track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                val healedTrack = getOrCreateTrack(pcmBuffer, forceRecreate = true)
+                healedTrack.setVolume(vol)
+                healedTrack.play()
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            if (t !is CancellationException) {
+                Log.w(LOG_TAG, "Audio playback failed", t)
+            }
+        }
+    }
+
+    internal fun poolSizeForTesting(): Int = synchronized(poolLock) { staticTrackPool.size }
+
+    internal fun pooledTracksSnapshotForTesting(): Map<ShortArray, AudioTrack> = synchronized(poolLock) {
+        LinkedHashMap(staticTrackPool)
+    }
+
+    internal fun getOrCreateTrackForTesting(pcmBuffer: ShortArray, forceRecreate: Boolean = false): AudioTrack {
+        return audioExecutor.submit<AudioTrack> {
+            getOrCreateTrack(pcmBuffer, forceRecreate)
+        }.get()
+    }
+
+    internal fun flushAudioQueueForTesting() {
+        if (isReleased) return
+        runCatching {
+            audioExecutor.submit {}.get()
         }
     }
 
     fun release() {
+        isReleased = true
         audioScope.cancel()
-        for ((_, track) in staticTrackPool) {
-            runCatching {
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    track.stop()
-                }
-                track.release()
+        synchronized(poolLock) {
+            for ((_, track) in staticTrackPool) {
+                safeStopAndRelease(track)
             }
+            staticTrackPool.clear()
         }
-        staticTrackPool.clear()
+        runCatching {
+            audioDispatcher.close()
+        }
     }
 }
 
@@ -1140,7 +1264,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         roundTrigger++
     }
 
-    val audioSynth = remember { GlowAudioSynthesizer() }
+    val audioSynth = remember { GlowAudioSynthesizer(gridSize) }
+    LaunchedEffect(gridSize) { audioSynth.preWarmForGrid(gridSize) }
     DisposableEffect(Unit) { onDispose { audioSynth.release() } }
 
     val effectiveVolume = if (feedbackEnabled) audioVolume else 0f
