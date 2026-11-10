@@ -319,6 +319,9 @@ object ChallengeStorage {
             put("paceName", awaiting.paceName)
             put("tries", awaiting.tries)
             put("createdAt", awaiting.createdAt)
+            if (awaiting.rivalName != null) {
+                put("rivalName", awaiting.rivalName)
+            }
         }
         prefs.edit().putString(KEY_PENDING_SHARE, obj.toString()).apply()
     }
@@ -330,6 +333,7 @@ object ChallengeStorage {
             val obj = JSONObject(raw)
             val diffName = obj.optString("difficulty", "EASY")
             val difficulty = try { GameDifficulty.valueOf(diffName) } catch (_: Exception) { GameDifficulty.EASY }
+            val rName = obj.optString("rivalName", "").trim().takeIf { it.isNotEmpty() }
             AwaitingChallenge(
                 chainId = obj.getString("chainId"),
                 code = obj.getString("code"),
@@ -338,7 +342,8 @@ object ChallengeStorage {
                 difficulty = difficulty,
                 paceName = obj.optString("paceName", "Classic"),
                 tries = obj.optInt("tries", 3),
-                createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                rivalName = rName
             )
         } catch (_: Exception) {
             null
@@ -475,6 +480,51 @@ object ChallengeStorage {
                         }
                     }
                 }
+
+                // PASS 5.33: Multi-pending outbound parsing with lenient migration fallback
+                val parsedPendingOutbounds = mutableListOf<PendingOutboundChallenge>()
+                val pendingsArr = obj.optJSONArray("pendingOutbounds")
+                if (pendingsArr != null) {
+                    for (j in 0 until pendingsArr.length()) {
+                        val pObj = pendingsArr.optJSONObject(j) ?: continue
+                        val pDiffName = pObj.optString("difficulty", "EASY")
+                        val pDiff = try { GameDifficulty.valueOf(pDiffName) } catch (_: Exception) { GameDifficulty.EASY }
+                        parsedPendingOutbounds.add(
+                            PendingOutboundChallenge(
+                                gridTag = pObj.optString("gridTag", "2x2"),
+                                difficulty = pDiff,
+                                target = pObj.optInt("target", 0),
+                                tries = pObj.optInt("tries", 3),
+                                code = pObj.optString("code", ""),
+                                mintedAt = pObj.optLong("mintedAt", System.currentTimeMillis()),
+                                rivalName = pObj.optString("rivalName", obj.optString("name", "HERO")),
+                                seed = pObj.optInt("seed", 0),
+                                chainId = pObj.optString("chainId", "")
+                            )
+                        )
+                    }
+                } else {
+                    // Lenient fallback: legacy single pendingOutbound object
+                    val singleP = obj.optJSONObject("pendingOutbound")
+                    if (singleP != null) {
+                        val pDiffName = singleP.optString("difficulty", "EASY")
+                        val pDiff = try { GameDifficulty.valueOf(pDiffName) } catch (_: Exception) { GameDifficulty.EASY }
+                        parsedPendingOutbounds.add(
+                            PendingOutboundChallenge(
+                                gridTag = singleP.optString("gridTag", "2x2"),
+                                difficulty = pDiff,
+                                target = singleP.optInt("target", 0),
+                                tries = singleP.optInt("tries", 3),
+                                code = singleP.optString("code", ""),
+                                mintedAt = singleP.optLong("mintedAt", System.currentTimeMillis()),
+                                rivalName = singleP.optString("rivalName", obj.optString("name", "HERO")),
+                                seed = singleP.optInt("seed", 0),
+                                chainId = singleP.optString("chainId", "")
+                            )
+                        )
+                    }
+                }
+
                 list.add(
                     RivalRecord(
                         name = obj.getString("name"),
@@ -495,7 +545,8 @@ object ChallengeStorage {
                         inProgressSeed = obj.optInt("inProgressSeed", 0),
                         gridStats = parsedGridStats,
                         lastReplyCode = obj.optString("lastReplyCode", ""),
-                        isReplySent = obj.optBoolean("isReplySent", true)
+                        isReplySent = obj.optBoolean("isReplySent", true),
+                        pendingOutbounds = parsedPendingOutbounds
                     )
                 )
             }
@@ -522,6 +573,21 @@ object ChallengeStorage {
                 }
                 gridObj.put(gridKey.lowercase(), sObj)
             }
+            val pendingsArr = JSONArray()
+            for (p in item.pendingOutbounds) {
+                val pObj = JSONObject().apply {
+                    put("gridTag", p.gridTag)
+                    put("difficulty", p.difficulty.name)
+                    put("target", p.target)
+                    put("tries", p.tries)
+                    put("code", p.code)
+                    put("mintedAt", p.mintedAt)
+                    put("rivalName", p.rivalName)
+                    put("seed", p.seed)
+                    put("chainId", p.chainId)
+                }
+                pendingsArr.put(pObj)
+            }
             val obj = JSONObject().apply {
                 put("name", item.name)
                 put("wins", item.wins)
@@ -542,6 +608,7 @@ object ChallengeStorage {
                 put("gridStats", gridObj)
                 put("lastReplyCode", item.lastReplyCode)
                 put("isReplySent", item.isReplySent)
+                put("pendingOutbounds", pendingsArr)
             }
             jsonArray.put(obj)
         }
@@ -561,6 +628,13 @@ object ChallengeStorage {
 
     fun deleteRival(context: Context, name: String) {
         val existing = loadRivals(context).toMutableList()
+        val targetRival = existing.firstOrNull { it.name.equals(name, ignoreCase = true) }
+        if (targetRival != null) {
+            // PASS 5.33: Ghost unlock - clear unreplied pending outbounds from ledger
+            for (p in targetRival.pendingOutbounds) {
+                removeSentRecommendation(context, targetRival.name, p.gridTag, p.difficulty, p.seed)
+            }
+        }
         val removed = existing.removeAll { it.name.equals(name, ignoreCase = true) }
         if (removed) {
             persistRivals(context, existing)
@@ -915,7 +989,143 @@ object ChallengeStorage {
     }
 
     /**
-     * PASS 5.28:
+     * PASS 5.33: Removes a specific stored board entry from the sent-recommendations ledger
+     * (used by Ghost Unlock when a targeted pending share expires past 7 days without reply,
+     * or when a rival card is deleted).
+     */
+    fun removeSentRecommendation(
+        context: Context,
+        rivalName: String,
+        gridTag: String,
+        difficulty: GameDifficulty,
+        seed: Int
+    ) {
+        if (seed <= 0) return
+        val cleanRival = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanRival.isEmpty()) return
+        val cleanGrid = gridTag.trim().lowercase()
+        if (cleanGrid.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_SENT_RECOMMENDATIONS, null) ?: return
+        val rootObj = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return
+        }
+        val arr = rootObj.optJSONArray(cleanRival) ?: return
+        val boardKey = buildRecommendationKey(cleanGrid, difficulty, seed)
+        val newArr = JSONArray()
+        var changed = false
+        for (i in 0 until arr.length()) {
+            val entry = arr.optString(i, "")
+            if (entry.equals(boardKey, ignoreCase = true)) {
+                changed = true
+            } else {
+                newArr.put(entry)
+            }
+        }
+        if (changed) {
+            if (newArr.length() > 0) {
+                rootObj.put(cleanRival, newArr)
+            } else {
+                rootObj.remove(cleanRival)
+            }
+            prefs.edit().putString(KEY_SENT_RECOMMENDATIONS, rootObj.toString()).apply()
+        }
+    }
+
+    const val GHOST_UNLOCK_TTL_MS = 7L * 24 * 60 * 60 * 1000L // 7 days (168 hours)
+
+    /**
+     * PASS 5.33: Adds or prepends a targeted pending challenge to a rival's pendingOutbounds list.
+     */
+    fun addRivalPendingOutbound(context: Context, rivalName: String, pending: PendingOutboundChallenge) {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanName.isEmpty()) return
+        val rivals = loadRivals(context).toMutableList()
+        val index = rivals.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
+        val record = if (index >= 0) {
+            rivals[index]
+        } else {
+            RivalRecord(name = cleanName)
+        }
+        val updatedList = record.pendingOutbounds.filterNot {
+            (it.seed != 0 && it.seed == pending.seed) ||
+            (it.chainId.isNotEmpty() && it.chainId.equals(pending.chainId, ignoreCase = true))
+        }.toMutableList()
+        updatedList.add(0, pending)
+        val updatedRecord = record.copy(pendingOutbounds = updatedList, updatedAt = System.currentTimeMillis())
+        if (index >= 0) {
+            rivals[index] = updatedRecord
+        } else {
+            rivals.add(0, updatedRecord)
+        }
+        persistRivals(context, rivals)
+    }
+
+    /**
+     * PASS 5.33: Removes a specific pending challenge from a rival's pendingOutbounds list by chainId or seed.
+     */
+    fun removeRivalPendingOutbound(context: Context, rivalName: String, chainId: String = "", seed: Int = 0) {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanName.isEmpty()) return
+        val rivals = loadRivals(context).toMutableList()
+        val index = rivals.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
+        if (index < 0) return
+        val record = rivals[index]
+        val updatedList = record.pendingOutbounds.filterNot {
+            val matchesChain = chainId.isNotEmpty() && it.chainId.equals(chainId, ignoreCase = true)
+            val matchesSeed = seed != 0 && it.seed == seed
+            matchesChain || matchesSeed
+        }
+        if (updatedList.size != record.pendingOutbounds.size) {
+            rivals[index] = record.copy(pendingOutbounds = updatedList)
+            persistRivals(context, rivals)
+        }
+    }
+
+    /**
+     * PASS 5.33: Sweeps all rivals for pending outbound challenges older than 7 days (GHOST_UNLOCK_TTL_MS).
+     * For expired entries: removes them from KEY_SENT_RECOMMENDATIONS so they can be recommended again,
+     * and removes them from the rival's pendingOutbounds list.
+     */
+    fun sweepExpiredPendingOutbounds(context: Context, now: Long = System.currentTimeMillis()): Int {
+        val rivals = loadRivals(context).toMutableList()
+        var totalPurged = 0
+        var rivalsChanged = false
+
+        for (i in rivals.indices) {
+            val rival = rivals[i]
+            if (rival.pendingOutbounds.isEmpty()) continue
+
+            val remaining = mutableListOf<PendingOutboundChallenge>()
+            var rivalModified = false
+
+            for (pending in rival.pendingOutbounds) {
+                if (now - pending.mintedAt >= GHOST_UNLOCK_TTL_MS) {
+                    // Expired with NO reply -> ghost unlock! Remove from ledger!
+                    removeSentRecommendation(context, rival.name, pending.gridTag, pending.difficulty, pending.seed)
+                    totalPurged++
+                    rivalModified = true
+                } else {
+                    remaining.add(pending)
+                }
+            }
+
+            if (rivalModified) {
+                rivals[i] = rival.copy(pendingOutbounds = remaining)
+                rivalsChanged = true
+            }
+        }
+
+        if (rivalsChanged) {
+            persistRivals(context, rivals)
+        }
+        return totalPurged
+    }
+
+    /**
+     * PASS 5.28 & PASS 5.33:
      * Computes qualifying "Sleeping Scores" (Rival Score Recommendations) where the player already has
      * a stored Classic board score (with valid seed > 0) that strictly beats the rival's lastTarget
      * on the exact same gridTag and difficulty, excluding any board already sent to or played against this rival.
@@ -926,6 +1136,7 @@ object ChallengeStorage {
         allBoardScores: List<BoardScoreOption>
     ): List<SleepingScoreRecommendation> {
         val sentKeys = if (context != null) {
+            sweepExpiredPendingOutbounds(context)
             getSentRecommendationsForRival(context, rival.name)
         } else {
             emptySet()
@@ -1055,7 +1266,8 @@ object ChallengeStorage {
             inProgressSeed = 0,
             gridStats = updatedGridStats,
             lastReplyCode = savedReplyCode,
-            isReplySent = false
+            isReplySent = false,
+            pendingOutbounds = existing?.pendingOutbounds ?: emptyList()
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)
@@ -1116,6 +1328,13 @@ object ChallengeStorage {
             recordSentRecommendation(context, cleanName, gridSize, difficulty, seed)
         }
 
+        // PASS 5.33: Multi-pending resolution - remove matching pending targeted challenge
+        val remainingPendings = (existing?.pendingOutbounds ?: emptyList()).filterNot {
+            val matchesChain = chainId.isNotEmpty() && it.chainId.equals(chainId, ignoreCase = true)
+            val matchesSeed = seed != 0 && it.seed == seed
+            matchesChain || matchesSeed
+        }
+
         val record = RivalRecord(
             name = cleanName,
             wins = updatedWins,
@@ -1135,7 +1354,8 @@ object ChallengeStorage {
             inProgressSeed = 0,
             gridStats = updatedGridStats,
             lastReplyCode = "",
-            isReplySent = true
+            isReplySent = true,
+            pendingOutbounds = remainingPendings
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)
@@ -1166,6 +1386,7 @@ object ChallengeStorage {
                 }
                 val diffName = obj.optString("difficulty", "EASY")
                 val difficulty = try { GameDifficulty.valueOf(diffName) } catch (_: Exception) { GameDifficulty.EASY }
+                val rivalName = obj.optString("rivalName", "").trim().takeIf { it.isNotEmpty() }
                 list.add(
                     AwaitingChallenge(
                         chainId = obj.getString("chainId"),
@@ -1175,7 +1396,8 @@ object ChallengeStorage {
                         difficulty = difficulty,
                         paceName = obj.optString("paceName", "Classic"),
                         tries = obj.optInt("tries", 3),
-                        createdAt = createdAt
+                        createdAt = createdAt,
+                        rivalName = rivalName
                     )
                 )
             }
@@ -1203,6 +1425,9 @@ object ChallengeStorage {
                 put("paceName", item.paceName)
                 put("tries", item.tries)
                 put("createdAt", item.createdAt)
+                if (item.rivalName != null) {
+                    put("rivalName", item.rivalName)
+                }
             }
             jsonArray.put(obj)
         }

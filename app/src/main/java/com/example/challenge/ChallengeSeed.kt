@@ -4,7 +4,7 @@ import java.util.Random
 
 private val ZERO_WIDTH_REGEX = Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]")
 private val UNICODE_DASH_REGEX = Regex("[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]")
-private val V2_EXTRACTION_REGEX = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,4}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
+private val V2_EXTRACTION_REGEX = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-Za-z0-9_]{1,10}-[A-Za-z0-9]{3,5}-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
 private val V1_EXTRACTION_REGEX = Regex("""\b((?:[234]x[234]|5x4)-\d+-[TR][135F][EH]-[A-NP-Z0-9a-np-z]{4,5}-[A-Za-z0-9])\b""", RegexOption.IGNORE_CASE)
 private val V0_EXTRACTION_REGEX = Regex("""(?<![A-Za-z0-9_-])\b((?:[234]x[234]|5x4)-\d+-(?:(?:T[135F][EH]|R[135F][EH])-)?[A-NP-Z0-9a-np-z]{4,5}(?:-[A-Za-z0-9])?)\b(?!-[A-Za-z0-9_])""", RegexOption.IGNORE_CASE)
 private val GRID_REGEX = Regex("^([234]x[234]|5x4)$")
@@ -42,10 +42,10 @@ object ChallengeSeed {
     }
 
     /**
-     * Generates a 3-character Base36/Base32 Chain ID for rivalry thread tracking.
+     * PASS 5.33: Generates a 4-character Base36/Base32 Chain ID for newly created rivalry threads.
      */
     fun generateChainId(): String {
-        return (1..3).map { ALPHABET[(Math.random() * ALPHABET.length).toInt()] }.joinToString("")
+        return (1..4).map { ALPHABET[(Math.random() * ALPHABET.length).toInt()] }.joinToString("")
     }
 
     /**
@@ -121,7 +121,7 @@ object ChallengeSeed {
         val diffChar = difficulty.codeChar
         val tdSegment = "$typeChar$safeTries$diffChar"
         val cleanName = sanitizePlayerName(senderName)
-        val cleanChain = chainId.trim().uppercase().take(3).ifEmpty { generateChainId() }
+        val cleanChain = chainId.trim().uppercase().take(5).ifEmpty { generateChainId() }
 
         val rawCore = "$normalizedGrid-$targetScore-$tdSegment-$cleanName-$cleanChain-$seedCode"
         val checksum = computeChecksum(rawCore)
@@ -229,7 +229,7 @@ object ChallengeSeed {
             if (!NAME_REGEX.matches(name)) return null
 
             val chainId = parts[4]
-            if (chainId.length !in 3..4) return null
+            if (chainId.length !in 3..5) return null
 
             val seedStr = parts[5]
             val seedInt = decodeSeed(seedStr) ?: return null

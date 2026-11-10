@@ -120,6 +120,21 @@ data class GridStat(
 )
 
 /**
+ * PASS 5.33: Data model for a pending targeted outbound challenge linked to a specific rival.
+ */
+data class PendingOutboundChallenge(
+    val gridTag: String,                               // e.g. "4x4"
+    val difficulty: GameDifficulty = GameDifficulty.EASY,
+    val target: Int,                                   // Target score
+    val tries: Int = 3,                                // Max tries (0 = Free)
+    val code: String,                                  // Full 7-segment code
+    val mintedAt: Long = System.currentTimeMillis(),   // Mint timestamp for 7-day ghost unlock
+    val rivalName: String,                             // e.g. "ALEX"
+    val seed: Int = 0,                                 // Board seed for ledger correlation
+    val chainId: String = ""                           // Chain ID for revenge thread
+)
+
+/**
  * Record for head-to-head rivalry history with a named rival.
  */
 data class RivalRecord(
@@ -141,19 +156,21 @@ data class RivalRecord(
     val inProgressSeed: Int = 0,       // Challenge seed when lastStatus == "IN_PROGRESS"
     val gridStats: Map<String, GridStat> = emptyMap(), // Per-grid breakdown (e.g. "2x2" -> GridStat(1, 1, 0))
     val lastReplyCode: String = "",    // Saved R-code from last completed incoming challenge
-    val isReplySent: Boolean = true    // False when an R-code was generated on Game Over but not yet copied/shared
+    val isReplySent: Boolean = true,   // False when an R-code was generated on Game Over but not yet copied/shared
+    val pendingOutbounds: List<PendingOutboundChallenge> = emptyList() // PASS 5.33: Active targeted shares awaiting reply
 )
 
 /**
  * Record for an outbound challenge waiting for a challenger's response.
  */
 data class AwaitingChallenge(
-    val chainId: String,               // 3-char chain ID, e.g. "K7Q"
+    val chainId: String,               // Chain ID, e.g. "K7Q" or "K7QZ"
     val code: String,                  // Full 7-segment code
     val gridSizeTag: String,           // "2x2", "3x3", "4x4"
     val targetScore: Int,              // Score to beat
     val difficulty: GameDifficulty = GameDifficulty.EASY,
     val paceName: String = "Classic",
     val tries: Int = 3,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val rivalName: String? = null      // PASS 5.33: Null for broadcast shares; named rival for targeted shares
 )

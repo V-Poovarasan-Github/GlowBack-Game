@@ -2830,6 +2830,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore, seedInt = parsed?.seedInt ?: currentRunSeed)
                             val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
                             val gridTag = gridSize.keyPrefix
+                            val resolvedSeed = parsed?.seedInt ?: currentRunSeed
                             if (!shareRival.isNullOrBlank()) {
                                 ChallengeStorage.setLastSharedRivalName(context, shareRival)
                                 ChallengeStorage.recordSentRecommendation(
@@ -2837,7 +2838,22 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                     rivalName = shareRival,
                                     gridTag = gridTag,
                                     difficulty = difficultyMode,
-                                    seed = parsed?.seedInt ?: currentRunSeed
+                                    seed = resolvedSeed
+                                )
+                                ChallengeStorage.addRivalPendingOutbound(
+                                    context = context,
+                                    rivalName = shareRival,
+                                    pending = com.example.challenge.PendingOutboundChallenge(
+                                        gridTag = gridTag,
+                                        difficulty = difficultyMode,
+                                        target = currentScore,
+                                        tries = selectedShareTries,
+                                        code = generatedCode,
+                                        mintedAt = System.currentTimeMillis(),
+                                        rivalName = shareRival,
+                                        seed = resolvedSeed,
+                                        chainId = chainId
+                                    )
                                 )
                             }
                             val awaiting = AwaitingChallenge(
@@ -2847,7 +2863,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                 targetScore = currentScore,
                                 difficulty = difficultyMode,
                                 paceName = "Classic",
-                                tries = selectedShareTries
+                                tries = selectedShareTries,
+                                rivalName = shareRival?.ifBlank { null }
                             )
                             ChallengeStorage.savePendingShare(context, awaiting)
                             awaitingChallengeForDialog = awaiting
@@ -3102,11 +3119,17 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 }
             } else null
 
+            val effectiveLockedRival = runSnapshot?.lockedRivalName
+                ?: rivalRecSource?.rivalName
+                ?: activeChallenge?.rivalName
+                ?: currentRivalNameForShare
+
             ShareTriesSelectorDialog(
                 initialTries = selectedShareTries,
                 initialBoardIndex = initialBoardIdx,
                 boardOptions = effectiveBoards,
                 lockedRunSummary = lockedSummary,
+                lockedRivalName = effectiveLockedRival,
                 isProgressiveBlocked = isProgressiveBlocked,
                 currentScoreToShare = (runSnapshot?.score ?: effectiveBoards.getOrNull(initialBoardIdx)?.score ?: currentScore).coerceAtLeast(1),
                 requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
@@ -3177,6 +3200,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             difficulty = chosenDiff,
                             seed = seedToUse
                         )
+                        ChallengeStorage.addRivalPendingOutbound(
+                            context = context,
+                            rivalName = shareRival,
+                            pending = com.example.challenge.PendingOutboundChallenge(
+                                gridTag = gridTag,
+                                difficulty = chosenDiff,
+                                target = scoreToShare,
+                                tries = chosenTries,
+                                code = code,
+                                mintedAt = System.currentTimeMillis(),
+                                rivalName = shareRival,
+                                seed = seedToUse,
+                                chainId = chainId
+                            )
+                        )
                     }
                     runCatching {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -3190,7 +3228,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         targetScore = scoreToShare,
                         difficulty = chosenDiff,
                         paceName = "Classic",
-                        tries = chosenTries
+                        tries = chosenTries,
+                        rivalName = shareRival?.ifBlank { null }
                     )
                     ChallengeStorage.savePendingShare(context, awaiting)
                     awaitingChallengeForDialog = awaiting
@@ -3251,6 +3290,21 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             difficulty = chosenDiff,
                             seed = seedToUse
                         )
+                        ChallengeStorage.addRivalPendingOutbound(
+                            context = context,
+                            rivalName = shareRival,
+                            pending = com.example.challenge.PendingOutboundChallenge(
+                                gridTag = gridTag,
+                                difficulty = chosenDiff,
+                                target = scoreToShare,
+                                tries = chosenTries,
+                                code = code,
+                                mintedAt = System.currentTimeMillis(),
+                                rivalName = shareRival,
+                                seed = seedToUse,
+                                chainId = chainId
+                            )
+                        )
                     }
                     val awaiting = AwaitingChallenge(
                         chainId = chainId,
@@ -3259,7 +3313,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         targetScore = scoreToShare,
                         difficulty = chosenDiff,
                         paceName = chosenPace,
-                        tries = chosenTries
+                        tries = chosenTries,
+                        rivalName = shareRival?.ifBlank { null }
                     )
                     ChallengeStorage.savePendingShare(context, awaiting)
                     // Requirement 2: Close dialog so NOTHING renders while system share sheet is open.
@@ -6365,21 +6420,14 @@ private fun StatusBanner(
                     }
                 }
             } else if (sequenceSize > 0 && (gameState == GameState.PLAYING || gameState == GameState.WATCHING)) {
-                // PASS 5.18 Part 2: Hide step indicator dots if target score or total steps > 7
-                val effectiveTargetSteps = if (activeChallenge != null) {
-                    maxOf(sequenceSize, activeChallenge.targetScore)
-                } else {
-                    sequenceSize
+                // PASS 5.33: Total steps <= 8 keeps dot row. Total steps >= 9 renders compact pill [ completed / total ]
+                Spacer(modifier = Modifier.height(6.dp))
+                val completed = when {
+                    isRoundClearCelebration -> sequenceSize
+                    gameState == GameState.PLAYING -> playerStepIndex
+                    else -> 0
                 }
-                if (effectiveTargetSteps <= 7) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    val completed = when {
-                        isRoundClearCelebration -> sequenceSize
-                        gameState == GameState.PLAYING -> playerStepIndex
-                        else -> 0
-                    }
-                    SequenceStepIndicator(totalSteps = sequenceSize, completedSteps = completed, accentColor = bannerAccentColor)
-                }
+                SequenceStepIndicator(totalSteps = sequenceSize, completedSteps = completed, accentColor = bannerAccentColor)
             }
         }
     }
@@ -6387,15 +6435,42 @@ private fun StatusBanner(
 
 @Composable
 private fun SequenceStepIndicator(totalSteps: Int, completedSteps: Int, accentColor: Color) {
-    if (totalSteps > 7) return
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.testTag("sequence_step_indicator")
-    ) {
-        for (i in 0 until totalSteps) {
-            val done = i < completedSteps
-            Box(modifier = Modifier.size(if (done) 10.dp else 8.dp).clip(CircleShape).background(if (done) accentColor else Color(0xFF475569)))
+    if (totalSteps <= 8) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.testTag("sequence_step_indicator")
+        ) {
+            for (i in 0 until totalSteps) {
+                val done = i < completedSteps
+                Box(
+                    modifier = Modifier
+                        .size(if (done) 10.dp else 8.dp)
+                        .clip(CircleShape)
+                        .background(if (done) accentColor else Color(0xFF475569))
+                )
+            }
+        }
+    } else {
+        val isWatchingOrZero = completedSteps == 0
+        val pillBg = if (isWatchingOrZero) Color(0xFF1E293B) else Color(0xFF064E3B)
+        val pillBorder = if (isWatchingOrZero) Color(0xFF334155) else Color(0xFF10B981)
+        val pillColor = if (isWatchingOrZero) Color(0xFF94A3B8) else Color(0xFF34D399)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = pillBg,
+            border = BorderStroke(1.dp, pillBorder),
+            modifier = Modifier.testTag("sequence_step_indicator")
+        ) {
+            Text(
+                text = "$completedSteps / $totalSteps",
+                color = pillColor,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .testTag("sequence_step_pill_text")
+            )
         }
     }
 }

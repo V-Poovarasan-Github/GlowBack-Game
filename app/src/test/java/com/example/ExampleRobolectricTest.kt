@@ -4,12 +4,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import com.example.challenge.AwaitingChallenge
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeShareHelper
 import com.example.challenge.ChallengeStorage
 import com.example.challenge.GameDifficulty
 import com.example.challenge.GridStat
+import com.example.challenge.PendingOutboundChallenge
 import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
@@ -3788,7 +3790,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("rival_setup_recommendations_section").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_recommendation_chip_3x3_easy")
             .assertIsDisplayed()
-            .assertTextContains("3×3 Easy · You 12 vs their 8", substring = true)
+            .assertTextContains("3×3 Easy", substring = true)
+            .assertTextContains("vs 8", substring = true)
 
         // Non-qualifying boards must NOT appear as recommendation chips
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_hard").assertDoesNotExist()
@@ -5091,6 +5094,377 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_33_sim1_fullDuelLifecycle() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+
+        // TESTER mints T-code: 3x3 Easy target 8, 3 tries, chain K7QZ (4-char), seed 11111
+        val chainId = "K7QZ"
+        val seed = 11111
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 8,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "TESTER",
+            chainId = chainId,
+            isRevenge = false
+        )
+        assertNotNull(tCode)
+        val parsedT = ChallengeSeed.parseChallengeCode(tCode)
+        assertNotNull(parsedT)
+        assertEquals(4, parsedT!!.chainId.length)
+        assertEquals(chainId, parsedT.chainId)
+
+        // TESTER records this outbound T-code challenge targeting RIVAL
+        ChallengeStorage.recordCreatedCode(context, tCode)
+        val pendingOutbound = PendingOutboundChallenge(
+            gridTag = "3x3",
+            difficulty = GameDifficulty.EASY,
+            target = 8,
+            tries = 3,
+            code = tCode,
+            mintedAt = System.currentTimeMillis(),
+            rivalName = "RIVAL",
+            seed = seed,
+            chainId = chainId
+        )
+        ChallengeStorage.addRivalPendingOutbound(context, "RIVAL", pendingOutbound)
+        val initialRival = ChallengeStorage.findRivalByName(context, "RIVAL")
+        assertNotNull(initialRival)
+        assertEquals(1, initialRival!!.pendingOutbounds.size)
+        assertEquals(chainId, initialRival.pendingOutbounds[0].chainId)
+
+        // RIVAL plays, scores 6 (< 8 target -> TESTER defended/won), mints R-code
+        val rCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 6,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "RIVAL",
+            chainId = chainId,
+            isRevenge = true
+        )
+        val parsedR = ChallengeSeed.parseChallengeCode(rCode)
+        assertNotNull(parsedR)
+        assertTrue(parsedR!!.isRevenge)
+        assertEquals(seed, parsedR.seedInt)
+
+        // TESTER pastes R-code -> records reply outcome
+        val updatedRival = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "RIVAL",
+            myOriginalTarget = 8,
+            responderScore = 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = chainId,
+            maxTries = 3,
+            seed = seed
+        )
+
+        // Assert WIN vs RIVAL on 3x3, matching pending challenge resolved/cleared, seed identical
+        assertEquals(1, updatedRival.wins)
+        assertEquals("WON", updatedRival.lastStatus)
+        assertEquals("3x3", updatedRival.lastGrid)
+        assertEquals(0, updatedRival.pendingOutbounds.size)
+        val remainingPendings = ChallengeStorage.findRivalByName(context, "RIVAL")?.pendingOutbounds ?: emptyList()
+        assertEquals(0, remainingPendings.size)
+    }
+
+    @Test
+    fun pass5_33_sim2_forceKillOnFinalTryReconcilesLoss() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+
+        // Rival SAM sends T-code with 1 try allowed
+        val seed = 33333
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 5,
+            tries = 1,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "SAM",
+            chainId = "SAM1",
+            isRevenge = false
+        )
+
+        // In-progress challenge created with 1 try
+        val inProgress = ChallengeItem(
+            code = tCode,
+            rivalName = "SAM",
+            gridSizeTag = "2x2",
+            targetScore = 5,
+            maxTries = 1,
+            attemptsLeft = 1,
+            bestScore = 0,
+            seed = seed,
+            difficulty = GameDifficulty.EASY,
+            chainId = "SAM1",
+            isRevenge = false
+        )
+        ChallengeStorage.saveInProgressChallenge(context, inProgress)
+
+        // Ready gate dismissed: try is pre-deducted immediately from 1 -> 0
+        val preDeductedItem = inProgress.copy(attemptsLeft = 0)
+        ChallengeStorage.saveInProgressChallenge(context, preDeductedItem)
+        val loaded = ChallengeStorage.findInProgressChallenge(context, tCode, "SAM1", "SAM", seed)
+        assertNotNull(loaded)
+        assertEquals(0, loaded!!.attemptsLeft)
+
+        // App force-killed / closed without completing gameplay.
+        // Reconcile on next app open: attemptsLeft == 0 -> finalizes as LOSS, generates R-code, zero try refund.
+        val record = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "SAM",
+            userScore = 0,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "SAM1",
+            maxTries = 1,
+            seed = seed
+        )
+        assertNotNull(record)
+        assertEquals(1, record!!.losses)
+        assertEquals("LOST", record.lastStatus)
+        assertTrue("Generated reply code must be non-empty", record.lastReplyCode.isNotEmpty())
+        val parsedReply = ChallengeSeed.parseChallengeCode(record.lastReplyCode)
+        assertNotNull(parsedReply)
+        assertTrue(parsedReply!!.isRevenge)
+        assertEquals(1, parsedReply.tries)
+    }
+
+    @Test
+    fun pass5_33_sim3_broadcastCompletionHookDoesNotWriteAtSendTime() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+
+        // Setup Solo Game Over board score on 3x3 Easy (score 10, seed 77777)
+        writeBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY, score = 10, seed = 77777)
+        val initialRival = RivalRecord(
+            name = "CHLOE",
+            wins = 0,
+            losses = 0,
+            ties = 0,
+            matches = 0,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 7,
+            lastUserScore = 10,
+            lastStatus = "WON",
+            lastChainId = "CHL4"
+        )
+        ChallengeStorage.saveRival(context, initialRival)
+
+        // 1. Broadcast share mint (Share to Everyone or Solo Game Over without locked rival):
+        // Does NOT write to KEY_SENT_RECOMMENDATIONS at send time!
+        val broadcastAwaiting = AwaitingChallenge(
+            chainId = "BCAST",
+            code = "3x3-10-T3E-ME-BCAST-77777-A",
+            gridSizeTag = "3x3",
+            targetScore = 10,
+            difficulty = GameDifficulty.EASY,
+            paceName = "Classic",
+            tries = 3,
+            createdAt = System.currentTimeMillis(),
+            rivalName = null // broadcast
+        )
+        ChallengeStorage.saveAwaitingChallenge(context, broadcastAwaiting)
+
+        // CHLOE should STILL see the recommendation because broadcast shares do not suppress at send time!
+        val recsBeforeCompletion = ChallengeStorage.computeSleepingScoresForRival(context, initialRival, getShareableBoardScores(prefs))
+        assertEquals(
+            "Broadcast share must NOT write send-time ledger entry, so recommendation is still available",
+            1,
+            recsBeforeCompletion.size
+        )
+        assertEquals(77777, recsBeforeCompletion[0].boardOption.seed)
+
+        // 2. Later CHLOE completes the challenge: completion-time hook writes (CHLOE, 3x3, EASY, 77777)
+        val chloeCompleted = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "CHLOE",
+            myOriginalTarget = 10,
+            responderScore = 8,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "BCAST",
+            maxTries = 3,
+            seed = 77777
+        )
+
+        // Now recommendation must be permanently suppressed for CHLOE
+        val recsAfterCompletion = ChallengeStorage.computeSleepingScoresForRival(context, chloeCompleted, getShareableBoardScores(prefs))
+        assertTrue(
+            "Completed challenge via completion-time hook must permanently suppress recommendation for CHLOE",
+            recsAfterCompletion.isEmpty()
+        )
+    }
+
+    @Test
+    fun pass5_33_sim4_chainTargetAged31DaysGracefulOutcome() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+
+        val chainId = "OLD1"
+        val seed = 44444
+        // Save outbound chain target aged 31 days ago
+        val agedTimestamp = System.currentTimeMillis() - (31L * 24L * 60L * 60L * 1000L)
+        ChallengeStorage.saveOutboundChainTarget(
+            context = context,
+            chainId = chainId,
+            targetScore = 9,
+            createdAt = agedTimestamp,
+            seedInt = seed
+        )
+
+        // Incoming R-code arrives from RIVAL
+        val rCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 7,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "RIVAL",
+            chainId = chainId,
+            isRevenge = true
+        )
+        val parsedR = ChallengeSeed.parseChallengeCode(rCode)
+        assertNotNull(parsedR)
+
+        // Verify inspectOutboundChainTarget returns EXPIRED status gracefully
+        val chainInspect = ChallengeStorage.inspectOutboundChainTarget(
+            context = context,
+            chainId = parsedR!!.chainId,
+            seedInt = parsedR.seedInt
+        )
+        assertEquals(ChallengeStorage.ChainLookupStatus.EXPIRED, chainInspect.status)
+    }
+
+    @Test
+    fun pass5_33_sim5_ghostFlowUnlocksRecommendationAfter7DaysAndMultiPendingExtension() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+
+        val rival = RivalRecord(
+            name = "ALEX",
+            wins = 0,
+            losses = 0,
+            ties = 0,
+            matches = 0,
+            lastGrid = "4x4",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 5,
+            lastUserScore = 6,
+            lastStatus = "WON",
+            lastChainId = "VGA",
+            gridStats = mapOf(
+                "4x4" to GridStat(lastTarget = 5, lastDifficulty = GameDifficulty.EASY, lastStatus = "WON"),
+                "3x3" to GridStat(lastTarget = 5, lastDifficulty = GameDifficulty.EASY, lastStatus = "WON")
+            )
+        )
+        ChallengeStorage.saveRival(context, rival)
+
+        // Write two board scores:
+        // Board 1: 4x4 Easy score 6, seed 22206
+        // Board 2: 3x3 Easy score 8, seed 33308
+        writeBestScore(prefs, GridSize.FOUR_BY_FOUR, PaceMode.CLASSIC, GameDifficulty.EASY, score = 6, seed = 22206)
+        writeBestScore(prefs, GridSize.THREE_BY_THREE, PaceMode.CLASSIC, GameDifficulty.EASY, score = 8, seed = 33308)
+
+        val initialRecs = ChallengeStorage.computeSleepingScoresForRival(context, rival, getShareableBoardScores(prefs))
+        assertEquals(2, initialRecs.size)
+
+        // 1. Day 0: Targeted share of Board 1 (seed 22206) sent to ALEX
+        val now = System.currentTimeMillis()
+        val pending1 = PendingOutboundChallenge(
+            gridTag = "4x4",
+            difficulty = GameDifficulty.EASY,
+            target = 6,
+            tries = 3,
+            code = "4x4-6-T3E-ME-ALX1-22206-A",
+            mintedAt = now,
+            rivalName = "ALEX",
+            seed = 22206,
+            chainId = "ALX1"
+        )
+        ChallengeStorage.addRivalPendingOutbound(context, "ALEX", pending1)
+        ChallengeStorage.recordSentRecommendation(context, "ALEX", "4x4", GameDifficulty.EASY, 22206)
+
+        // 2. Targeted share of Board 2 (seed 33308) sent to ALEX 1 hour later
+        val pending2 = PendingOutboundChallenge(
+            gridTag = "3x3",
+            difficulty = GameDifficulty.EASY,
+            target = 8,
+            tries = 3,
+            code = "3x3-8-T3E-ME-ALX2-33308-B",
+            mintedAt = now + 3600_000L,
+            rivalName = "ALEX",
+            seed = 33308,
+            chainId = "ALX2"
+        )
+        ChallengeStorage.addRivalPendingOutbound(context, "ALEX", pending2)
+        ChallengeStorage.recordSentRecommendation(context, "ALEX", "3x3", GameDifficulty.EASY, 33308)
+
+        // Verify ALEX has 2 multi-pendings, and both board scores are suppressed
+        val alexWithTwoPendings = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull(alexWithTwoPendings)
+        assertEquals(2, alexWithTwoPendings!!.pendingOutbounds.size)
+        val recsSuppressed = ChallengeStorage.computeSleepingScoresForRival(context, alexWithTwoPendings, getShareableBoardScores(prefs))
+        assertEquals("Both targeted pending shares must suppress recommendations", 0, recsSuppressed.size)
+
+        // 3. SIM5 EXTENSION: Advance clock by 7 days + 1 minute past pending1, but BEFORE pending2 expires
+        // pending1 age: 7 days + 1 min -> EXPIRED
+        // pending2 age: 7 days - 59 min -> NOT EXPIRED
+        val timeDay7Plus1Min = now + (7L * 24L * 60L * 60L * 1000L) + 60_000L
+        val prunedCount = ChallengeStorage.sweepExpiredPendingOutbounds(context, timeDay7Plus1Min)
+        assertEquals("Exactly 1 pending outbound must expire in this sweep", 1, prunedCount)
+
+        // 4. Assert first pending purged from RivalRecord, second pending remains
+        val alexAfterSweep = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull(alexAfterSweep)
+        assertEquals(1, alexAfterSweep!!.pendingOutbounds.size)
+        assertEquals(33308, alexAfterSweep.pendingOutbounds[0].seed)
+        assertEquals("ALX2", alexAfterSweep.pendingOutbounds[0].chainId)
+
+        // 5. Assert Board 1 (4x4 Easy seed 22206) is unlocked and re-recommended, while Board 2 (seed 33308) remains suppressed
+        val recsAfterGhostUnlock = ChallengeStorage.computeSleepingScoresForRival(context, alexAfterSweep, getShareableBoardScores(prefs))
+        assertEquals("Board 1 must be re-recommended after ghost unlock", 1, recsAfterGhostUnlock.size)
+        assertEquals(22206, recsAfterGhostUnlock[0].boardOption.seed)
+        assertEquals("4x4", recsAfterGhostUnlock[0].boardOption.gridTag)
+
+        // 6. Delete rival card -> unreplied pendings cleared from KEY_SENT_RECOMMENDATIONS
+        ChallengeStorage.deleteRival(context, "ALEX")
+
+        val alexRecreated = RivalRecord(
+            name = "ALEX",
+            wins = 0,
+            losses = 0,
+            ties = 0,
+            matches = 0,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 5,
+            lastUserScore = 8,
+            lastStatus = "WON",
+            gridStats = mapOf(
+                "4x4" to GridStat(lastTarget = 5, lastDifficulty = GameDifficulty.EASY, lastStatus = "WON"),
+                "3x3" to GridStat(lastTarget = 5, lastDifficulty = GameDifficulty.EASY, lastStatus = "WON")
+            )
+        )
+        val recsAfterDelete = ChallengeStorage.computeSleepingScoresForRival(context, alexRecreated, getShareableBoardScores(prefs))
+        assertEquals("Deleting rival card must clear unreplied recommendations so all boards can be recommended again", 2, recsAfterDelete.size)
     }
 }
 

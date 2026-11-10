@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -608,7 +609,7 @@ fun EnterChallengeDialog(
             )
             if (matchedAwaiting == null) {
                 if (chainInspect.status == ChallengeStorage.ChainLookupStatus.EXPIRED) {
-                    val expiredMsg = "This reply has expired."
+                    val expiredMsg = "This challenge expired over 30 days ago."
                     errorMessage = expiredMsg
                     Toast.makeText(context, expiredMsg, Toast.LENGTH_SHORT).show()
                     return
@@ -1887,6 +1888,7 @@ fun ShareTriesSelectorDialog(
     initialBoardIndex: Int = 0,
     boardOptions: List<BoardScoreOption> = emptyList(),
     lockedRunSummary: String? = null,
+    lockedRivalName: String? = null,
     isProgressiveBlocked: Boolean = false,
     currentScoreToShare: Int = 1,
     requireNameSetupFirst: Boolean = false,
@@ -1956,13 +1958,14 @@ fun ShareTriesSelectorDialog(
                         .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val headerTitle = if (!lockedRivalName.isNullOrBlank()) "Share Challenge to $lockedRivalName" else "Share Challenge"
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Share Challenge",
+                            text = headerTitle,
                             color = Color.White,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -1975,6 +1978,39 @@ fun ShareTriesSelectorDialog(
                                 .testTag("close_tries_selector_button")
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
+                        }
+                    }
+
+                    if (!lockedRivalName.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                .testTag("targeted_share_note_banner"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "ℹ", fontSize = 16.sp, color = Color(0xFF38BDF8))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "This code only works for $lockedRivalName.",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "New challenger? Use 🌍 Share to Everyone.",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -2583,7 +2619,7 @@ fun RivalMatchSetupDialog(
                                 modifier = Modifier.testTag("rival_setup_recommendations_title")
                             )
                             Text(
-                                text = "You already have a stored score that beats ${rival.name}:",
+                                text = "You already beat ${rival.name} here - send it now:",
                                 color = Color(0xFFCBD5E1),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
@@ -2602,27 +2638,60 @@ fun RivalMatchSetupDialog(
                                         color = Color(0xFF1E293B),
                                         border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.65f)),
                                         modifier = Modifier
+                                            .widthIn(min = 150.dp)
                                             .semantics(mergeDescendants = true) {}
                                             .testTag(chipTag)
                                     ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            Text(
-                                                text = rec.chipLabel,
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Icon(
-                                                imageVector = Icons.Default.Share,
-                                                contentDescription = "Share Recommended Score",
-                                                tint = Color(0xFF10B981),
-                                                modifier = Modifier.size(14.dp)
-                                            )
+                                            // Line 1: Grid + Difficulty bold, with small "vs Y" badge top-right
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "${rec.gridDisplay} ${rec.boardOption.difficulty.label}",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(0xFF10B981).copy(alpha = 0.2f),
+                                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.45f))
+                                                ) {
+                                                    Text(
+                                                        text = "vs ${rec.rivalLastTarget}",
+                                                        color = Color(0xFF34D399),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            // Line 2: "You X" score + trailing share glyph
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "You ${rec.boardOption.score}",
+                                                    color = Color(0xFF34D399),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Default.Share,
+                                                    contentDescription = "Share Recommended Score",
+                                                    tint = Color(0xFF10B981),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -2903,7 +2972,7 @@ fun HallOfFameScreen(
     }
 
     if (rivalForSetup != null) {
-        val currentRival = rivalForSetup!!
+        val currentRival = ChallengeStorage.findRivalByName(context, rivalForSetup!!.name) ?: rivalForSetup!!
         val recommendations = remember(currentRival, allBoardScores, refreshTrigger) {
             ChallengeStorage.computeSleepingScoresForRival(context, currentRival, allBoardScores)
         }
@@ -3071,7 +3140,9 @@ fun RivalryTabContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    if (rivals.isEmpty() && awaitingChallenges.isEmpty()) {
+    val broadcastAwaiting = awaitingChallenges.filter { it.rivalName.isNullOrBlank() }
+
+    if (rivals.isEmpty() && broadcastAwaiting.isEmpty()) {
         EmptyRivalryState(
             awaitingCount = 0,
             onShareCode = onShareCode,
@@ -3088,7 +3159,7 @@ fun RivalryTabContent(
             .testTag("rivalry_list"),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Persistent Action Bar: [Share Challenge | Paste Code]
+        // Persistent Action Bar: [Share to Everyone | Paste Code]
         item {
             Row(
                 modifier = Modifier
@@ -3109,7 +3180,7 @@ fun RivalryTabContent(
                 ) {
                     Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share Challenge", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    Text("Share to Everyone", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                 }
 
                 Button(
@@ -3132,15 +3203,15 @@ fun RivalryTabContent(
             }
         }
 
-        // Awaiting Challenges Section (no redundant top pill or 1 & 2 onboarding card)
-        if (awaitingChallenges.isNotEmpty()) {
+        // Global Awaiting Challenges Section (Broadcast only; targeted shares live on their rival card)
+        if (broadcastAwaiting.isNotEmpty()) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "AWAITING RESPONSE (${awaitingChallenges.size})",
+                        text = "AWAITING CHALLENGES (${broadcastAwaiting.size})",
                         color = Color(0xFF38BDF8),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -3150,7 +3221,7 @@ fun RivalryTabContent(
                 }
             }
 
-            items(awaitingChallenges, key = { it.chainId }) { awaiting ->
+            items(broadcastAwaiting, key = { it.chainId }) { awaiting ->
                 AwaitingCard(
                     awaiting = awaiting,
                     onPasteReply = onPasteCode,
@@ -3182,6 +3253,12 @@ fun RivalryTabContent(
                     rival = rival,
                     onDynamicAction = { onGetRevenge(rival) },
                     onPasteNewCode = { onPasteNewCode(rival) },
+                    onPasteReplyCode = { onPasteNewCode(rival) },
+                    onRecopyCode = { pending ->
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", pending.code))
+                        Toast.makeText(context, "Challenge code re-copied: ${pending.code}", Toast.LENGTH_SHORT).show()
+                    },
                     onSendReply = {
                         onSendReply(rival)
                         if (rival.lastReplyCode.isNotBlank()) {
@@ -3412,7 +3489,7 @@ fun AwaitingCard(
                     Text(text = "❓", fontSize = 16.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Waiting for a challenger...",
+                        text = "Unknown challenger",
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
@@ -3428,8 +3505,9 @@ fun AwaitingCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            val displayGrid = awaiting.gridSizeTag.replace('x', '×')
             Text(
-                text = "${awaiting.gridSizeTag.uppercase()} ${awaiting.difficulty.label} · Target: ${awaiting.targetScore} · ${formatTimeAgo(awaiting.createdAt)} · $expiryText",
+                text = "$displayGrid ${awaiting.difficulty.label} • Target ${awaiting.targetScore} • sent ${formatTimeAgo(awaiting.createdAt)}",
                 color = Color(0xFF94A3B8),
                 fontSize = 12.sp,
                 modifier = Modifier.testTag("awaiting_meta_${awaiting.chainId}")
@@ -3505,6 +3583,8 @@ fun RivalCard(
     onDynamicAction: () -> Unit,
     onPasteNewCode: () -> Unit,
     onSendReply: () -> Unit = {},
+    onPasteReplyCode: (() -> Unit)? = null,
+    onRecopyCode: ((PendingOutboundChallenge) -> Unit)? = null,
     onDeleteRival: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3691,131 +3771,229 @@ fun RivalCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Last Match / In-Progress Info
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF090E17))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
-                        "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
-                    } else {
-                        "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
-                    }
-                    val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
-                        val triesPhrase = if (rival.inProgressMaxTries == 0) {
-                            "Free tries"
-                        } else {
-                            "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
-                        }
-                        "Target: ${rival.lastTarget} • In Progress: $triesPhrase"
-                    } else {
-                        "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]"
-                    }
+            // PASS 5.33: If rival has pending outbound challenges, render awaiting banner + Paste Reply / Re-copy buttons
+            if (rival.pendingOutbounds.isNotEmpty()) {
+                val newestPending = rival.pendingOutbounds.maxByOrNull { it.mintedAt } ?: rival.pendingOutbounds.first()
+                val ageText = formatTimeAgo(newestPending.mintedAt)
+                val displayGrid = newestPending.gridTag.replace('x', '×')
+                val triesPhrase = if (newestPending.tries == 0) "Free tries" else "${newestPending.tries} ${if (newestPending.tries == 1) "try" else "tries"}"
 
-                    Text(
-                        text = leftMetaLabel,
-                        color = Color(0xFF94A3B8),
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = rightStatusLabel,
-                        color = statusColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.testTag("rival_status_text_${rival.name}")
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // PASS 5.18 Part 1: Show "Send Reply" button when an unsent R-code exists for the last match
-            val hasUnsentReply = rival.lastStatus != "IN_PROGRESS" && !rival.isReplySent && rival.lastReplyCode.isNotBlank()
-            if (hasUnsentReply) {
-                Button(
-                    onClick = onSendReply,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 38.dp)
-                        .testTag("rival_send_reply_button_${rival.name}"),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
-                        contentColor = Color(0xFF090D16)
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF0C243B))
+                        .border(1.dp, Color(0xFF0284C7).copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .testTag("rival_awaiting_banner_${rival.name}")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Send Reply (${rival.lastReplyCode})",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // Dynamic Action Button & Secondary Button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Dynamic Button
-                val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
-                    "IN_PROGRESS" -> {
-                        val resumeText = if (rival.inProgressMaxTries == 0) {
-                            "▶ Resume Challenge"
-                        } else {
-                            "▶ Resume (${rival.inProgressTriesLeft} left)"
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⏳ AWAITING REPLY • sent $ageText",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.testTag("rival_awaiting_title_${rival.name}")
+                            )
+                            if (rival.pendingOutbounds.size > 1) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color(0xFF0284C7).copy(alpha = 0.35f),
+                                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                                ) {
+                                    Text(
+                                        text = "+${rival.pendingOutbounds.size - 1} more",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                                            .testTag("rival_awaiting_more_badge_${rival.name}")
+                                    )
+                                }
+                            }
                         }
-                        Triple(resumeText, Color(0xFF00E5FF), Color.Black)
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "$displayGrid ${newestPending.difficulty.label} • Target ${newestPending.target} • $triesPhrase",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
-                    "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
-                    "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
-                    else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
                 }
 
-                Button(
-                    onClick = onDynamicAction,
-                    modifier = Modifier
-                        .weight(1.2f)
-                        .heightIn(min = 38.dp)
-                        .testTag("rival_dynamic_button_${rival.name}"),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = buttonColor,
-                        contentColor = buttonTextColor
-                    ),
-                    contentPadding = PaddingValues(horizontal = 8.dp)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = { (onPasteReplyCode ?: onPasteNewCode).invoke() },
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .heightIn(min = 38.dp)
+                            .testTag("rival_paste_reply_button_${rival.name}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(text = "Paste Reply Code", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+
+                    OutlinedButton(
+                        onClick = { onRecopyCode?.invoke(newestPending) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 38.dp)
+                            .testTag("rival_recopy_code_button_${rival.name}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(text = "Re-copy", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
+            } else {
+                // Last Match / In-Progress Info
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF090E17))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                            "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                        } else {
+                            "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                        }
+                        val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                            val triesPhrase = if (rival.inProgressMaxTries == 0) {
+                                "Free tries"
+                            } else {
+                                "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                            }
+                            "Target: ${rival.lastTarget} • In Progress: $triesPhrase"
+                        } else {
+                            "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]"
+                        }
+
+                        Text(
+                            text = leftMetaLabel,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = rightStatusLabel,
+                            color = statusColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("rival_status_text_${rival.name}")
+                        )
+                    }
                 }
 
-                OutlinedButton(
-                    onClick = onPasteNewCode,
-                    modifier = Modifier
-                        .weight(1.1f)
-                        .heightIn(min = 38.dp)
-                        .testTag("rival_paste_button_${rival.name}"),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
-                    contentPadding = PaddingValues(horizontal = 8.dp)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // PASS 5.18 Part 1: Show "Send Reply" button when an unsent R-code exists for the last match
+                val hasUnsentReply = rival.lastStatus != "IN_PROGRESS" && !rival.isReplySent && rival.lastReplyCode.isNotBlank()
+                if (hasUnsentReply) {
+                    Button(
+                        onClick = onSendReply,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 38.dp)
+                            .testTag("rival_send_reply_button_${rival.name}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF10B981),
+                            contentColor = Color(0xFF090D16)
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Send Reply (${rival.lastReplyCode})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                // Dynamic Action Button & Secondary Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(text = "Paste Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    // Dynamic Button
+                    val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
+                        "IN_PROGRESS" -> {
+                            val resumeText = if (rival.inProgressMaxTries == 0) {
+                                "▶ Resume Challenge"
+                            } else {
+                                "▶ Resume (${rival.inProgressTriesLeft} left)"
+                            }
+                            Triple(resumeText, Color(0xFF00E5FF), Color.Black)
+                        }
+                        "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
+                        "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
+                        else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
+                    }
+
+                    Button(
+                        onClick = onDynamicAction,
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .heightIn(min = 38.dp)
+                            .testTag("rival_dynamic_button_${rival.name}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = buttonColor,
+                            contentColor = buttonTextColor
+                        ),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onPasteNewCode,
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .heightIn(min = 38.dp)
+                            .testTag("rival_paste_button_${rival.name}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Text(text = "Paste Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
