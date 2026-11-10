@@ -1844,7 +1844,7 @@ fun PasteRivalCodeDialog(
                             errorMessage = "Invalid challenge code format."
                         } else if (!parsed.isLegacy && !parsed.senderName.equals(rivalName, ignoreCase = true)) {
                             // Strict Name-Lock rule (0ms instant error, no flash)
-                            val toastMsg = "This code is from ${parsed.senderName}. Use 'Paste Code' on the Rivalry tab instead."
+                            val toastMsg = "This code is from ${parsed.senderName}. Use 'Paste Code' right next to 'Share to Everyone' tab instead."
                             Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                             errorMessage = toastMsg
                         } else if (ChallengeStorage.isSelfChallenge(context, codeInput) || ChallengeStorage.isSelfChallenge(context, parsed.fullCode)) {
@@ -1891,7 +1891,6 @@ fun ShareTriesSelectorDialog(
     lockedRivalName: String? = null,
     isProgressiveBlocked: Boolean = false,
     currentScoreToShare: Int = 1,
-    requireNameSetupFirst: Boolean = false,
     awaitingChallengeForDialog: AwaitingChallenge? = null,
     onDismiss: () -> Unit,
     onDismissDidYouShare: () -> Unit = onDismiss,
@@ -1901,8 +1900,7 @@ fun ShareTriesSelectorDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var isConfiguringName by remember { mutableStateOf(requireNameSetupFirst) }
-    var senderNameInput by remember { mutableStateOf(ChallengeStorage.getMyName(context)) }
+    val senderName = remember(context) { ChallengeStorage.getMyName(context) }
     val options = listOf(1, 3, 5, 0) // 0 = Free/Unlimited
     var selectedTries by remember { mutableIntStateOf(if (initialTries in options) initialTries else 3) }
     var selectedBoardIndex by remember(boardOptions, initialBoardIndex) {
@@ -1928,14 +1926,6 @@ fun ShareTriesSelectorDialog(
                 awaiting = awaitingChallengeForDialog,
                 onDismiss = onDismissDidYouShare,
                 onConfirmShared = onConfirmDidYouShare
-            )
-        } else if (isConfiguringName) {
-            ChallengerNameSetupCardContent(
-                onSaveName = { savedName ->
-                    ChallengeStorage.setMyName(context, savedName)
-                    senderNameInput = savedName
-                    isConfiguringName = false
-                }
             )
         } else {
         Box(
@@ -2016,26 +2006,27 @@ fun ShareTriesSelectorDialog(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedTextField(
-                        value = senderNameInput,
-                        onValueChange = { input ->
-                            val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
-                            senderNameInput = cleaned
-                        },
-                        label = { Text("Your Display Name (max 10 chars)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF00E5FF),
-                            unfocusedBorderColor = Color(0xFF334155),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedLabelColor = Color(0xFF00E5FF),
-                            unfocusedLabelColor = Color(0xFF94A3B8)
-                        ),
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("share_sender_name_input")
-                    )
+                            .semantics(mergeDescendants = true) {}
+                            .testTag("share_sending_as_row"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Sending as: ",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal
+                        )
+                        Text(
+                            text = senderName,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("share_sending_as_name")
+                        )
+                    }
 
                     if (isProgressiveBlocked) {
                         // PASS 5.29 Final Addition: Progressive Game Over Lock
@@ -2219,14 +2210,12 @@ fun ShareTriesSelectorDialog(
                     Button(
                         onClick = {
                             if (!canShare || isGenerateFlashing) return@Button
-                            val finalName = ChallengeSeed.sanitizePlayerName(senderNameInput)
-                            ChallengeStorage.setMyName(context, finalName)
                             val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
                             isGenerateFlashing = true
                             scope.launch {
                                 flashDelayMs(150L)
                                 isGenerateFlashing = false
-                                onGenerateCard(selectedTries, finalName, chosenBoard)
+                                onGenerateCard(selectedTries, senderName, chosenBoard)
                             }
                         },
                         enabled = canShare,
@@ -2252,14 +2241,12 @@ fun ShareTriesSelectorDialog(
                         OutlinedButton(
                             onClick = {
                                 if (!canShare || isCopyOnlyFlashing) return@OutlinedButton
-                                val finalName = ChallengeSeed.sanitizePlayerName(senderNameInput)
-                                ChallengeStorage.setMyName(context, finalName)
                                 val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
                                 isCopyOnlyFlashing = true
                                 scope.launch {
                                     flashDelayMs(150L)
                                     isCopyOnlyFlashing = false
-                                    onCopyOnly(selectedTries, finalName, chosenBoard)
+                                    onCopyOnly(selectedTries, senderName, chosenBoard)
                                 }
                             },
                             enabled = canShare,
@@ -2409,118 +2396,6 @@ fun FirstTimeShareGateDialog(
     }
 }
 
-/**
- * One-time dialog prompting the player for their Challenger Tag if not yet configured.
- */
-@Composable
-fun ChallengerNameSetupDialog(
-    onDismiss: () -> Unit,
-    onSaveName: (String) -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        ChallengerNameSetupCardContent(onSaveName = onSaveName)
-    }
-}
-
-@Composable
-fun ChallengerNameSetupCardContent(
-    onSaveName: (String) -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var nameInput by remember { mutableStateOf("") }
-    var errorText by remember { mutableStateOf<String?>(null) }
-    var isSaveFlashing by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(22.dp))
-            .testTag("challenger_name_setup_dialog"),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                text = "Enter Your Challenger Tag",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.testTag("challenger_tag_title")
-            )
-
-            Text(
-                text = "Your rivals will see this name on their cards and challenge codes.",
-                color = Color(0xFF94A3B8),
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center
-            )
-
-            OutlinedTextField(
-                value = nameInput,
-                onValueChange = { input ->
-                    val cleaned = input.replace(' ', '_').uppercase().filter { (it in 'A'..'Z') || (it in '0'..'9') || it == '_' }.take(10)
-                    nameInput = cleaned
-                    errorText = null
-                },
-                label = { Text("Your Name (max 10 chars)") },
-                placeholder = { Text("e.g. ALEX", color = Color(0xFF475569)) },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF00E5FF),
-                    unfocusedBorderColor = Color(0xFF334155),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedLabelColor = Color(0xFF00E5FF),
-                    unfocusedLabelColor = Color(0xFF94A3B8)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("challenger_tag_input")
-            )
-
-            if (errorText != null) {
-                Text(text = errorText!!, color = Color(0xFFFF5252), fontSize = 12.sp)
-            }
-
-            Button(
-                onClick = {
-                    if (isSaveFlashing) return@Button
-                    val finalName = ChallengeSeed.sanitizePlayerName(nameInput)
-                    if (nameInput.isBlank()) {
-                        errorText = "Please enter a display name."
-                    } else {
-                        ChallengeStorage.setMyName(context, finalName)
-                        isSaveFlashing = true
-                        scope.launch {
-                            flashDelayMs(150L)
-                            isSaveFlashing = false
-                            onSaveName(finalName)
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .testTag("challenger_tag_save_button"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSaveFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
-                    contentColor = Color(0xFF090D16)
-                )
-            ) {
-                Text(if (isSaveFlashing) "✓ Saved" else "Save & Continue", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
 
 /**
  * PASS 5.22:

@@ -532,7 +532,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("copy_challenge_code_button").assertDoesNotExist()
 
-        // Clear any score from round 1 if the random first pad happened to be green, then verify FirstTimeShareGateDialog -> ChallengerNameSetupDialog -> ShareTriesSelectorDialog
+        // Clear any score from round 1 if the random first pad happened to be green, then verify FirstTimeShareGateDialog -> ShareTriesSelectorDialog
         prefs.edit().remove(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY)).apply()
         composeTestRule.onNodeWithTag("game_over_home_button").performClick()
         composeTestRule.waitForIdle()
@@ -545,16 +545,16 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("first_time_share_dismiss_button").performClick()
         composeTestRule.waitForIdle()
 
-        // Seed a best score so the player passes the first-time score gate, then verify ChallengerNameSetupDialog -> ShareTriesSelectorDialog
+        // Seed a best score and pre-seed stored name so the player passes the first-time score gate and directly opens ShareTriesSelectorDialog
         prefs.edit().putInt(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY), 5).apply()
-        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "NEON_KING")
         composeTestRule.onNodeWithTag("empty_share_button").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("challenger_name_setup_dialog").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("challenger_tag_input").performTextInput("NEON_KING")
-        composeTestRule.onNodeWithTag("challenger_tag_save_button").performClick()
-        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertTextContains("NEON_KING")
+        composeTestRule.onNodeWithTag("share_sending_as_name", useUnmergedTree = true).assertTextContains("NEON_KING")
 
         composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tries_selector_title")
@@ -6222,6 +6222,74 @@ class ExampleRobolectricTest {
         val parsedReply = ChallengeSeed.parseChallengeCode(replyCode)
         assertNotNull(parsedReply)
         assertEquals("Finalized reply code must carry score 4", 4, parsedReply!!.targetScore)
+    }
+
+    @Test
+    fun pass5_36_shareDialog_showsReadOnlySenderName_zeroEditableFields() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY), 8).apply()
+        ChallengeStorage.setMyName(context, "TESTER")
+        composeTestRule.waitForIdle()
+
+        // Navigate to Leaderboard / Rivalry tab and click Share Code
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert tries_selector_sheet is displayed
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+
+        // Assert share_sending_as_row is displayed and contains "Sending as: " and "TESTER"
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertTextContains("Sending as: ", substring = true)
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertTextContains("TESTER", substring = true)
+        composeTestRule.onNodeWithTag("share_sending_as_name", useUnmergedTree = true).assertTextContains("TESTER")
+
+        // Assert share_sender_name_input does NOT exist
+        composeTestRule.onNodeWithTag("share_sender_name_input").assertDoesNotExist()
+
+        // Dismiss dialog
+        composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun pass5_36_renamingInSettings_reflectsInShareDialogOnNextOpen() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt(bestScoreKeyFor(GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY), 8).apply()
+        ChallengeStorage.setMyName(context, "ORIGINAL")
+        composeTestRule.waitForIdle()
+
+        // Open settings, rename to RENAMED
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_my_name_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_my_name_input").performTextReplacement("RENAMED")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_done_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("RENAMED", ChallengeStorage.getMyName(context))
+
+        // Open share dialog from Leaderboard
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert share_sending_as_row displays "RENAMED"
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertTextContains("Sending as: ", substring = true)
+        composeTestRule.onNodeWithTag("share_sending_as_row").assertTextContains("RENAMED", substring = true)
+        composeTestRule.onNodeWithTag("share_sending_as_name", useUnmergedTree = true).assertTextContains("RENAMED")
+
+        // Dismiss
+        composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
+        composeTestRule.waitForIdle()
     }
 }
 

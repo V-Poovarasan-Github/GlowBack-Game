@@ -50,7 +50,6 @@ import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
 import com.example.challenge.ChallengeShareHelper
 import com.example.challenge.ChallengeStorage
-import com.example.challenge.ChallengerNameSetupDialog
 import com.example.challenge.DidYouShareDialog
 import com.example.challenge.EnterChallengeDialog
 import com.example.challenge.FirstTimeShareGateDialog
@@ -118,7 +117,6 @@ enum class ActiveDialog {
     TRIES_SELECTOR,
     ENTER_CHALLENGE,
     FIRST_TIME_SHARE_GATE,
-    NAME_SETUP,
     SETTINGS_SHEET,
     NOTIFICATION_PERM,
     DISCARD_CONFIRM,
@@ -1019,7 +1017,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         }
     }
     var activeShareSource by remember { mutableStateOf<ShareSource>(ShareSource.FromBoardSelector) }
-    var pendingReplyAfterNameSetup by remember { mutableStateOf(false) }
     var awaitingChallengeForDialog by remember {
         mutableStateOf(ChallengeStorage.getPendingShare(context))
     }
@@ -2919,12 +2916,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         },
                         onReplyToRival = {
                             if (activeChallenge != null) {
-                                if (!ChallengeStorage.hasConfiguredName(context)) {
-                                    pendingReplyAfterNameSetup = true
-                                    activeDialog = ActiveDialog.NAME_SETUP
-                                } else {
-                                    executeReplyToRival(ChallengeStorage.getMyName(context))
-                                }
+                                executeReplyToRival(ChallengeStorage.getMyName(context))
                             }
                         },
                         onSendTieEarly = {
@@ -2937,12 +2929,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                 ch.attemptsLeft = 0
                                 isChallengeTied = true
                                 finalizePendingChallengeOutcomeIfNeeded()
-                                if (!ChallengeStorage.hasConfiguredName(context)) {
-                                    pendingReplyAfterNameSetup = true
-                                    activeDialog = ActiveDialog.NAME_SETUP
-                                } else {
-                                    executeReplyToRival(ChallengeStorage.getMyName(context))
-                                }
+                                executeReplyToRival(ChallengeStorage.getMyName(context))
                             }
                         },
                         onExitChallenge = {
@@ -3096,24 +3083,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 }
             )
         }
-        ActiveDialog.NAME_SETUP -> {
-            ChallengerNameSetupDialog(
-                onDismiss = {
-                    pendingReplyAfterNameSetup = false
-                    activeDialog = ActiveDialog.NONE
-                },
-                onSaveName = { savedName ->
-                    ChallengeStorage.setMyName(context, savedName)
-                    if (pendingReplyAfterNameSetup) {
-                        pendingReplyAfterNameSetup = false
-                        activeDialog = ActiveDialog.NONE
-                        executeReplyToRival(savedName)
-                    } else {
-                        activeDialog = ActiveDialog.TRIES_SELECTOR
-                    }
-                }
-            )
-        }
         ActiveDialog.TRIES_SELECTOR -> {
             // PASS 5.27 & PASS 5.28: Deterministic ShareSource routing
             val runSnapshot = (activeShareSource as? ShareSource.FromRunSnapshot)
@@ -3150,7 +3119,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 lockedRivalName = effectiveLockedRival,
                 isProgressiveBlocked = isProgressiveBlocked,
                 currentScoreToShare = (runSnapshot?.score ?: effectiveBoards.getOrNull(initialBoardIdx)?.score ?: currentScore).coerceAtLeast(1),
-                requireNameSetupFirst = !ChallengeStorage.hasConfiguredName(context),
                 awaitingChallengeForDialog = awaitingChallengeForDialog,
                 onDismiss = {
                     activeDialog = ActiveDialog.NONE
