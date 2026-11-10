@@ -1083,6 +1083,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var isChallengeReadyGateVisible by remember { mutableStateOf(false) }
     var isVictoryDecisionVisible by remember { mutableStateOf(false) }
     var hasShownVictoryDecisionThisTry by remember { mutableStateOf(false) }
+    var bestScoreBeforeCurrentTry by remember { mutableIntStateOf(0) }
+    var hasPreDeductedCurrentTry by remember { mutableStateOf(false) }
     var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
     var currentRivalChainId by remember { mutableStateOf<String?>(null) }
     var isOutboundRivalRun by remember { mutableStateOf(false) }
@@ -1220,6 +1222,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         )
         ChallengeStorage.recordCreatedCode(context, replyCode)
         ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
+        ChallengeStorage.saveLastReplyForGrid(context, ch.rivalName, ch.gridSizeTag, replyCode)
         hasSentChallengeReply = true
         runCatching {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -1273,12 +1276,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         if (!isChallengeReadyGateVisible) return
         isChallengeReadyGateVisible = false
         val ch = activeChallenge
-        if (ch != null) {
-            // PASS 5.20 Rule 7 & Caution 1:
-            // When maxTries == 0 (isFreeTries), NEVER pre-deduct or persist attemptsLeft - 1.
-            // When finite tries (maxTries > 0), immediately persist (challengeAttemptsLeft - 1) to SharedPreferences
-            // as force-close anti-cheat, while keeping challengeAttemptsLeft in memory for the live run.
+        if (ch != null && !hasPreDeductedCurrentTry) {
+            // PASS 5.20 Rule 7 & Caution 1 + PASS 5.35 Fix 2:
+            // Snapshot bestScoreBeforeCurrentTry and pre-deduct 1 try once when the Ready gate is dismissed.
+            bestScoreBeforeCurrentTry = ch.bestScore
             val persistedTries = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+            challengeAttemptsLeft = persistedTries
+            ch.attemptsLeft = persistedTries
+            hasPreDeductedCurrentTry = true
             val bestSoFar = maxOf(currentScore, ch.bestScore)
             ChallengeStorage.saveInProgressChallenge(
                 context,
@@ -1318,6 +1323,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         isChallengeReadyGateVisible = false
         isVictoryDecisionVisible = false
         hasShownVictoryDecisionThisTry = false
+        hasPreDeductedCurrentTry = false
         isRedemptionTurnActive = false
         eliminatedBannerText = null
         showChallengeNudge = false
@@ -1333,12 +1339,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             if (currentScore > ch.bestScore) {
                 ch.bestScore = currentScore
             }
-            // PASS 5.20 Rule 7 & Caution 1:
-            // If the "Ready?" gate has already been dismissed (live attempt in progress), keep (challengeAttemptsLeft - 1)
-            // persisted in SharedPreferences so backgrounding/force-killing the app mid-round never restores the try.
+            // PASS 5.20 Rule 7 & Caution 1 + PASS 5.35 Fix 2:
+            // Once the Ready gate has been dismissed, challengeAttemptsLeft already reflects the pre-deducted tries.
             val persistedTries = when {
                 ch.isFreeTries -> 0
-                isChallengeReadyGateVisible -> challengeAttemptsLeft
+                isChallengeReadyGateVisible || hasPreDeductedCurrentTry -> challengeAttemptsLeft.coerceAtLeast(0)
                 else -> (challengeAttemptsLeft - 1).coerceAtLeast(0)
             }
             ChallengeStorage.saveInProgressChallenge(context, ch.copy(attemptsLeft = persistedTries))
@@ -1635,6 +1640,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             currentRivalChainId = resolvedItem.chainId.ifEmpty { null }
             difficultyMode = resolvedItem.difficulty
             challengeAttemptsLeft = resolvedItem.attemptsLeft
+            bestScoreBeforeCurrentTry = resolvedItem.bestScore
+            hasPreDeductedCurrentTry = false
             isChallengeWon = false
             isChallengeTied = false
             isChallengeLost = false
@@ -1734,6 +1741,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         matchStandings = emptyList()
         if (activeChallenge != null) {
             val challenge = activeChallenge!!
+            bestScoreBeforeCurrentTry = challenge.bestScore
+            hasPreDeductedCurrentTry = false
             isChallengeWon = false
             isChallengeTied = false
             isChallengeLost = false
@@ -1912,7 +1921,11 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         if (currentScore > ch.bestScore) {
                             ch.bestScore = currentScore
                         }
-                        val persistedTries = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                        val persistedTries = when {
+                            ch.isFreeTries -> 0
+                            isChallengeReadyGateVisible || hasPreDeductedCurrentTry -> challengeAttemptsLeft.coerceAtLeast(0)
+                            else -> (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                        }
                         ChallengeStorage.saveInProgressChallenge(
                             context,
                             ch.copy(attemptsLeft = persistedTries, bestScore = ch.bestScore)
@@ -2054,7 +2067,12 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     val isFree = ch.maxTries == 0
                     val bestAcrossTries = maxOf(currentScore, ch.bestScore)
                     ch.bestScore = bestAcrossTries
-                    val newTries = if (isFree) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                    val newTries = when {
+                        isFree -> 0
+                        hasPreDeductedCurrentTry -> challengeAttemptsLeft.coerceAtLeast(0)
+                        else -> (challengeAttemptsLeft - 1).coerceAtLeast(0)
+                    }
+                    hasPreDeductedCurrentTry = false
                     challengeAttemptsLeft = newTries
                     ch.attemptsLeft = newTries
                     ChallengeStorage.updateChallenge(context, ch)
@@ -3550,7 +3568,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         ActiveDialog.EXIT_CHALLENGE_CONFIRM -> {
             val ch = activeChallenge
             if (ch != null) {
-                val effectiveBest = maxOf(currentScore, ch.bestScore)
+                val isTiedAttempt = (currentScore == ch.targetScore && ch.targetScore > 0) || isChallengeTied
+                val effectiveBest = if (isTiedAttempt && currentScore == ch.targetScore) ch.targetScore else maxOf(currentScore, ch.bestScore)
                 val isMidRound = (gameState == GameState.WATCHING || gameState == GameState.PLAYING)
                 ExitChallengeConfirmDialog(
                     challenge = ch,
@@ -3561,8 +3580,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         activeDialog = ActiveDialog.NONE
                     },
                     onConfirmForfeit = {
-                        val remainingAfterForfeit = if (ch.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
-                        val isFinalTryForfeit = !ch.isFreeTries && remainingAfterForfeit <= 0
+                        val nextTries = if (ch.isFreeTries) 0 else challengeAttemptsLeft.coerceAtLeast(0)
+                        val isFinalTryForfeit = !ch.isFreeTries && nextTries <= 0
+                        hasPreDeductedCurrentTry = false
                         if (isFinalTryForfeit) {
                             // PASS 5.20 Rule 3: Final Try Forfeit -> immediately finalize as LOST with unsent R-code
                             challengeAttemptsLeft = 0
@@ -3570,8 +3590,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             ch.bestScore = effectiveBest
                             finalizePendingChallengeOutcomeIfNeeded()
                         } else {
-                            // PASS 5.20 Scenario A & Rule 6: Preserve bestScore, decrement finite attemptsLeft by 1, save IN_PROGRESS
-                            val nextTries = if (ch.isFreeTries) 0 else remainingAfterForfeit
+                            // PASS 5.20 Scenario A & Rule 6 + PASS 5.35 Fix 2: Preserve bestScore, keep pre-deducted nextTries, save IN_PROGRESS
                             challengeAttemptsLeft = nextTries
                             ch.attemptsLeft = nextTries
                             ch.bestScore = effectiveBest
@@ -3585,10 +3604,29 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     },
                     onConfirmLockScore = {
                         // PASS 5.20 Scenario B & Rule 5: Finalize immediately as WON or TIED with unsent R-code
+                        hasPreDeductedCurrentTry = false
                         challengeAttemptsLeft = 0
                         ch.attemptsLeft = 0
                         ch.bestScore = effectiveBest
                         finalizePendingChallengeOutcomeIfNeeded()
+                        exitChallengeAndNavigateToRivalry()
+                    },
+                    onConfirmForfeitTieTry = {
+                        // PASS 5.35 Fix 2: Forfeit current tied try (display lastUserScore = 0), preserve bestScoreBeforeCurrentTry,
+                        // keep pre-deducted challengeAttemptsLeft in both mid-round and Game Over branches, and stay IN_PROGRESS.
+                        tapFlashJob?.cancel()
+                        val nextTries = if (ch.isFreeTries) 0 else challengeAttemptsLeft.coerceAtLeast(0)
+                        challengeAttemptsLeft = nextTries
+                        ch.attemptsLeft = nextTries
+                        ch.bestScore = bestScoreBeforeCurrentTry
+                        isChallengeTied = false
+                        hasPreDeductedCurrentTry = false
+                        ChallengeStorage.saveInProgressChallenge(
+                            context,
+                            ch.copy(attemptsLeft = nextTries, bestScore = bestScoreBeforeCurrentTry),
+                            lastUserScoreOverride = 0
+                        )
+                        savedChallenges = ChallengeStorage.loadChallenges(context)
                         exitChallengeAndNavigateToRivalry()
                     }
                 )
@@ -5394,13 +5432,16 @@ private fun ExitChallengeConfirmDialog(
     isMidRound: Boolean,
     onKeepPlaying: () -> Unit,
     onConfirmForfeit: () -> Unit,
-    onConfirmLockScore: () -> Unit
+    onConfirmLockScore: () -> Unit,
+    onConfirmForfeitTieTry: () -> Unit = {}
 ) {
     val isScenarioB = effectiveBestScore >= challenge.targetScore
     val isBeat = effectiveBestScore > challenge.targetScore
-    val remainingAfterForfeit = if (challenge.isFreeTries) 0 else (challengeAttemptsLeft - 1).coerceAtLeast(0)
+    val nextTries = if (challenge.isFreeTries) 0 else challengeAttemptsLeft.coerceAtLeast(0)
+    val remainingAfterForfeit = nextTries
     val isFinalTryForfeit = !challenge.isFreeTries && remainingAfterForfeit <= 0
-    val remainingTriesForTie = if (isMidRound) remainingAfterForfeit else challengeAttemptsLeft
+    val remainingTriesForTie = nextTries
+    val canForfeitTieTry = isScenarioB && !isBeat && (challenge.isFreeTries || challengeAttemptsLeft > 0)
 
     val titleText = when {
         !isScenarioB -> "Exit Challenge?"
@@ -5424,11 +5465,11 @@ private fun ExitChallengeConfirmDialog(
             }
         }
         else -> {
-            // PASS 5.20 Rule 5 (TIED):
+            // PASS 5.20 Rule 5 + PASS 5.35 Fix 2 (TIED):
             when {
-                challenge.isFreeTries -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Keep playing to push for a higher score?"
-                remainingTriesForTie > 0 -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Do you want to use your remaining $remainingTriesForTie tries to push for a higher score?"
-                else -> "You've tied the target ($effectiveBestScore)! If you exit now, your current score of $effectiveBestScore will be locked in as a TIE. Keep playing to push for a higher score?"
+                challenge.isFreeTries -> "You've tied the target ($effectiveBestScore)! If you exit now, you can lock in your TIE or forfeit this try and keep Free tries for later."
+                remainingTriesForTie > 0 -> "You've tied the target ($effectiveBestScore)! If you exit now, you can lock in your TIE or forfeit this try and keep $remainingTriesForTie tries for later."
+                else -> "You've tied the target ($effectiveBestScore)! This is your final try — lock in your TIE now, or keep playing to push for a higher score?"
             }
         }
     }
@@ -5530,6 +5571,46 @@ private fun ExitChallengeConfirmDialog(
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
+                    }
+
+                    if (canForfeitTieTry) {
+                        val keptTriesPhrase = if (challenge.isFreeTries) {
+                            "Free tries preserved"
+                        } else {
+                            "$remainingTriesForTie ${if (remainingTriesForTie == 1) "try" else "tries"} preserved"
+                        }
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onConfirmForfeitTieTry,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("exit_challenge_forfeit_tie_try_button"),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.2.dp, Color(0xFF64748B)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = Color(0xFF0F172A),
+                                    contentColor = Color(0xFFE2E8F0)
+                                )
+                            ) {
+                                Text(
+                                    text = "Forfeit Try & Exit",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                            Text(
+                                text = "Try = 0 • Match stays open • $keptTriesPhrase",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.testTag("exit_challenge_forfeit_tie_try_caption")
+                            )
+                        }
                     }
                 }
             }

@@ -116,7 +116,16 @@ data class GridStat(
     val ties: Int = 0,
     val lastTarget: Int = 0,                                   // Rival's last score on this grid from my perspective
     val lastDifficulty: GameDifficulty = GameDifficulty.EASY,  // EASY or HARD only
-    val lastStatus: String = ""                                // "WON", "LOST", "TIED"
+    val lastStatus: String = "",                               // "WON", "LOST", "TIED"
+    val lastPlayedAt: Long = 0L                                // PASS 5.35: Timestamp of most recent duel on this grid
+)
+
+/**
+ * PASS 5.35: Data model for the latest stored inbound reply (R-code) per grid on a rival card.
+ */
+data class StoredReply(
+    val code: String,
+    val mintedAt: Long = System.currentTimeMillis()
 )
 
 /**
@@ -157,7 +166,8 @@ data class RivalRecord(
     val gridStats: Map<String, GridStat> = emptyMap(), // Per-grid breakdown (e.g. "2x2" -> GridStat(1, 1, 0))
     val lastReplyCode: String = "",    // Saved R-code from last completed incoming challenge
     val isReplySent: Boolean = true,   // False when an R-code was generated on Game Over but not yet copied/shared
-    val pendingOutbounds: List<PendingOutboundChallenge> = emptyList() // PASS 5.33: Active targeted shares awaiting reply
+    val pendingOutbounds: List<PendingOutboundChallenge> = emptyList(), // PASS 5.33: Active targeted shares awaiting reply
+    val lastReplies: Map<String, StoredReply> = emptyMap() // PASS 5.35: Per-grid latest reply code keyed by lowercase gridTag
 )
 
 /**

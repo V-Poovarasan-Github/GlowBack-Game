@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation Plan for PASS 5.32 (First-Time Player Name Creation Dialog) completed and verified with 81 passing unit and Robolectric tests.",
-  "updatedAt":  "2026-11-09T14:52:11.627162545Z",
+  "summary":  "Implementation plan for PASS 5.36: Read-only sender name in ShareTriesSelectorDialog, removal of dead name setup branching in the share flow, and test coverage for read-only sender name display and settings sync.",
+  "updatedAt":  "2026-11-10T16:32:20.807485170Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

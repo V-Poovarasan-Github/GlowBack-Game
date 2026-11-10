@@ -475,7 +475,8 @@ object ChallengeStorage {
                                 ties = sObj.optInt("ties", 0),
                                 lastTarget = sObj.optInt("lastTarget", 0),
                                 lastDifficulty = sDiff,
-                                lastStatus = sObj.optString("lastStatus", "")
+                                lastStatus = sObj.optString("lastStatus", ""),
+                                lastPlayedAt = sObj.optLong("lastPlayedAt", 0L)
                             )
                         }
                     }
@@ -525,6 +526,36 @@ object ChallengeStorage {
                     }
                 }
 
+                // PASS 5.35 Fix 1: Per-grid lastReplies parsing with lenient fallback
+                val parsedLastReplies = mutableMapOf<String, StoredReply>()
+                val repliesObj = obj.optJSONObject("lastReplies")
+                if (repliesObj != null) {
+                    val keys = repliesObj.keys().asSequence().toList()
+                    for (k in keys) {
+                        val rObj = repliesObj.optJSONObject(k)
+                        if (rObj != null) {
+                            val code = rObj.optString("code", "").trim()
+                            if (code.isNotEmpty()) {
+                                parsedLastReplies[k.trim().lowercase()] = StoredReply(
+                                    code = code,
+                                    mintedAt = rObj.optLong("mintedAt", System.currentTimeMillis())
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Improvisation #1: Migrate legacy unsent lastReplyCode when lastReplies key is absent
+                    val legacyCode = obj.optString("lastReplyCode", "").trim()
+                    val legacySent = obj.optBoolean("isReplySent", true)
+                    val legacyGrid = obj.optString("lastGrid", "2x2").trim().lowercase()
+                    if (!legacySent && legacyCode.isNotEmpty() && legacyGrid.isNotEmpty()) {
+                        parsedLastReplies[legacyGrid] = StoredReply(
+                            code = legacyCode,
+                            mintedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                        )
+                    }
+                }
+
                 list.add(
                     RivalRecord(
                         name = obj.getString("name"),
@@ -546,7 +577,8 @@ object ChallengeStorage {
                         gridStats = parsedGridStats,
                         lastReplyCode = obj.optString("lastReplyCode", ""),
                         isReplySent = obj.optBoolean("isReplySent", true),
-                        pendingOutbounds = parsedPendingOutbounds
+                        pendingOutbounds = parsedPendingOutbounds,
+                        lastReplies = parsedLastReplies
                     )
                 )
             }
@@ -570,6 +602,7 @@ object ChallengeStorage {
                     put("lastTarget", stat.lastTarget)
                     put("lastDifficulty", stat.lastDifficulty.name)
                     put("lastStatus", stat.lastStatus)
+                    put("lastPlayedAt", stat.lastPlayedAt)
                 }
                 gridObj.put(gridKey.lowercase(), sObj)
             }
@@ -587,6 +620,16 @@ object ChallengeStorage {
                     put("chainId", p.chainId)
                 }
                 pendingsArr.put(pObj)
+            }
+            val repliesObj = JSONObject()
+            for ((gridKey, reply) in item.lastReplies) {
+                if (reply.code.isNotBlank()) {
+                    val rObj = JSONObject().apply {
+                        put("code", reply.code)
+                        put("mintedAt", reply.mintedAt)
+                    }
+                    repliesObj.put(gridKey.trim().lowercase(), rObj)
+                }
             }
             val obj = JSONObject().apply {
                 put("name", item.name)
@@ -609,6 +652,7 @@ object ChallengeStorage {
                 put("lastReplyCode", item.lastReplyCode)
                 put("isReplySent", item.isReplySent)
                 put("pendingOutbounds", pendingsArr)
+                put("lastReplies", repliesObj)
             }
             jsonArray.put(obj)
         }
@@ -657,9 +701,45 @@ object ChallengeStorage {
     fun markReplySent(context: Context, rivalName: String, replyCode: String? = null): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName) ?: return null
+        val updatedReplies = existing.lastReplies.toMutableMap()
+        if (!replyCode.isNullOrBlank()) {
+            val parsedGrid = ChallengeSeed.parseChallengeCode(replyCode)?.gridTag?.lowercase()
+                ?: existing.lastGrid.trim().lowercase()
+            if (parsedGrid.isNotEmpty()) {
+                val prevMintedAt = updatedReplies[parsedGrid]?.mintedAt ?: System.currentTimeMillis()
+                updatedReplies[parsedGrid] = StoredReply(code = replyCode.trim(), mintedAt = prevMintedAt)
+            }
+        }
         val updated = existing.copy(
             lastReplyCode = if (!replyCode.isNullOrBlank()) replyCode else existing.lastReplyCode,
-            isReplySent = true
+            isReplySent = true,
+            lastReplies = updatedReplies
+        )
+        saveRival(context, updated)
+        return updated
+    }
+
+    /**
+     * PASS 5.35 Fix 1:
+     * Overwrites ONLY the specified gridTag's latest reply code on a rival's lastReplies map.
+     */
+    fun saveLastReplyForGrid(
+        context: Context,
+        rivalName: String,
+        gridTag: String,
+        replyCode: String,
+        now: Long = System.currentTimeMillis()
+    ): RivalRecord? {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        val cleanGrid = gridTag.trim().lowercase()
+        val cleanCode = replyCode.trim()
+        if (cleanName.isEmpty() || cleanGrid.isEmpty() || cleanCode.isEmpty()) return null
+        val existing = findRivalByName(context, cleanName) ?: return null
+        val updatedReplies = existing.lastReplies.toMutableMap()
+        updatedReplies[cleanGrid] = StoredReply(code = cleanCode, mintedAt = now)
+        val updated = existing.copy(
+            lastReplyCode = cleanCode,
+            lastReplies = updatedReplies
         )
         saveRival(context, updated)
         return updated
@@ -695,12 +775,18 @@ object ChallengeStorage {
     }
 
     /**
-     * PASS 5.15 Item 1 & 2 + PASS 5.19 Stage A #1 & Invariant (d):
+     * PASS 5.15 Item 1 & 2 + PASS 5.19 Stage A #1 & Invariant (d) + PASS 5.35 Fix 2:
      * Persists an active/in-progress challenge both in KEY_CHALLENGES and as an "IN_PROGRESS"
      * RivalRecord in the Rivalry tab. Never sets IN_PROGRESS for a consumed code, and replaces
      * any older unfinished challenge from the same rival.
+     * When lastUserScoreOverride is provided (e.g., 0 on a forfeited tie try), RivalRecord.lastUserScore
+     * uses lastUserScoreOverride for display while KEY_CHALLENGES preserves sanitizedItem.bestScore.
      */
-    fun saveInProgressChallenge(context: Context, item: ChallengeItem): RivalRecord {
+    fun saveInProgressChallenge(
+        context: Context,
+        item: ChallengeItem,
+        lastUserScoreOverride: Int? = null
+    ): RivalRecord {
         val cleanName = ChallengeSeed.sanitizePlayerName(item.rivalName)
         val existing = findRivalByName(context, cleanName)
         if (item.code.isNotBlank() && isCodeConsumed(context, item.code)) {
@@ -734,7 +820,7 @@ object ChallengeStorage {
             lastGrid = sanitizedItem.gridSizeTag,
             lastDifficulty = sanitizedItem.difficulty,
             lastTarget = sanitizedItem.targetScore,
-            lastUserScore = sanitizedItem.bestScore,
+            lastUserScore = lastUserScoreOverride ?: sanitizedItem.bestScore,
             lastStatus = "IN_PROGRESS",
             lastChainId = sanitizedItem.chainId.ifEmpty { existing?.lastChainId ?: "" },
             updatedAt = System.currentTimeMillis(),
@@ -744,7 +830,9 @@ object ChallengeStorage {
             inProgressSeed = sanitizedItem.seed,
             gridStats = existing?.gridStats ?: emptyMap(),
             lastReplyCode = existing?.lastReplyCode ?: "",
-            isReplySent = existing?.isReplySent ?: true
+            isReplySent = existing?.isReplySent ?: true,
+            pendingOutbounds = existing?.pendingOutbounds ?: emptyList(),
+            lastReplies = existing?.lastReplies ?: emptyMap()
         )
         saveRival(context, record)
         return record
@@ -770,10 +858,15 @@ object ChallengeStorage {
                 } else {
                     ChallengeSeed.parseChallengeCode(r.inProgressCode)?.seedInt ?: ChallengeSeed.generateRandomSeed()
                 }
+                val savedItem = loadChallenges(context).firstOrNull { ch ->
+                    (r.inProgressCode.isNotEmpty() && ch.code.equals(r.inProgressCode, ignoreCase = true)) ||
+                    (r.inProgressSeed != 0 && ch.seed == r.inProgressSeed)
+                }
+                val effectiveUserScore = maxOf(r.lastUserScore, savedItem?.bestScore ?: 0)
                 recordMatchOutcome(
                     context = context,
                     rivalName = r.name,
-                    userScore = r.lastUserScore,
+                    userScore = effectiveUserScore,
                     targetScore = r.lastTarget,
                     gridSize = r.lastGrid,
                     difficulty = r.lastDifficulty,
@@ -883,7 +976,8 @@ object ChallengeStorage {
         isTie: Boolean,
         rivalScoreOnThisGrid: Int = 0,
         difficulty: GameDifficulty = GameDifficulty.EASY,
-        myStatusOnThisGrid: String = ""
+        myStatusOnThisGrid: String = "",
+        playedAt: Long = System.currentTimeMillis()
     ): Map<String, GridStat> {
         val key = gridSize.trim().lowercase()
         val mutable = existingStats.toMutableMap()
@@ -897,7 +991,8 @@ object ChallengeStorage {
             ties = prev.ties + (if (isTie) 1 else 0),
             lastTarget = resolvedTarget,
             lastDifficulty = resolvedDiff,
-            lastStatus = resolvedStatus
+            lastStatus = resolvedStatus,
+            lastPlayedAt = playedAt
         )
         return mutable
     }
@@ -1124,6 +1219,44 @@ object ChallengeStorage {
         return totalPurged
     }
 
+    const val LAST_REPLY_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
+    /**
+     * PASS 5.35 Fix 1: Sweeps all rivals for stored per-grid reply codes older than 30 days (LAST_REPLY_TTL_MS).
+     */
+    fun sweepExpiredLastReplies(context: Context, now: Long = System.currentTimeMillis()): Int {
+        val rivals = loadRivals(context).toMutableList()
+        var totalPurged = 0
+        var rivalsChanged = false
+
+        for (i in rivals.indices) {
+            val rival = rivals[i]
+            if (rival.lastReplies.isEmpty()) continue
+
+            val remaining = mutableMapOf<String, StoredReply>()
+            var rivalModified = false
+
+            for ((gridKey, stored) in rival.lastReplies) {
+                if (now - stored.mintedAt >= LAST_REPLY_TTL_MS) {
+                    totalPurged++
+                    rivalModified = true
+                } else {
+                    remaining[gridKey] = stored
+                }
+            }
+
+            if (rivalModified) {
+                rivals[i] = rival.copy(lastReplies = remaining)
+                rivalsChanged = true
+            }
+        }
+
+        if (rivalsChanged) {
+            persistRivals(context, rivals)
+        }
+        return totalPurged
+    }
+
     /**
      * PASS 5.28 & PASS 5.33:
      * Computes qualifying "Sleeping Scores" (Rival Score Recommendations) where the player already has
@@ -1209,6 +1342,7 @@ object ChallengeStorage {
             else -> "LOST"
         }
 
+        val now = System.currentTimeMillis()
         val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
         val updatedLosses = (existing?.losses ?: 0) + (if (isLoss) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
@@ -1221,7 +1355,8 @@ object ChallengeStorage {
             isTie = isTie,
             rivalScoreOnThisGrid = targetScore,
             difficulty = difficulty,
-            myStatusOnThisGrid = status
+            myStatusOnThisGrid = status,
+            playedAt = now
         )
         val resolvedChainId = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
         val resolvedSeed = if (seed != 0) {
@@ -1247,6 +1382,15 @@ object ChallengeStorage {
         }
         recordCreatedCode(context, savedReplyCode)
 
+        val updatedLastReplies = (existing?.lastReplies ?: emptyMap()).toMutableMap()
+        val cleanGridKey = gridSize.trim().lowercase()
+        if (cleanGridKey.isNotEmpty() && savedReplyCode.isNotBlank()) {
+            updatedLastReplies[cleanGridKey] = StoredReply(
+                code = savedReplyCode,
+                mintedAt = now
+            )
+        }
+
         val record = RivalRecord(
             name = cleanName,
             wins = updatedWins,
@@ -1259,7 +1403,7 @@ object ChallengeStorage {
             lastUserScore = userScore,
             lastStatus = status,
             lastChainId = resolvedChainId,
-            updatedAt = System.currentTimeMillis(),
+            updatedAt = now,
             inProgressCode = "",
             inProgressTriesLeft = 0,
             inProgressMaxTries = 0,
@@ -1267,7 +1411,8 @@ object ChallengeStorage {
             gridStats = updatedGridStats,
             lastReplyCode = savedReplyCode,
             isReplySent = false,
-            pendingOutbounds = existing?.pendingOutbounds ?: emptyList()
+            pendingOutbounds = existing?.pendingOutbounds ?: emptyList(),
+            lastReplies = updatedLastReplies
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)
@@ -1305,6 +1450,7 @@ object ChallengeStorage {
             isTie -> "TIED"
             else -> "LOST"
         }
+        val now = System.currentTimeMillis()
         val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
         val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
@@ -1317,7 +1463,8 @@ object ChallengeStorage {
             isTie = isTie,
             rivalScoreOnThisGrid = responderScore,
             difficulty = difficulty,
-            myStatusOnThisGrid = status
+            myStatusOnThisGrid = status,
+            playedAt = now
         )
         val resolvedChain = chainId.ifEmpty { existing?.lastChainId ?: ChallengeSeed.generateChainId() }
 
@@ -1347,7 +1494,7 @@ object ChallengeStorage {
             lastUserScore = myOriginalTarget,
             lastStatus = status,
             lastChainId = resolvedChain,
-            updatedAt = System.currentTimeMillis(),
+            updatedAt = now,
             inProgressCode = "",
             inProgressTriesLeft = 0,
             inProgressMaxTries = 0,
@@ -1355,7 +1502,8 @@ object ChallengeStorage {
             gridStats = updatedGridStats,
             lastReplyCode = "",
             isReplySent = true,
-            pendingOutbounds = remainingPendings
+            pendingOutbounds = remainingPendings,
+            lastReplies = existing?.lastReplies ?: emptyMap()
         )
 
         clearInProgressChallengeStorage(context, cleanName, chainId)

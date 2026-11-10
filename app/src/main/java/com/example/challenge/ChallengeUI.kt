@@ -2607,7 +2607,7 @@ fun RivalMatchSetupDialog(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
@@ -2616,18 +2616,22 @@ fun RivalMatchSetupDialog(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.5.sp,
-                                modifier = Modifier.testTag("rival_setup_recommendations_title")
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp)
+                                    .testTag("rival_setup_recommendations_title")
                             )
                             Text(
                                 text = "You already beat ${rival.name} here - send it now:",
                                 color = Color(0xFFCBD5E1),
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 12.dp)
                             )
                             LazyRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("rival_recommendations_carousel"),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 itemsIndexed(recommendations) { idx, rec ->
@@ -2961,12 +2965,18 @@ fun HallOfFameScreen(
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = RIVALRY, 1 = RECORDS
 
-    var rivals by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadRivals(context)) }
+    var rivals by remember(refreshTrigger) {
+        ChallengeStorage.sweepExpiredPendingOutbounds(context)
+        ChallengeStorage.sweepExpiredLastReplies(context)
+        mutableStateOf(ChallengeStorage.loadRivals(context))
+    }
     var awaitingChallenges by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadAwaitingChallenges(context)) }
     var rivalForPasteCode by remember { mutableStateOf<RivalRecord?>(null) }
     var rivalForSetup by remember { mutableStateOf<RivalRecord?>(null) }
 
     fun refreshData() {
+        ChallengeStorage.sweepExpiredPendingOutbounds(context)
+        ChallengeStorage.sweepExpiredLastReplies(context)
         rivals = ChallengeStorage.loadRivals(context)
         awaitingChallenges = ChallengeStorage.loadAwaitingChallenges(context)
     }
@@ -3095,17 +3105,8 @@ fun HallOfFameScreen(
                         ChallengeStorage.deleteAwaitingChallenge(context, awaiting.chainId)
                         refreshData()
                     },
-                    onSendReply = { rival ->
-                        val replyCode = rival.lastReplyCode
-                        if (replyCode.isNotBlank()) {
-                            runCatching {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCode))
-                            }
-                            ChallengeStorage.markReplySent(context, rival.name, replyCode)
-                            refreshData()
-                            Toast.makeText(context, "Reply code copied: $replyCode", Toast.LENGTH_SHORT).show()
-                        }
+                    onSendReply = { _ ->
+                        refreshData()
                     },
                     onShareCode = onShareCodeClicked,
                     onPasteCode = onPasteCodeClicked,
@@ -3261,22 +3262,6 @@ fun RivalryTabContent(
                     },
                     onSendReply = {
                         onSendReply(rival)
-                        if (rival.lastReplyCode.isNotBlank()) {
-                            scope.launch {
-                                runCatching {
-                                    ChallengeShareHelper.shareReplyResult(
-                                        context = context,
-                                        code = rival.lastReplyCode,
-                                        gridSizeTag = rival.lastGrid,
-                                        myScore = rival.lastUserScore.coerceAtLeast(1),
-                                        targetScore = rival.lastTarget,
-                                        rivalName = rival.name,
-                                        won = rival.lastStatus == "WON",
-                                        tied = rival.lastStatus == "TIED"
-                                    )
-                                }
-                            }
-                        }
                     },
                     onDeleteRival = { onDeleteRival(rival) }
                 )
@@ -3588,6 +3573,7 @@ fun RivalCard(
     onDeleteRival: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var showClearConfirm by remember { mutableStateOf(false) }
 
     val statusColor = when (rival.lastStatus) {
@@ -3692,7 +3678,9 @@ fun RivalCard(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 0.5.sp,
-                        modifier = Modifier.testTag("rival_card_name_${rival.name}")
+                        modifier = Modifier
+                            .clickable { onDynamicAction() }
+                            .testTag("rival_card_name_${rival.name}")
                     )
                 }
 
@@ -3726,43 +3714,72 @@ fun RivalCard(
                 )
             }
 
-            // PASS 5.17 Item 4: Optional Per-Grid Breakdown Chips ([2×2: 1W - 1L], etc.)
+            // PASS 5.17 Item 4 + PASS 5.35 Fix 1 & Fix 3:
+            // Scrollable Single-Line Per-Grid Selector Chips sorted by last-played DESC (leftmost = most recent duel)
             val orderedGridKeys = listOf("2x2", "3x3", "4x4", "5x4")
             val activeGridEntries = orderedGridKeys.mapNotNull { key ->
                 val stat = rival.gridStats[key]
-                if (stat != null && (stat.wins + stat.losses + stat.ties) > 0) {
-                    key to stat
+                val hasStoredReply = rival.lastReplies[key]?.code?.isNotBlank() == true
+                if ((stat != null && (stat.wins + stat.losses + stat.ties) > 0) || hasStoredReply) {
+                    key to (stat ?: GridStat())
                 } else null
+            }.sortedWith(
+                compareByDescending<Pair<String, GridStat>> { (key, _) ->
+                    key.equals(rival.lastGrid, ignoreCase = true)
+                }.thenByDescending { (key, stat) ->
+                    maxOf(stat.lastPlayedAt, rival.lastReplies[key]?.mintedAt ?: 0L)
+                }
+            )
+            val defaultGridKey = activeGridEntries.firstOrNull { (k, _) ->
+                k.equals(rival.lastGrid, ignoreCase = true)
+            }?.first ?: activeGridEntries.firstOrNull()?.first ?: rival.lastGrid.lowercase()
+            var selectedGridKey by remember(rival.name, rival.lastGrid) {
+                mutableStateOf(defaultGridKey)
             }
+
             if (activeGridEntries.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Row(
+                LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(28.dp)
                         .testTag("rival_grid_chips_row_${rival.name}"),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    activeGridEntries.forEach { (gridKey, stat) ->
+                    items(activeGridEntries, key = { it.first }) { (gridKey, stat) ->
+                        val isSelected = selectedGridKey.equals(gridKey, ignoreCase = true)
                         val displayGrid = gridKey.replace('x', '×')
                         val chipText = if (stat.ties > 0) {
                             "$displayGrid: ${stat.wins}W - ${stat.losses}L - ${stat.ties}T"
                         } else {
                             "$displayGrid: ${stat.wins}W - ${stat.losses}L"
                         }
+                        val chipBorderColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155)
+                        val chipBgColor = if (isSelected) Color(0xFF0F2942) else Color(0xFF1E293B)
+                        val chipTextColor = if (isSelected) Color.White else Color(0xFF94A3B8)
                         Box(
                             modifier = Modifier
+                                .height(26.dp)
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF1E293B))
-                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                                .background(chipBgColor)
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = chipBorderColor,
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .clickable { selectedGridKey = gridKey }
+                                .padding(horizontal = 8.dp)
+                                .testTag("rival_grid_chip_${rival.name}_$gridKey"),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = chipText,
-                                color = Color(0xFF94A3B8),
+                                color = chipTextColor,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.testTag("rival_grid_chip_${rival.name}_$gridKey")
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -3912,13 +3929,59 @@ fun RivalCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // PASS 5.18 Part 1: Show "Send Reply" button when an unsent R-code exists for the last match
-                val hasUnsentReply = rival.lastStatus != "IN_PROGRESS" && !rival.isReplySent && rival.lastReplyCode.isNotBlank()
-                if (hasUnsentReply) {
+                // PASS 5.35 Fix 2: Open Challenge Resume Entry ("Resume Challenge - N tries left - [grid] [diff]")
+                if (rival.lastStatus == "IN_PROGRESS") {
+                    val triesPhrase = if (rival.inProgressMaxTries == 0) {
+                        "Free tries"
+                    } else {
+                        "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                    }
+                    val displayGrid = rival.lastGrid.lowercase().replace('x', '×')
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0C243B))
+                            .border(1.2.dp, Color(0xFF00E5FF).copy(alpha = 0.75f), RoundedCornerShape(10.dp))
+                            .clickable { onDynamicAction() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("rival_resume_challenge_entry_${rival.name}")
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "▶ Resume Challenge",
+                                color = Color(0xFF00E5FF),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "$triesPhrase - $displayGrid ${rival.lastDifficulty.label}",
+                                color = Color(0xFFE2E8F0),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                // PASS 5.35 Fix 1: Show "Send Reply (code)" for the SELECTED grid's last reply code (hidden if none)
+                val selectedReply = rival.lastReplies[selectedGridKey.lowercase()]
+                val hasSelectedReply = rival.lastStatus != "IN_PROGRESS" && selectedReply != null && selectedReply.code.isNotBlank()
+                if (hasSelectedReply) {
+                    val replyCodeToCopy = selectedReply!!.code
                     Button(
-                        onClick = onSendReply,
+                        onClick = {
+                            runCatching {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                            }
+                            ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                            Toast.makeText(context, "Reply code copied: $replyCodeToCopy", Toast.LENGTH_SHORT).show()
+                            onSendReply()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 38.dp)
@@ -3937,7 +4000,7 @@ fun RivalCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Send Reply (${rival.lastReplyCode})",
+                            text = "Send Reply ($replyCodeToCopy)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1

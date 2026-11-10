@@ -147,7 +147,7 @@ fun SplashScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.glowback_app_icon),
+                    painter = painterResource(id = R.drawable.glowback_store_icon_1794206618357),
                     contentDescription = "Glowback App Icon",
                     modifier = Modifier
                         .fillMaxSize()

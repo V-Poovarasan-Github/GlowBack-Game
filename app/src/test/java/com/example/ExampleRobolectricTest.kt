@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.ClipboardManager
 import com.example.challenge.AwaitingChallenge
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
@@ -15,6 +16,7 @@ import com.example.challenge.PendingOutboundChallenge
 import com.example.challenge.RivalRecord
 import com.example.challenge.RunStateStorage
 import com.example.challenge.SerializedRunState
+import com.example.challenge.StoredReply
 import com.example.notification.NotificationContentProvider
 import com.example.notification.NotificationScheduler
 import java.io.File
@@ -23,6 +25,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -30,6 +33,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
@@ -41,6 +45,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -2302,11 +2307,11 @@ class ExampleRobolectricTest {
             .performClick()
         composeTestRule.waitForIdle()
 
-        // Once tapped, isReplySent becomes true and the button hides
+        // Once tapped, isReplySent becomes true and per PASS 5.35 Fix 1 the selected grid's reply row remains visible
         val afterSendRecord = ChallengeStorage.findRivalByName(context, "ALEX")
         assertNotNull(afterSendRecord)
         assertTrue("Tapping Send Reply must set isReplySent = true", afterSendRecord!!.isReplySent)
-        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX").assertIsDisplayed()
 
         // PART 2: Accept an active 5x4 Hard challenge with high target (30 > 7)
         val highTargetTCode = ChallengeSeed.formatChallengeCode(
@@ -5089,11 +5094,18 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("did_you_share_yes_button").performClick()
         composeTestRule.waitForIdle()
 
-        // Reopen ALEX's RivalMatchSetupDialog -> recommendation chip is now suppressed!
-        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        // While pending outbound, ALEX's card renders the awaiting banner + Paste Reply / Re-copy buttons
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_paste_reply_button_ALEX").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recopy_code_button_ALEX").assertIsDisplayed()
+
+        // Reopen ALEX's RivalMatchSetupDialog via rival header -> recommendation chip is suppressed!
+        composeTestRule.onNodeWithTag("rival_card_name_ALEX").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_setup_close_button").performClick()
+        composeTestRule.waitForIdle()
     }
 
     @Test
@@ -5466,7 +5478,753 @@ class ExampleRobolectricTest {
         val recsAfterDelete = ChallengeStorage.computeSleepingScoresForRival(context, alexRecreated, getShareableBoardScores(prefs))
         assertEquals("Deleting rival card must clear unreplied recommendations so all boards can be recommended again", 2, recsAfterDelete.size)
     }
+
+    // =========================================================================
+    // PASS 5.35 — T1 through T12 Robolectric Verification Suite
+    // =========================================================================
+
+    @Test
+    fun pass5_35_T1_mintReply_playOtherGames_entryUnchanged() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Mint an inbound reply on 4x4 against ALEX
+        val rec4x4 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CH4",
+            maxTries = 3,
+            seed = 44001
+        )
+        assertNotNull(rec4x4)
+        val minted4x4Code = rec4x4!!.lastReplies["4x4"]?.code ?: ""
+        assertTrue("4x4 reply code must be stored in lastReplies[\"4x4\"]", minted4x4Code.isNotBlank())
+
+        // 2. Complete an inbound reply outcome on 2x2 (outbound challenge resolved) and another match on 3x3
+        ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "ALEX",
+            myOriginalTarget = 7,
+            responderScore = 6,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CH2",
+            maxTries = 3,
+            seed = 22001
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 6,
+            targetScore = 8,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.HARD,
+            chainId = "CH3",
+            maxTries = 3,
+            seed = 33001
+        )
+
+        // 3. Verify 4x4 stored reply entry is completely unchanged
+        val afterOtherGames = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull(afterOtherGames)
+        assertEquals(
+            "T1: Playing and completing other games must leave 4x4 stored reply unchanged",
+            minted4x4Code,
+            afterOtherGames!!.lastReplies["4x4"]?.code
+        )
+        assertTrue("3x3 must also have its own stored reply", afterOtherGames.lastReplies["3x3"]?.code?.isNotBlank() == true)
+    }
+
+    @Test
+    fun pass5_35_T2_tapChipSwitchesReplyRow_and_noReplyHidesRow() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Seed HERO rival with:
+        //    - 2x2: outbound match resolved via recordReplyOutcome (has gridStat 1W-0L, NO stored reply)
+        //    - 3x3: inbound match completed (has stored reply code3x3)
+        //    - 4x4: most recent inbound match completed (lastGrid = 4x4, has stored reply code4x4)
+        ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "HERO",
+            myOriginalTarget = 6,
+            responderScore = 4,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "H22",
+            maxTries = 3,
+            seed = 10202
+        )
+        val r3 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 7,
+            targetScore = 8,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "H33",
+            maxTries = 1,
+            seed = 10303
+        )!!
+        val code3x3 = r3.lastReplies["3x3"]!!.code
+        val r4 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "H44",
+            maxTries = 3,
+            seed = 10404
+        )!!
+        val code4x4 = r4.lastReplies["4x4"]!!.code
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Default selection is 4x4 -> reply row shows 4x4 code
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply ($code4x4)", substring = true)
+
+        // Tap 3x3 chip -> reply row switches to 3x3 code
+        composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply ($code3x3)", substring = true)
+
+        // Tap 2x2 chip (no stored reply) -> reply row hides
+        composeTestRule.onNodeWithTag("rival_grid_chip_HERO_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_35_T3_newReplyOverwritesSameGridOnly() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        val first3x3 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 4,
+            targetScore = 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "C33",
+            maxTries = 3,
+            seed = 30001
+        )!!
+        val code3x3 = first3x3.lastReplies["3x3"]!!.code
+
+        val first4x4 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "C44",
+            maxTries = 3,
+            seed = 40001
+        )!!
+        val oldCode4x4 = first4x4.lastReplies["4x4"]!!.code
+
+        // Mint a new reply on 4x4 with different score/seed
+        val second4x4 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 9,
+            targetScore = 7,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.HARD,
+            chainId = "C44",
+            maxTries = 3,
+            seed = 40002
+        )!!
+        val newCode4x4 = second4x4.lastReplies["4x4"]!!.code
+
+        assertNotEquals("New 4x4 reply must overwrite previous 4x4 reply", oldCode4x4, newCode4x4)
+        assertEquals("3x3 reply must remain untouched when 4x4 is overwritten", code3x3, second4x4.lastReplies["3x3"]?.code)
+        assertEquals("Only 2 grid entries (3x3 and 4x4) may exist", 2, second4x4.lastReplies.size)
+    }
+
+    @Test
+    fun pass5_35_T4_defaultSelectionIsLastPlayedGridAtLeftEdge() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Play 2x2 first, 3x3 second, 4x4 last
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 6,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "G22",
+            maxTries = 3,
+            seed = 20010
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 7,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "G33",
+            maxTries = 3,
+            seed = 30010
+        )
+        val lastRec = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "G44",
+            maxTries = 3,
+            seed = 40010
+        )!!
+        val code4x4 = lastRec.lastReplies["4x4"]!!.code
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify 4x4 chip is at the left edge (smaller X than 3x3 and 2x2)
+        val bounds4x4 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_4x4").fetchSemanticsNode().boundsInRoot
+        val bounds3x3 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").fetchSemanticsNode().boundsInRoot
+        assertTrue("Last-played grid (4x4) must be leftmost chip (left=${bounds4x4.left} < ${bounds3x3.left})", bounds4x4.left < bounds3x3.left)
+
+        // Verify 4x4 is selected by default so its reply code is shown in the Send Reply row
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply ($code4x4)", substring = true)
+    }
+
+    @Test
+    fun pass5_35_T5_thirtyOneDaySweep_and_deleteRivalClearEntries() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val now = System.currentTimeMillis()
+        val thirtyOneDaysAgo = now - (31L * 24L * 60L * 60L * 1000L)
+        val fiveDaysAgo = now - (5L * 24L * 60L * 60L * 1000L)
+
+        val seededRival = RivalRecord(
+            name = "SWEEP_RIVAL",
+            wins = 1,
+            losses = 1,
+            ties = 0,
+            matches = 2,
+            lastGrid = "4x4",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 6,
+            lastUserScore = 7,
+            lastStatus = "WON",
+            gridStats = mapOf(
+                "3x3" to GridStat(wins = 0, losses = 1, lastPlayedAt = thirtyOneDaysAgo),
+                "4x4" to GridStat(wins = 1, losses = 0, lastPlayedAt = fiveDaysAgo)
+            ),
+            lastReplies = mapOf(
+                "3x3" to StoredReply(code = "3x3-4-R3E-ALEX-SWP1-11111-A", mintedAt = thirtyOneDaysAgo),
+                "4x4" to StoredReply(code = "4x4-7-R3E-ALEX-SWP1-22222-B", mintedAt = fiveDaysAgo)
+            )
+        )
+        ChallengeStorage.saveRival(context, seededRival)
+
+        // 1. Run 30-day sweep -> 31-day-old 3x3 reply must be purged while 5-day-old 4x4 reply remains
+        val purged = ChallengeStorage.sweepExpiredLastReplies(context, now)
+        assertEquals("Exactly 1 expired reply entry (31 days old) must be swept", 1, purged)
+
+        val afterSweep = ChallengeStorage.findRivalByName(context, "SWEEP_RIVAL")
+        assertNotNull(afterSweep)
+        assertFalse("31-day-old 3x3 reply must be removed", afterSweep!!.lastReplies.containsKey("3x3"))
+        assertTrue("5-day-old 4x4 reply must remain", afterSweep.lastReplies.containsKey("4x4"))
+
+        // 2. deleteRival purges the rival and all remaining lastReplies
+        ChallengeStorage.deleteRival(context, "SWEEP_RIVAL")
+        assertNull("deleteRival must completely remove the rival record and its lastReplies", ChallengeStorage.findRivalByName(context, "SWEEP_RIVAL"))
+    }
+
+    @Test
+    fun pass5_35_T6_replyRowCopyButtonCopiesExactStoredCode() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val r3 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 7,
+            targetScore = 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CP3",
+            maxTries = 1,
+            seed = 31001
+        )!!
+        val code3x3 = r3.lastReplies["3x3"]!!.code
+
+        val r4 = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 5,
+            gridSize = "4x4",
+            difficulty = GameDifficulty.EASY,
+            chainId = "CP4",
+            maxTries = 3,
+            seed = 41001
+        )!!
+        val code4x4 = r4.lastReplies["4x4"]!!.code
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+        // Tap Send Reply for default 4x4 chip -> copies exact 4x4 code
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(code4x4, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+
+        // Switch to 3x3 chip and tap Send Reply -> copies exact 3x3 code
+        composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(code3x3, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun pass5_35_T7_tieWithTwoTriesLeft_threeButtons_forfeitPreservesTriesAndResumesSameSeed() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 95007
+        val rng = java.util.Random(seed.toLong())
+        val firstPad = CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)]
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "T7C",
+            isRevenge = false
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate on Try 1 of 3
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Tap Round 1 pad -> currentScore == 1 == targetScore (TIE on Try 1 of 3)
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        // Trigger Exit Challenge decision dialog
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify THREE buttons are displayed: Keep Playing, Exit & Lock Tie, Forfeit Try & Exit
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").assertIsDisplayed()
+
+        // Tap [Forfeit Try & Exit]
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify challenge stays OPEN (IN_PROGRESS) with 2 tries left and score 0
+        val openRecord = ChallengeStorage.findRivalByName(context, "HERO")
+        assertNotNull(openRecord)
+        assertEquals("IN_PROGRESS", openRecord!!.lastStatus)
+        assertEquals("2 tries must remain after forfeiting Try 1 of 3", 2, openRecord.inProgressTriesLeft)
+        assertEquals("Forfeited try must record 0 for display", 0, openRecord.lastUserScore)
+        assertEquals("Same seed must be preserved on open challenge", seed, openRecord.inProgressSeed)
+
+        // Verify rival card shows the Resume Challenge entry and tapping it resumes same seed with Ready gate re-armed
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TRIES: 2", substring = true).assertIsDisplayed()
+
+        // Dismiss Ready gate on resumed run and verify exact same Round 1 pad from the same seed
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Target Tied! (1/1)", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun pass5_35_T8_tieOnLastTry_forfeitButtonAbsent() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 95008
+        val rng = java.util.Random(seed.toLong())
+        val firstPad = CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)]
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 1, // 1-try challenge -> Try 1 IS the last try (0 tries left after Ready gate)
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "T8C",
+            isRevenge = false
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Reach tie (score 1 == target 1) on the LAST try
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Only 2 buttons (Keep Playing / Exit & Lock Tie); Forfeit Try & Exit must NOT exist
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_35_T9_winDialogUnchanged_twoButtonsOnly() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 95009
+        val rng = java.util.Random(seed.toLong())
+        val seq = List(2) { CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)] }
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "T9C",
+            isRevenge = false
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Round 1 (tie 1/1)
+        composeTestRule.onNodeWithTag(seq[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(3000L)
+        composeTestRule.waitForIdle()
+
+        // Round 2 (win 2 > 1) -> dismiss Victory Decision with Keep Playing, then open Exit Challenge dialog
+        composeTestRule.onNodeWithTag(seq[0].testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(seq[1].testTagId).performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Win dialog has 2 buttons only; Forfeit Try & Exit never appears on wins
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_lock_score_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_35_T10_fourGridRivalCard_scrollableSingleLineLazyRowNoVerticalWrap() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val now = System.currentTimeMillis()
+        val rival4Grids = RivalRecord(
+            name = "ALEX",
+            wins = 1,
+            losses = 1,
+            ties = 2,
+            matches = 4,
+            lastGrid = "5x4",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 5,
+            lastUserScore = 5,
+            lastStatus = "TIED",
+            gridStats = mapOf(
+                "2x2" to GridStat(wins = 0, losses = 1, ties = 0, lastPlayedAt = now - 30_000L),
+                "3x3" to GridStat(wins = 1, losses = 0, ties = 0, lastPlayedAt = now - 20_000L),
+                "4x4" to GridStat(wins = 0, losses = 0, ties = 1, lastPlayedAt = now - 10_000L),
+                "5x4" to GridStat(wins = 0, losses = 0, ties = 1, lastPlayedAt = now)
+            )
+        )
+        ChallengeStorage.saveRival(context, rival4Grids)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val rowBounds = composeTestRule.onNodeWithTag("rival_grid_chips_row_ALEX").fetchSemanticsNode().boundsInRoot
+        val rowHeightPx = rowBounds.height
+
+        for (gridKey in listOf("5x4", "4x4", "3x3", "2x2")) {
+            val chipNode = composeTestRule.onNodeWithTag("rival_grid_chip_ALEX_$gridKey")
+            chipNode.assertExists()
+            val chipBounds = chipNode.fetchSemanticsNode().boundsInRoot
+            assertTrue(
+                "Chip $gridKey must be single-line and never wrap vertically (height=${chipBounds.height}, rowHeight=$rowHeightPx)",
+                chipBounds.height <= rowHeightPx + 4f && chipBounds.width > chipBounds.height
+            )
+        }
+    }
+
+    @Test
+    fun pass5_35_T11_midRoundForfeitOnTry1Of3_keepsExactlyTwoTriesAndDialogCopyMatches() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 95011
+        val rng = java.util.Random(seed.toLong())
+        val firstPad = CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)]
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "T11",
+            isRevenge = false
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate on Try 1 of 3 (pre-deducts current try once: 3 -> 2)
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Tie target mid-round (score 1 == target 1)
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        // Open Exit Challenge dialog mid-round
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert dialog body and forfeit caption explicitly state 2 tries kept/preserved
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body")
+            .assertTextContains("keep 2 tries for later", substring = true)
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_caption")
+            .assertTextContains("2 tries preserved", substring = true)
+
+        // Tap Forfeit Try & Exit -> assert attemptsLeft == 2 in both RivalRecord and ChallengeItem storage
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val rival = ChallengeStorage.findRivalByName(context, "HERO")!!
+        val savedItem = ChallengeStorage.getInProgressChallengeForRival(context, rival)!!
+        assertEquals("T11: RivalRecord.inProgressTriesLeft must be 2", 2, rival.inProgressTriesLeft)
+        assertEquals("T11: ChallengeItem.attemptsLeft must be 2", 2, savedItem.attemptsLeft)
+    }
+
+    @Test
+    fun pass5_35_T12_bestScoreInvariantAcrossNonForfeitedTries_try1Four_try2TieForfeited_try3Three_finalReplyScoreFour() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 95012
+        val rng = java.util.Random(seed.toLong())
+        val firstPad = CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)]
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "T12",
+            isRevenge = false
+        )
+
+        // Try 1 completed with score 4 (2 tries remaining); player is now starting Try 2 of 3
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = tCode,
+                rivalName = "HERO",
+                gridSizeTag = "2x2",
+                targetScore = 1,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 4,
+                seed = seed,
+                difficulty = GameDifficulty.EASY,
+                chainId = "T12"
+            )
+        )
+
+        // Navigate to Rivalry and resume Try 2 of 3
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO").performClick()
+        composeTestRule.waitForIdle()
+
+        // Dismiss Ready gate on Try 2 (attemptsLeft becomes 1, bestScoreBeforeCurrentTry snapshots 4)
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Tap Round 1 pad on Try 2 to reach tie score 1 (target 1)
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        // Open Exit Challenge dialog and tap [Forfeit Try & Exit]
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Best-Score Invariant after Try 2 forfeit:
+        // - RivalRecord.lastUserScore == 0 for display
+        // - Persisted ChallengeItem.bestScore == 4 (from Try 1, NOT 0 and NOT 1)
+        // - attemptsLeft == 1
+        val afterTry2Forfeit = ChallengeStorage.findRivalByName(context, "HERO")!!
+        assertEquals("IN_PROGRESS", afterTry2Forfeit.lastStatus)
+        assertEquals("Display lastUserScore must be 0 after forfeiting Try 2", 0, afterTry2Forfeit.lastUserScore)
+        assertEquals("1 try must remain for Try 3", 1, afterTry2Forfeit.inProgressTriesLeft)
+        val restoredForTry3 = ChallengeStorage.getInProgressChallengeForRival(context, afterTry2Forfeit)!!
+        assertEquals("Persisted bestScore must remain 4 (from Try 1) after forfeiting Try 2", 4, restoredForTry3.bestScore)
+
+        // Resume Try 3 (final try, 1 try left)
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // Intentionally tap wrong pad on Round 1 step 1 to end Try 3 with score 0 (< 4)
+        val wrongPad = CLASSIC_2X2_PADS.first { it.id != firstPad.id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(1000L)
+        composeTestRule.waitForIdle()
+
+        // Verify finalized match outcome and minted reply code carry score 4 (max across non-forfeited tries: max(4, 0) = 4)
+        val finalized = ChallengeStorage.findRivalByName(context, "HERO")!!
+        assertEquals("WON", finalized.lastStatus)
+        assertEquals("Finalized userScore must be 4 (from Try 1)", 4, finalized.lastUserScore)
+        val replyCode = finalized.lastReplies["2x2"]?.code ?: ""
+        assertTrue("Minted 2x2 reply code must be present", replyCode.isNotBlank())
+        val parsedReply = ChallengeSeed.parseChallengeCode(replyCode)
+        assertNotNull(parsedReply)
+        assertEquals("Finalized reply code must carry score 4", 4, parsedReply!!.targetScore)
+    }
 }
+
 
 
 
