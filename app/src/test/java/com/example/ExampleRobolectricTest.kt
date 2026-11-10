@@ -3943,7 +3943,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("rival_recommendations_carousel").assertIsDisplayed()
 
         val titanRecord = ChallengeStorage.findRivalByName(context, "TITAN")!!
-        val recs = ChallengeStorage.computeSleepingScoresForRival(titanRecord, getShareableBoardScores(prefs))
+        val recs = ChallengeStorage.computeSleepingScoresForRival(context, titanRecord, getShareableBoardScores(prefs))
         assertEquals("Recommendations count must be 3", 3, recs.size)
         assertEquals("Chip 0 must be 4x4 with margin +7", "4x4", recs[0].boardOption.gridTag)
         assertEquals("Chip 1 must be 3x3 with margin +6 (rival lastGrid)", "3x3", recs[1].boardOption.gridTag)
@@ -4988,6 +4988,109 @@ class ExampleRobolectricTest {
         assertEquals("CHALLENGER", ChallengeStorage.getMyName(context))
         composeTestRule.onNodeWithTag("first_name_dialog").assertDoesNotExist()
         composeTestRule.onNodeWithTag("ingame_challenge_banner").assertIsDisplayed()
+    }
+
+    @Test
+    fun testSentRecommendationLedger_filtersAlreadySentAndCompletedScoresPerRival() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Setup ALEX with target 5 on 2x2 Easy (lost/won match history) and BLAZE with target 4 on 2x2 Easy
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 4,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "ALX",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "BLAZE",
+            userScore = 3,
+            targetScore = 4,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "BLZ",
+            maxTries = 3
+        )
+
+        // Stored Classic 2x2 Easy score = 6, seed = 22206 (beats ALEX's 5 and BLAZE's 4)
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 6, seed = 22206)
+
+        val alexInitial = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        val blazeInitial = ChallengeStorage.findRivalByName(context, "BLAZE")!!
+
+        // Initially recommended for both ALEX and BLAZE
+        val alexRecsBefore = ChallengeStorage.computeSleepingScoresForRival(context, alexInitial, getShareableBoardScores(prefs))
+        assertEquals("2x2 Easy (6 vs 5) must initially be recommended for ALEX", 1, alexRecsBefore.size)
+        assertEquals(6, alexRecsBefore[0].boardOption.score)
+        assertEquals(22206, alexRecsBefore[0].boardOption.seed)
+
+        // 2. Suppression at send-time (case-insensitive rival matching):
+        ChallengeStorage.recordSentRecommendation(
+            context = context,
+            rivalName = "alex",
+            gridTag = "2x2",
+            difficulty = GameDifficulty.EASY,
+            seed = 22206
+        )
+
+        val alexRecsAfterSend = ChallengeStorage.computeSleepingScoresForRival(context, alexInitial, getShareableBoardScores(prefs))
+        assertTrue("Already-sent score (seed 22206) must be filtered out for ALEX immediately at send-time", alexRecsAfterSend.isEmpty())
+
+        // 3. Per-rival isolation: BLAZE has NOT been sent seed 22206, so it must still be recommended for BLAZE
+        val blazeRecs = ChallengeStorage.computeSleepingScoresForRival(context, blazeInitial, getShareableBoardScores(prefs))
+        assertEquals("Filtering must be per-rival; BLAZE must still see 2x2 Easy recommendation", 1, blazeRecs.size)
+        assertEquals(22206, blazeRecs[0].boardOption.seed)
+
+        // 4. Completion via reply outcome (ALEX replies with 5 on seed 22206): still suppressed for ALEX
+        val alexAfterReply = ChallengeStorage.recordReplyOutcome(
+            context = context,
+            rivalName = "ALEX",
+            myOriginalTarget = 6,
+            responderScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "ALX",
+            maxTries = 3,
+            seed = 22206
+        )
+        val alexRecsAfterReply = ChallengeStorage.computeSleepingScoresForRival(context, alexAfterReply, getShareableBoardScores(prefs))
+        assertTrue("Completed challenge score (seed 22206) must remain filtered out for ALEX", alexRecsAfterReply.isEmpty())
+
+        // 5. Beating own high score (new score 9, new seed 22209 on 2x2 Easy) -> newly recommended for ALEX!
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 9, seed = 22209)
+        val alexRecsNewHigh = ChallengeStorage.computeSleepingScoresForRival(context, alexAfterReply, getShareableBoardScores(prefs))
+        assertEquals("New high score with new seed (22209) must be recommended for ALEX", 1, alexRecsNewHigh.size)
+        assertEquals(9, alexRecsNewHigh[0].boardOption.score)
+        assertEquals(22209, alexRecsNewHigh[0].boardOption.seed)
+
+        // 6. End-to-end UI flow: sending the new 2x2 Easy (score 9, seed 22209) to ALEX via RivalMatchSetupDialog suppresses it on reopen
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("did_you_share_yes_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Reopen ALEX's RivalMatchSetupDialog -> recommendation chip is now suppressed!
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertDoesNotExist()
     }
 }
 

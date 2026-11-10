@@ -781,6 +781,13 @@ internal fun getShareableBoardScores(prefs: SharedPreferences): List<BoardScoreO
 }
 
 internal fun computeSleepingScoresForRival(
+    context: Context,
+    rival: RivalRecord,
+    allBoardScores: List<BoardScoreOption>
+): List<com.example.challenge.SleepingScoreRecommendation> =
+    ChallengeStorage.computeSleepingScoresForRival(context, rival, allBoardScores)
+
+internal fun computeSleepingScoresForRival(
     rival: RivalRecord,
     allBoardScores: List<BoardScoreOption>
 ): List<com.example.challenge.SleepingScoreRecommendation> =
@@ -2822,10 +2829,17 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
                             ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore, seedInt = parsed?.seedInt ?: currentRunSeed)
                             val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
+                            val gridTag = gridSize.keyPrefix
                             if (!shareRival.isNullOrBlank()) {
                                 ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                                ChallengeStorage.recordSentRecommendation(
+                                    context = context,
+                                    rivalName = shareRival,
+                                    gridTag = gridTag,
+                                    difficulty = difficultyMode,
+                                    seed = parsed?.seedInt ?: currentRunSeed
+                                )
                             }
-                            val gridTag = gridSize.keyPrefix
                             val awaiting = AwaitingChallenge(
                                 chainId = chainId,
                                 code = generatedCode,
@@ -3156,6 +3170,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         ?: currentRivalNameForShare
                     if (!shareRival.isNullOrBlank()) {
                         ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                        ChallengeStorage.recordSentRecommendation(
+                            context = context,
+                            rivalName = shareRival,
+                            gridTag = gridTag,
+                            difficulty = chosenDiff,
+                            seed = seedToUse
+                        )
                     }
                     runCatching {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -3223,6 +3244,13 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         ?: currentRivalNameForShare
                     if (!shareRival.isNullOrBlank()) {
                         ChallengeStorage.setLastSharedRivalName(context, shareRival)
+                        ChallengeStorage.recordSentRecommendation(
+                            context = context,
+                            rivalName = shareRival,
+                            gridTag = gridTag,
+                            difficulty = chosenDiff,
+                            seed = seedToUse
+                        )
                     }
                     val awaiting = AwaitingChallenge(
                         chainId = chainId,

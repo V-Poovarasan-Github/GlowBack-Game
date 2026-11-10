@@ -2904,8 +2904,8 @@ fun HallOfFameScreen(
 
     if (rivalForSetup != null) {
         val currentRival = rivalForSetup!!
-        val recommendations = remember(currentRival, allBoardScores) {
-            ChallengeStorage.computeSleepingScoresForRival(currentRival, allBoardScores)
+        val recommendations = remember(currentRival, allBoardScores, refreshTrigger) {
+            ChallengeStorage.computeSleepingScoresForRival(context, currentRival, allBoardScores)
         }
         RivalMatchSetupDialog(
             rival = currentRival,

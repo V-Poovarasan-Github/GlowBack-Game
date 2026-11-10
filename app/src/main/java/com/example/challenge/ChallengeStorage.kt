@@ -21,6 +21,7 @@ object ChallengeStorage {
     private const val KEY_LAST_SHARED_RIVAL = "last_shared_rival_name"
     private const val KEY_MY_NAME = "glowback_player_name"
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
+    private const val KEY_SENT_RECOMMENDATIONS = "sent_rival_recommendations_v1"
 
     const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours) UI nudge TTL
     const val CHAIN_TARGET_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days hard expiry for outbound chain targets
@@ -848,20 +849,94 @@ object ChallengeStorage {
         return Triple(0, GameDifficulty.EASY, "NEW")
     }
 
+    private fun buildRecommendationKey(
+        gridTag: String,
+        difficulty: GameDifficulty,
+        seed: Int
+    ): String = "${gridTag.trim().lowercase()}:${difficulty.name.uppercase()}:$seed"
+
+    /**
+     * Records that a specific stored board (keyed by gridTag + difficulty + seed) has been
+     * sent to or played against a specific rival, preventing it from being recommended again
+     * to that same rival.
+     */
+    fun recordSentRecommendation(
+        context: Context,
+        rivalName: String,
+        gridTag: String,
+        difficulty: GameDifficulty,
+        seed: Int
+    ) {
+        if (seed <= 0) return
+        val cleanRival = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanRival.isEmpty()) return
+        val cleanGrid = gridTag.trim().lowercase()
+        if (cleanGrid.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_SENT_RECOMMENDATIONS, null)
+        val rootObj = try {
+            if (raw != null) JSONObject(raw) else JSONObject()
+        } catch (_: Exception) {
+            JSONObject()
+        }
+        val arr = rootObj.optJSONArray(cleanRival) ?: JSONArray()
+        val boardKey = buildRecommendationKey(cleanGrid, difficulty, seed)
+        var exists = false
+        for (i in 0 until arr.length()) {
+            if (arr.optString(i, "").equals(boardKey, ignoreCase = true)) {
+                exists = true
+                break
+            }
+        }
+        if (!exists) {
+            arr.put(boardKey)
+            rootObj.put(cleanRival, arr)
+            prefs.edit().putString(KEY_SENT_RECOMMENDATIONS, rootObj.toString()).apply()
+        }
+    }
+
+    fun getSentRecommendationsForRival(context: Context, rivalName: String): Set<String> {
+        val cleanRival = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanRival.isEmpty()) return emptySet()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_SENT_RECOMMENDATIONS, null) ?: return emptySet()
+        val rootObj = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return emptySet()
+        }
+        val arr = rootObj.optJSONArray(cleanRival) ?: return emptySet()
+        val result = mutableSetOf<String>()
+        for (i in 0 until arr.length()) {
+            val entry = arr.optString(i, "").trim().lowercase()
+            if (entry.isNotEmpty()) result.add(entry)
+        }
+        return result
+    }
+
     /**
      * PASS 5.28:
      * Computes qualifying "Sleeping Scores" (Rival Score Recommendations) where the player already has
      * a stored Classic board score (with valid seed > 0) that strictly beats the rival's lastTarget
-     * on the exact same gridTag and difficulty.
+     * on the exact same gridTag and difficulty, excluding any board already sent to or played against this rival.
      */
     fun computeSleepingScoresForRival(
+        context: Context?,
         rival: RivalRecord,
         allBoardScores: List<BoardScoreOption>
     ): List<SleepingScoreRecommendation> {
+        val sentKeys = if (context != null) {
+            getSentRecommendationsForRival(context, rival.name)
+        } else {
+            emptySet()
+        }
         val recommendations = mutableListOf<SleepingScoreRecommendation>()
         for (board in allBoardScores) {
             if (!board.paceName.equals("Classic", ignoreCase = true)) continue
             if (board.score < 5 || board.seed <= 0) continue
+
+            val boardKey = buildRecommendationKey(board.gridTag, board.difficulty, board.seed).lowercase()
+            if (boardKey in sentKeys) continue
 
             val (rivalTarget, rivalDiff, rivalStatus) = getGridTargetInfo(rival, board.gridTag)
             if (rivalTarget <= 0 || rivalStatus == "NEW") continue
@@ -881,6 +956,12 @@ object ChallengeStorage {
                 .thenByDescending { it.boardOption.score }
         )
     }
+
+    fun computeSleepingScoresForRival(
+        rival: RivalRecord,
+        allBoardScores: List<BoardScoreOption>
+    ): List<SleepingScoreRecommendation> =
+        computeSleepingScoresForRival(context = null, rival = rival, allBoardScores = allBoardScores)
 
     fun recordMatchOutcome(
         context: Context,
@@ -936,6 +1017,9 @@ object ChallengeStorage {
             seed
         } else {
             existing?.inProgressSeed?.takeIf { it != 0 } ?: ChallengeSeed.generateRandomSeed()
+        }
+        if (seed > 0) {
+            recordSentRecommendation(context, cleanName, gridSize, difficulty, seed)
         }
         val mySenderName = ChallengeSeed.sanitizePlayerName(getMyName(context))
         val savedReplyCode = replyCode.ifBlank {
@@ -1027,6 +1111,9 @@ object ChallengeStorage {
 
         if (resolvedChain.isNotEmpty()) {
             recordChainReplyRival(context, resolvedChain, seed, cleanName)
+        }
+        if (seed > 0) {
+            recordSentRecommendation(context, cleanName, gridSize, difficulty, seed)
         }
 
         val record = RivalRecord(
