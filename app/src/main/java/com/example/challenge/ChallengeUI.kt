@@ -3162,7 +3162,8 @@ fun EmptyRivalryState(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 16.dp)
             .testTag("empty_rivalry_state"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -3255,18 +3256,25 @@ fun EmptyRivalryState(
                     ) to Color(0xFFF59E0B)
                 )
 
+                val badgeSize = (24f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.35f)).dp
                 walkthroughSteps.forEachIndexed { idx, (stepInfo, badgeColor) ->
                     val (num, title, desc) = stepInfo
                     Row(verticalAlignment = Alignment.Top) {
                         Box(
                             modifier = Modifier
                                 .padding(top = 2.dp)
-                                .size(24.dp)
+                                .size(badgeSize)
                                 .clip(CircleShape)
                                 .background(badgeColor.copy(alpha = 0.18f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(num, color = badgeColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(
+                                text = num,
+                                color = badgeColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                lineHeight = 12.sp
+                            )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
@@ -3294,11 +3302,12 @@ fun EmptyRivalryState(
                     .heightIn(min = 48.dp)
                     .testTag("empty_share_button"),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
             ) {
                 Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Share Code", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Share Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
             }
 
             Button(
@@ -3308,6 +3317,7 @@ fun EmptyRivalryState(
                     .heightIn(min = 48.dp)
                     .testTag("empty_paste_button"),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF00E5FF),
                     contentColor = Color.Black
@@ -3315,7 +3325,7 @@ fun EmptyRivalryState(
             ) {
                 Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
             }
         }
     }
@@ -3996,15 +4006,17 @@ fun RecordsTabContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
             .testTag("records_tab_content"),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Mode Selector: [SOLO] [2P] [3P] [4P]
+        val modeTrackHeight = (44f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.25f)).dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(modeTrackHeight)
                 .clip(RoundedCornerShape(22.dp))
                 .background(Color(0xFF1E293B))
                 .border(1.dp, Color(0xFF334155), RoundedCornerShape(22.dp))
@@ -4022,6 +4034,7 @@ fun RecordsTabContent(
                         .background(if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent)
                         .then(if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(19.dp)) else Modifier)
                         .clickable { selectedModeIndex = index }
+                        .padding(horizontal = 4.dp)
                         .testTag("records_mode_$modeLabel"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -4029,7 +4042,9 @@ fun RecordsTabContent(
                         text = modeLabel,
                         color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
                         fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -4051,9 +4066,10 @@ fun RecordsTabContent(
                         onClick = { selectedGridIndex = index },
                         modifier = Modifier
                             .weight(1f)
-                            .height(38.dp)
+                            .heightIn(min = 38.dp)
                             .testTag("records_grid_$gridLabel"),
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             containerColor = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color.Transparent,
                             contentColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8)
@@ -4063,7 +4079,13 @@ fun RecordsTabContent(
                             if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155)
                         )
                     ) {
-                        Text(text = gridLabel, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            text = gridLabel,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }

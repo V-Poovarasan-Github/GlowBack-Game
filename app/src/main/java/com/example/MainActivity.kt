@@ -33,6 +33,8 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -3769,11 +3771,13 @@ private fun SegmentedModeTrack(
 ) {
     val modes = GameMode.entries
     val selectedIndex = modes.indexOf(selectedMode).coerceAtLeast(0)
+    val fontScaleFactor = LocalDensity.current.fontScale.coerceIn(1f, 1.25f)
+    val trackHeight = (44f * fontScaleFactor).dp
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(trackHeight)
             .clip(RoundedCornerShape(22.dp))
             .background(Color(0xFF1E293B))
             .border(1.dp, Color(0xFF334155), RoundedCornerShape(22.dp))
@@ -3817,6 +3821,7 @@ private fun SegmentedModeTrack(
                             role = Role.Tab,
                             onClick = { onSelectMode(mode) }
                         )
+                        .padding(horizontal = 4.dp)
                         .testTag(mode.tagId),
                     contentAlignment = Alignment.Center
                 ) {
@@ -3824,7 +3829,9 @@ private fun SegmentedModeTrack(
                         text = mode.label,
                         color = if (isSelected) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
                         fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -3842,18 +3849,21 @@ private fun BoardAndContextRow(
     onSelectDifficulty: (GameDifficulty) -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val fontScaleFactor = LocalDensity.current.fontScale.coerceIn(1f, 1.3f)
         val isProgressive = paceMode == PaceMode.PROGRESSIVE
-        val abbreviatePace = isProgressive && maxWidth < 330.dp
+        val abbreviatePace = isProgressive && (maxWidth < 330.dp || fontScaleFactor > 1.15f)
         val displayPaceLabel = if (abbreviatePace) "Prog." else paceMode.shortLabel
+        val trackVisualHeight = (40f * fontScaleFactor.coerceAtMost(1.2f)).dp
+        val containerHeight = trackVisualHeight + 8.dp
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left: ONE Board pill ("2×2 · Classic") opening Settings — 40dp visual height, 48dp touch target, slate #334155 border
+            // Left: ONE Board pill ("2×2 · Classic") opening Settings — 40dp visual height (scales cleanly), 48dp+ touch target
             Box(
-                modifier = Modifier.height(48.dp),
+                modifier = Modifier.height(containerHeight),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -3876,7 +3886,7 @@ private fun BoardAndContextRow(
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
                             .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
-                            .padding(start = 12.dp, end = 4.dp)
+                            .padding(start = 10.dp, end = 4.dp)
                             .testTag("config_pill_grid"),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -3909,7 +3919,7 @@ private fun BoardAndContextRow(
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp))
                             .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
-                            .padding(start = 4.dp, end = 12.dp)
+                            .padding(start = 4.dp, end = 10.dp)
                             .testTag("config_pill_pace"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3925,10 +3935,10 @@ private fun BoardAndContextRow(
                 }
             }
 
-            // Right: Segmented [Easy | Hard] Slider matching SOLO track — 40dp visual height, 48dp touch target, slate #334155 border
+            // Right: Segmented [Easy | Hard] Slider matching SOLO track — scales width & height cleanly with fontScale
             val isEasy = difficultyMode == GameDifficulty.EASY
             val isHard = difficultyMode == GameDifficulty.HARD
-            val segmentWidth = 58.dp
+            val segmentWidth = (58f * fontScaleFactor).dp
             val thumbOffset by animateDpAsState(
                 targetValue = if (isEasy) 0.dp else segmentWidth,
                 animationSpec = spring(
@@ -3951,14 +3961,14 @@ private fun BoardAndContextRow(
             Box(
                 modifier = Modifier
                     .width(segmentWidth * 2 + 4.dp)
-                    .height(48.dp),
+                    .height(containerHeight),
                 contentAlignment = Alignment.Center
             ) {
-                // Visual 40.dp outer track with 2.dp uniform inset and sliding 36.dp concentric thumb
+                // Visual outer track with 2.dp uniform inset and sliding concentric thumb
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(40.dp)
+                        .height(trackVisualHeight)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFF1E293B))
                         .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
@@ -3976,11 +3986,11 @@ private fun BoardAndContextRow(
                     )
                 }
 
-                // Foreground touch targets clipped to the 40.dp track and 12.dp segment shapes
+                // Foreground touch targets clipped to the track and 12.dp segment shapes
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(40.dp)
+                        .height(trackVisualHeight)
                         .clip(RoundedCornerShape(14.dp))
                         .padding(2.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -3994,6 +4004,7 @@ private fun BoardAndContextRow(
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.EASY) }
                             )
+                            .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Easy difficulty"
                             }
@@ -4019,6 +4030,7 @@ private fun BoardAndContextRow(
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.HARD) }
                             )
+                            .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Hard difficulty"
                             }
