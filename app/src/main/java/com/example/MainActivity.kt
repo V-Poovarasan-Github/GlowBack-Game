@@ -1218,8 +1218,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             isRevenge = true
         )
         ChallengeStorage.recordCreatedCode(context, replyCode)
-        ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
         ChallengeStorage.saveLastReplyForGrid(context, ch.rivalName, ch.gridSizeTag, replyCode)
+        ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
         hasSentChallengeReply = true
         runCatching {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager

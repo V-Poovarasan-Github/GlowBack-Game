@@ -3842,44 +3842,80 @@ fun RivalCard(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // PASS 5.35 Fix 1: Show "Send Reply (code)" for the SELECTED grid's last reply code (hidden if none)
+                // PASS 5.37: State-Aware Reply Presentation
                 val selectedReply = rival.lastReplies[selectedGridKey.lowercase()]
                 val hasSelectedReply = rival.lastStatus != "IN_PROGRESS" && selectedReply != null && selectedReply.code.isNotBlank()
                 if (hasSelectedReply) {
                     val replyCodeToCopy = selectedReply!!.code
-                    Button(
-                        onClick = {
-                            runCatching {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
-                            }
-                            ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
-                            Toast.makeText(context, "Reply code copied: $replyCodeToCopy", Toast.LENGTH_SHORT).show()
-                            onSendReply()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 38.dp)
-                            .testTag("rival_send_reply_button_${rival.name}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF10B981),
-                            contentColor = Color(0xFF090D16)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Send Reply ($replyCodeToCopy)",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1
-                        )
+                    val isUnsent = selectedReply.copiedAt == null
+                    if (isUnsent) {
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                                }
+                                ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
+                                onSendReply()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 38.dp)
+                                .testTag("rival_send_reply_button_${rival.name}"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF10B981),
+                                contentColor = Color(0xFF090D16)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Send Reply to ${rival.name}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1
+                            )
+                        }
+                    } else {
+                        val ageStr = formatTimeAgo(selectedReply.copiedAt!!)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    runCatching {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                                    }
+                                    ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                    Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
+                                    onSendReply()
+                                }
+                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                                .testTag("rival_reply_sent_row_${rival.name}"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "✓ Reply copied $ageStr · copy again",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy again",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                 }

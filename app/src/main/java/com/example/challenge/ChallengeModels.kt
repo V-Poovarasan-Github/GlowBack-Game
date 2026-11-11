@@ -125,7 +125,8 @@ data class GridStat(
  */
 data class StoredReply(
     val code: String,
-    val mintedAt: Long = System.currentTimeMillis()
+    val mintedAt: Long = System.currentTimeMillis(),
+    val copiedAt: Long? = null
 )
 
 /**

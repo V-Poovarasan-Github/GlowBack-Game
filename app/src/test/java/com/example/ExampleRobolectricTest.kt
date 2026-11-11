@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.ClipboardManager
+import android.content.ClipData
+import androidx.compose.ui.test.assertCountEquals
 import com.example.challenge.AwaitingChallenge
 import com.example.challenge.ChallengeItem
 import com.example.challenge.ChallengeSeed
@@ -2307,11 +2309,13 @@ class ExampleRobolectricTest {
             .performClick()
         composeTestRule.waitForIdle()
 
-        // Once tapped, isReplySent becomes true and per PASS 5.35 Fix 1 the selected grid's reply row remains visible
+        // Once tapped, isReplySent becomes true, copiedAt is stamped, and per PASS 5.37 collapses into sent row
         val afterSendRecord = ChallengeStorage.findRivalByName(context, "ALEX")
         assertNotNull(afterSendRecord)
         assertTrue("Tapping Send Reply must set isReplySent = true", afterSendRecord!!.isReplySent)
-        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX").assertIsDisplayed()
+        assertNotNull("Tapping Send Reply must record copiedAt", afterSendRecord.lastReplies["5x4"]?.copiedAt)
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_ALEX").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX").assertDoesNotExist()
 
         // PART 2: Accept an active 5x4 Hard challenge with high target (30 > 7)
         val highTargetTCode = ChallengeSeed.formatChallengeCode(
@@ -5592,17 +5596,17 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
-        // Default selection is 4x4 -> reply row shows 4x4 code
+        // Default selection is 4x4 -> reply row shows unsent button without raw code
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply ($code4x4)", substring = true)
+            .assertTextContains("Send Reply to HERO")
 
-        // Tap 3x3 chip -> reply row switches to 3x3 code
+        // Tap 3x3 chip -> reply row switches to 3x3 (also unsent)
         composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply ($code3x3)", substring = true)
+            .assertTextContains("Send Reply to HERO")
 
         // Tap 2x2 chip (no stored reply) -> reply row hides
         composeTestRule.onNodeWithTag("rival_grid_chip_HERO_2x2").performClick()
@@ -5714,10 +5718,10 @@ class ExampleRobolectricTest {
         val bounds3x3 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").fetchSemanticsNode().boundsInRoot
         assertTrue("Last-played grid (4x4) must be leftmost chip (left=${bounds4x4.left} < ${bounds3x3.left})", bounds4x4.left < bounds3x3.left)
 
-        // Verify 4x4 is selected by default so its reply code is shown in the Send Reply row
+        // Verify 4x4 is selected by default so Send Reply to HERO button is shown
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply ($code4x4)", substring = true)
+            .assertTextContains("Send Reply to HERO")
     }
 
     @Test
@@ -5804,17 +5808,21 @@ class ExampleRobolectricTest {
 
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
-        // Tap Send Reply for default 4x4 chip -> copies exact 4x4 code
+        // Tap Send Reply for default 4x4 chip -> copies exact 4x4 code and collapses to sent row
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").performClick()
         composeTestRule.waitForIdle()
         assertEquals(code4x4, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertIsDisplayed()
 
-        // Switch to 3x3 chip and tap Send Reply -> copies exact 3x3 code
+        // Switch to 3x3 chip and tap Send Reply -> copies exact 3x3 code and collapses to sent row
         composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").performClick()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .performClick()
         composeTestRule.waitForIdle()
         assertEquals(code3x3, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertIsDisplayed()
     }
 
     @Test
@@ -6290,6 +6298,249 @@ class ExampleRobolectricTest {
         // Dismiss
         composeTestRule.onNodeWithTag("close_tries_selector_button").performClick()
         composeTestRule.waitForIdle()
+    }
+
+    // ==========================================
+    // PASS 5.37: STATE-AWARE REPLY PRESENTATION
+    // ==========================================
+
+    @Test
+    fun pass5_37_T1_copyTransitionsButtonToSentRowWithCorrectAge() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Record a match outcome resulting in an unsent reply for 3x3
+        val rec = ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "HERO",
+            userScore = 5,
+            targetScore = 6,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "S37",
+            maxTries = 3,
+            seed = 37001
+        )!!
+        val replyCode = rec.lastReplies["3x3"]!!.code
+        assertNull("Newly minted reply must have copiedAt == null (unsent)", rec.lastReplies["3x3"]!!.copiedAt)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Unsent button is displayed with "Send Reply to HERO"
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply to HERO")
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
+
+        // Tap the unsent button -> transitions immediately to sent row
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("✓ Reply copied", substring = true)
+            .assertTextContains("copy again", substring = true)
+
+        // Verify storage persisted copiedAt timestamp
+        val storedRival = ChallengeStorage.findRivalByName(context, "HERO")
+        assertNotNull(storedRival)
+        assertNotNull("Storage must record non-null copiedAt", storedRival!!.lastReplies["3x3"]?.copiedAt)
+        assertTrue("Storage isReplySent must be true", storedRival.isReplySent)
+    }
+
+    @Test
+    fun pass5_37_T2_copyAgainFromSentRowCopiesExactCode() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val twoHoursAgo = System.currentTimeMillis() - (2L * 60L * 60L * 1000L)
+        val expectedCode = "3x3-6-R3E-ALEX-R2H-99887-Z"
+        val seededRival = RivalRecord(
+            name = "HERO",
+            wins = 1,
+            losses = 0,
+            ties = 0,
+            matches = 1,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 5,
+            lastUserScore = 6,
+            lastStatus = "WON",
+            gridStats = mapOf("3x3" to GridStat(wins = 1, losses = 0, lastPlayedAt = twoHoursAgo)),
+            lastReplies = mapOf("3x3" to StoredReply(code = expectedCode, mintedAt = twoHoursAgo, copiedAt = twoHoursAgo))
+        )
+        ChallengeStorage.saveRival(context, seededRival)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Sent row is displayed with "2h ago" and "copy again"
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("✓ Reply copied", substring = true)
+            .assertTextContains("2h ago", substring = true)
+            .assertTextContains("copy again", substring = true)
+
+        // Clear clipboard
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("dummy", "dummy_text"))
+
+        // Tap the sent row to re-copy
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").performClick()
+        composeTestRule.waitForIdle()
+
+        // Assert clipboard has exact stored code
+        assertEquals(expectedCode, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun pass5_37_T3_unsentButtonLabelContainsNoCodeSubstring() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val code = "3x3-5-R3E-ALEX-K7Q-8X2AB-C"
+        val seededRival = RivalRecord(
+            name = "ALEX2",
+            wins = 0,
+            losses = 1,
+            ties = 0,
+            matches = 1,
+            lastGrid = "3x3",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 5,
+            lastUserScore = 0,
+            lastStatus = "LOST",
+            gridStats = mapOf("3x3" to GridStat(wins = 0, losses = 1, lastPlayedAt = System.currentTimeMillis())),
+            lastReplies = mapOf("3x3" to StoredReply(code = code, mintedAt = System.currentTimeMillis(), copiedAt = null))
+        )
+        ChallengeStorage.saveRival(context, seededRival)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Unsent button has label "Send Reply to ALEX2"
+        val buttonNode = composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX2")
+        buttonNode.assertIsDisplayed()
+        buttonNode.assertTextContains("Send Reply to ALEX2")
+
+        // Assert that the raw code hash and code prefix are NOT present anywhere on the rival card or screen
+        composeTestRule.onAllNodes(hasText("8X2AB", substring = true)).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("3x3-5-R3E", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun pass5_37_T4_statesAreIndependentPerSelectedGrid() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val now = System.currentTimeMillis()
+        val code3x3 = "3x3-4-R3E-ALEX-C33-11111-A"
+        val code4x4 = "4x4-7-R3E-ALEX-C44-22222-B"
+
+        // Seed 3x3 as SENT (copiedAt != null) and 4x4 as UNSENT (copiedAt == null)
+        // Last played is 4x4 so 4x4 is default selected
+        val seededRival = RivalRecord(
+            name = "HERO",
+            wins = 1,
+            losses = 1,
+            ties = 0,
+            matches = 2,
+            lastGrid = "4x4",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 6,
+            lastUserScore = 7,
+            lastStatus = "WON",
+            gridStats = mapOf(
+                "3x3" to GridStat(wins = 0, losses = 1, lastPlayedAt = now - 60_000L),
+                "4x4" to GridStat(wins = 1, losses = 0, lastPlayedAt = now)
+            ),
+            lastReplies = mapOf(
+                "3x3" to StoredReply(code = code3x3, mintedAt = now - 60_000L, copiedAt = now - 60_000L),
+                "4x4" to StoredReply(code = code4x4, mintedAt = now, copiedAt = null)
+            )
+        )
+        ChallengeStorage.saveRival(context, seededRival)
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // 1. Default selection is 4x4 -> Unsent button is displayed, sent row does not exist
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply to HERO")
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
+
+        // 2. Switch to 3x3 chip -> Sent row is displayed, unsent button does not exist
+        composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("✓ Reply copied", substring = true)
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO").assertDoesNotExist()
+
+        // 3. Switch back to 4x4 chip -> Unsent button is displayed again, sent row does not exist
+        composeTestRule.onNodeWithTag("rival_grid_chip_HERO_4x4").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
+            .assertIsDisplayed()
+            .assertTextContains("Send Reply to HERO")
+        composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
+    }
+
+    @Test
+    fun pass5_37_T5_shareSheetPathMarksReplySent() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        val code = "3x3-8-R3E-ALEX-RSH-55555-K"
+        // Seed initial rival with an uncopied reply
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "SHAREBOT",
+            userScore = 8,
+            targetScore = 5,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "RSH",
+            maxTries = 3,
+            seed = 55555
+        )
+
+        val beforeShare = ChallengeStorage.findRivalByName(context, "SHAREBOT")
+        assertNotNull(beforeShare)
+        assertNull("Before share, copiedAt must be null", beforeShare!!.lastReplies["3x3"]?.copiedAt)
+
+        // When sharing via share-sheet, markReplySent is called with the replyCode
+        ChallengeStorage.markReplySent(context, "SHAREBOT", code)
+
+        val afterShare = ChallengeStorage.findRivalByName(context, "SHAREBOT")
+        assertNotNull(afterShare)
+        assertTrue("isReplySent must be true after share", afterShare!!.isReplySent)
+        assertNotNull("copiedAt must be stamped after share", afterShare.lastReplies["3x3"]?.copiedAt)
     }
 }
 

@@ -536,9 +536,14 @@ object ChallengeStorage {
                         if (rObj != null) {
                             val code = rObj.optString("code", "").trim()
                             if (code.isNotEmpty()) {
+                                val copiedAtVal = if (rObj.has("copiedAt") && !rObj.isNull("copiedAt")) {
+                                    val v = rObj.optLong("copiedAt", 0L)
+                                    if (v > 0L) v else null
+                                } else null
                                 parsedLastReplies[k.trim().lowercase()] = StoredReply(
                                     code = code,
-                                    mintedAt = rObj.optLong("mintedAt", System.currentTimeMillis())
+                                    mintedAt = rObj.optLong("mintedAt", System.currentTimeMillis()),
+                                    copiedAt = copiedAtVal
                                 )
                             }
                         }
@@ -627,6 +632,9 @@ object ChallengeStorage {
                     val rObj = JSONObject().apply {
                         put("code", reply.code)
                         put("mintedAt", reply.mintedAt)
+                        if (reply.copiedAt != null) {
+                            put("copiedAt", reply.copiedAt)
+                        }
                     }
                     repliesObj.put(gridKey.trim().lowercase(), rObj)
                 }
@@ -698,16 +706,28 @@ object ChallengeStorage {
      * Marks a rival's saved R-code reply as sent (isReplySent = true) once the user copies or shares it
      * from either the Game Over screen or the Rivalry tab's "Send Reply" button.
      */
-    fun markReplySent(context: Context, rivalName: String, replyCode: String? = null): RivalRecord? {
+    fun markReplySent(context: Context, rivalName: String, replyCode: String? = null, copiedAt: Long = System.currentTimeMillis()): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val existing = findRivalByName(context, cleanName) ?: return null
         val updatedReplies = existing.lastReplies.toMutableMap()
         if (!replyCode.isNullOrBlank()) {
             val parsedGrid = ChallengeSeed.parseChallengeCode(replyCode)?.gridTag?.lowercase()
+                ?: updatedReplies.entries.firstOrNull { it.value.code.equals(replyCode.trim(), ignoreCase = true) }?.key
+                ?: replyCode.split('-').firstOrNull()?.trim()?.lowercase()?.takeIf { it in listOf("2x2", "3x3", "4x4", "5x4") }
                 ?: existing.lastGrid.trim().lowercase()
             if (parsedGrid.isNotEmpty()) {
                 val prevMintedAt = updatedReplies[parsedGrid]?.mintedAt ?: System.currentTimeMillis()
-                updatedReplies[parsedGrid] = StoredReply(code = replyCode.trim(), mintedAt = prevMintedAt)
+                updatedReplies[parsedGrid] = StoredReply(code = replyCode.trim(), mintedAt = prevMintedAt, copiedAt = copiedAt)
+            }
+        } else {
+            val grid = existing.lastGrid.trim().lowercase()
+            if (grid.isNotEmpty() && updatedReplies.containsKey(grid)) {
+                val cur = updatedReplies[grid]!!
+                updatedReplies[grid] = cur.copy(copiedAt = cur.copiedAt ?: copiedAt)
+            } else if (updatedReplies.size == 1) {
+                val singleKey = updatedReplies.keys.first()
+                val cur = updatedReplies[singleKey]!!
+                updatedReplies[singleKey] = cur.copy(copiedAt = cur.copiedAt ?: copiedAt)
             }
         }
         val updated = existing.copy(
@@ -728,7 +748,8 @@ object ChallengeStorage {
         rivalName: String,
         gridTag: String,
         replyCode: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        copiedAt: Long? = null
     ): RivalRecord? {
         val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
         val cleanGrid = gridTag.trim().lowercase()
@@ -736,7 +757,8 @@ object ChallengeStorage {
         if (cleanName.isEmpty() || cleanGrid.isEmpty() || cleanCode.isEmpty()) return null
         val existing = findRivalByName(context, cleanName) ?: return null
         val updatedReplies = existing.lastReplies.toMutableMap()
-        updatedReplies[cleanGrid] = StoredReply(code = cleanCode, mintedAt = now)
+        val prevCopiedAt = updatedReplies[cleanGrid]?.takeIf { it.code == cleanCode }?.copiedAt ?: copiedAt
+        updatedReplies[cleanGrid] = StoredReply(code = cleanCode, mintedAt = now, copiedAt = prevCopiedAt)
         val updated = existing.copy(
             lastReplyCode = cleanCode,
             lastReplies = updatedReplies
