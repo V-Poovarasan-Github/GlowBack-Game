@@ -3797,10 +3797,13 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_setup_recommendations_section").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_setup_recommendations_target_badge")
+            .assertIsDisplayed()
+            .assertTextContains("Target: 8")
         composeTestRule.onNodeWithTag("rival_recommendation_chip_3x3_easy")
             .assertIsDisplayed()
             .assertTextContains("3×3 Easy", substring = true)
-            .assertTextContains("vs 8", substring = true)
+            .assertTextContains("You 12", substring = true)
 
         // Non-qualifying boards must NOT appear as recommendation chips
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_hard").assertDoesNotExist()

@@ -1459,16 +1459,18 @@ fun DidYouShareCardContent(
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF1E293B))
                         .border(1.dp, Color(0xFF334155), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
                         .testTag("did_you_share_code_preview"),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = awaiting.code,
                         color = Color(0xFF00E5FF),
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -2431,11 +2433,15 @@ fun RivalMatchSetupDialog(
     val grids = listOf("2x2" to "2×2", "3x3" to "3×3", "4x4" to "4×4", "5x4" to "5×4")
     val difficulties = listOf(GameDifficulty.EASY to "Easy", GameDifficulty.HARD to "Hard")
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 16.dp)
+                .widthIn(max = 440.dp)
                 .border(1.5.dp, accentColor, RoundedCornerShape(20.dp))
                 .testTag("rival_match_setup_dialog"),
             shape = RoundedCornerShape(20.dp),
@@ -2445,9 +2451,9 @@ fun RivalMatchSetupDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(20.dp),
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Header with close button
                 Row(
@@ -2469,39 +2475,60 @@ fun RivalMatchSetupDialog(
                     }
                 }
 
-                // PASS 5.28: Conditional "🎯 RECOMMENDATION" Section ("Sleeping Scores")
+                // PASS 5.28 & PASS 5.38: Recommendation Section with edge-to-edge header & single-line chips
                 if (recommendations.isNotEmpty()) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("rival_setup_recommendations_section"),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F2922)),
                         border = BorderStroke(1.dp, Color(0xFF10B981))
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 10.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "🎯 RECOMMENDATION",
-                                color = Color(0xFF10B981),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.5.sp,
+                            // Header Row: Left = 🎯 RECOMMENDATION, Right = Target: [SCORE]
+                            val targetScore = recommendations.firstOrNull()?.rivalLastTarget?.takeIf { it > 0 } ?: rival.lastTarget
+                            Row(
                                 modifier = Modifier
-                                    .padding(horizontal = 12.dp)
-                                    .testTag("rival_setup_recommendations_title")
-                            )
-                            Text(
-                                text = "You already beat ${rival.name} here - send it now:",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 12.dp)
-                            )
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "🎯 RECOMMENDATION",
+                                    color = Color(0xFF10B981),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp,
+                                    modifier = Modifier.testTag("rival_setup_recommendations_title")
+                                )
+                                if (targetScore > 0) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFF10B981).copy(alpha = 0.15f),
+                                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f)),
+                                        modifier = Modifier
+                                            .semantics(mergeDescendants = true) {}
+                                            .testTag("rival_setup_recommendations_target_badge")
+                                    ) {
+                                        Text(
+                                            text = "Target: $targetScore",
+                                            color = Color(0xFF34D399),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Single-line horizontal scrollable chips
                             LazyRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2513,64 +2540,41 @@ fun RivalMatchSetupDialog(
                                     val chipTag = "rival_recommendation_chip_${rec.boardOption.gridTag.lowercase()}_${rec.boardOption.difficulty.name.lowercase()}"
                                     Surface(
                                         onClick = { onSelectRecommendation(idx) },
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(8.dp),
                                         color = Color(0xFF1E293B),
                                         border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.65f)),
                                         modifier = Modifier
-                                            .widthIn(min = 150.dp)
                                             .semantics(mergeDescendants = true) {}
                                             .testTag(chipTag)
                                     ) {
-                                        Column(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            // Line 1: Grid + Difficulty bold, with small "vs Y" badge top-right
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = "${rec.gridDisplay} ${rec.boardOption.difficulty.label}",
-                                                    color = Color.White,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = Color(0xFF10B981).copy(alpha = 0.2f),
-                                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.45f))
-                                                ) {
-                                                    Text(
-                                                        text = "vs ${rec.rivalLastTarget}",
-                                                        color = Color(0xFF34D399),
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                    )
-                                                }
-                                            }
-                                            // Line 2: "You X" score + trailing share glyph
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = "You ${rec.boardOption.score}",
-                                                    color = Color(0xFF34D399),
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.ExtraBold
-                                                )
-                                                Icon(
-                                                    imageVector = Icons.Default.Share,
-                                                    contentDescription = "Share Recommended Score",
-                                                    tint = Color(0xFF10B981),
-                                                    modifier = Modifier.size(13.dp)
-                                                )
-                                            }
+                                            Text(
+                                                text = "${rec.gridDisplay} ${rec.boardOption.difficulty.label}",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "•",
+                                                color = Color(0xFF64748B),
+                                                fontSize = 11.sp
+                                            )
+                                            Text(
+                                                text = "You ${rec.boardOption.score}",
+                                                color = Color(0xFF34D399),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.Share,
+                                                contentDescription = "Share Recommended Score",
+                                                tint = Color(0xFF10B981),
+                                                modifier = Modifier.size(12.dp)
+                                            )
                                         }
                                     }
                                 }
