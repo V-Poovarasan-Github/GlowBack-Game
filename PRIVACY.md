@@ -58,8 +58,6 @@ We may update this Privacy Policy from time to time to reflect operational or le
 
 ## 7. Contact Us
 
-If you have questions or suggestions about this Privacy Policy, please contact:
+If you have questions or suggestions about this Privacy Policy, please open an issue on the GitHub repository:
 
-- **Developer:** Poovarasan V
-- **Email:** vpoovarasan404@gmail.com
-- **Repository:** [https://github.com/V-Poovarasan-Github/GlowBack-Game](https://github.com/V-Poovarasan-Github/GlowBack-Game)
+- **Repository & Inquiries:** [https://github.com/V-Poovarasan-Github/GlowBack-Game/issues](https://github.com/V-Poovarasan-Github/GlowBack-Game/issues)
