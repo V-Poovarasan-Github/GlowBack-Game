@@ -1,3604 +1,609 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GLOWBACK — The Offline, Cheat-Proof Memory Rivalry Game</title>
-  <meta name="description" content="Watch the glow. Send it back. Glowback is a 100% offline, cheat-proof neon sequence memory rivalry game for Android. No accounts, no servers, no ads." />
-  <meta name="theme-color" content="#0F172A" />
-  <style>
-    /* ==========================================================================
-       1. DESIGN TOKENS & GLOBAL RESET
-       Dark Cyber-Arcade Palette (#0F172A, #1E293B, #00E5FF, #10B981)
-       ========================================================================== */
-    :root {
-      --bg-primary: #0F172A;
-      --bg-deep: #0B132B;
-      --bg-elevated: #131D35;
-      --bg-card: #1E293B;
-      --bg-card-hover: #243249;
-      --border-subtle: #334155;
-      --text-primary: #F8FAFC;
-      --text-secondary: #CBD5E1;
-      --text-muted: #94A3B8;
-      --accent-cyan: #00E5FF;
-      --accent-sky: #38BDF8;
-      --accent-emerald: #10B981;
-      --accent-amber: #F59E0B;
-      --accent-red: #EF4444;
-      --accent-blue: #3B82F6;
-      --accent-purple: #A855F7;
-      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
-      --font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    html {
-      scroll-behavior: smooth;
-      background-color: var(--bg-primary);
-      color: var(--text-primary);
-      font-family: var(--font-sans);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    body {
-      background-color: var(--bg-primary);
-      background-image:
-        radial-gradient(circle at 12% 10%, rgba(0, 229, 255, 0.09) 0%, transparent 38%),
-        radial-gradient(circle at 88% 18%, rgba(16, 185, 129, 0.09) 0%, transparent 38%),
-        radial-gradient(circle at 50% 60%, rgba(56, 189, 248, 0.05) 0%, transparent 45%);
-      min-height: 100vh;
-      overflow-x: hidden;
-    }
-
-    a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    button {
-      font-family: inherit;
-    }
-
-    .container {
-      width: 100%;
-      max-width: 1140px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    /* ==========================================================================
-       2. STICKY HEADER & NAVIGATION
-       Flexible height (min-height: 70px) so wrapped nav links never clip
-       ========================================================================== */
-    .site-header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(15, 23, 42, 0.86);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-bottom: 1px solid rgba(51, 65, 85, 0.65);
-    }
-
-    .header-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: auto;
-      min-height: 70px;
-      padding: 10px 0;
-      gap: 16px;
-    }
-
-    .brand-logo {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 900;
-      font-size: 1.2rem;
-      letter-spacing: 0.14em;
-      color: var(--text-primary);
-      flex-shrink: 0;
-    }
-
-    .brand-dots {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .brand-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      display: inline-block;
-    }
-
-    .brand-dot.emerald {
-      background-color: var(--accent-emerald);
-      box-shadow: 0 0 10px rgba(16, 185, 129, 0.85);
-    }
-
-    .brand-dot.red {
-      background-color: var(--accent-red);
-      box-shadow: 0 0 10px rgba(239, 68, 68, 0.85);
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-
-    .nav-link {
-      font-size: 0.92rem;
-      font-weight: 600;
-      color: var(--text-secondary);
-      transition: color 0.2s ease, text-shadow 0.2s ease;
-    }
-
-    .nav-link:hover {
-      color: var(--accent-cyan);
-      text-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
-    }
-
-    /* ==========================================================================
-       3. HERO SECTION & CTA BUTTON GROUP
-       Balanced sizing so Download APK, Play Demo, and Google Play sit cleanly
-       ========================================================================== */
-    .hero {
-      padding: 44px 0 64px;
-    }
-
-    .hero-grid {
-      display: grid;
-      grid-template-columns: 1.12fr 0.88fr;
-      gap: 40px;
-      align-items: center;
-    }
-
-    .eyebrow-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
-      border-radius: 999px;
-      background: rgba(0, 229, 255, 0.1);
-      border: 1px solid rgba(0, 229, 255, 0.35);
-      color: var(--accent-cyan);
-      font-size: 0.76rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 16px;
-    }
-
-    .eyebrow-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--accent-cyan);
-      box-shadow: 0 0 8px var(--accent-cyan);
-      animation: pulseDot 2s infinite ease-in-out;
-    }
-
-    @keyframes pulseDot {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.35); opacity: 0.65; }
-    }
-
-    .hero-title {
-      font-size: clamp(2.5rem, 5vw, 3.9rem);
-      font-weight: 900;
-      letter-spacing: 0.06em;
-      line-height: 1.05;
-      margin-bottom: 12px;
-      background: linear-gradient(135deg, #FFFFFF 0%, #E2E8F0 55%, #00E5FF 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .hero-tagline {
-      font-size: clamp(1.3rem, 2.3vw, 1.75rem);
-      font-weight: 700;
-      color: var(--text-primary);
-      line-height: 1.3;
-      margin-bottom: 14px;
-    }
-
-    .hero-tagline span {
-      color: var(--accent-emerald);
-    }
-
-    .hero-description {
-      font-size: 1.02rem;
-      color: var(--text-muted);
-      max-width: 560px;
-      margin-bottom: 24px;
-    }
-
-    .cta-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 12px 18px;
-      border-radius: 13px;
-      font-size: 0.9rem;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease, border-color 0.22s ease, background-color 0.22s ease, color 0.22s ease;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-      color: #06131F;
-      border: 1px solid #34D399;
-      box-shadow: 0 8px 24px -4px rgba(16, 185, 129, 0.45), 0 0 16px rgba(16, 185, 129, 0.25);
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-3px);
-      background: linear-gradient(135deg, #34D399 0%, #10B981 100%);
-      box-shadow: 0 14px 30px -4px rgba(16, 185, 129, 0.6), 0 0 22px rgba(16, 185, 129, 0.4);
-    }
-
-    .btn-demo {
-      background: rgba(0, 229, 255, 0.12);
-      color: var(--accent-cyan);
-      border: 1.5px solid var(--accent-cyan);
-      box-shadow: 0 6px 20px -4px rgba(0, 229, 255, 0.3);
-    }
-
-    .btn-demo:hover {
-      transform: translateY(-3px);
-      background: rgba(0, 229, 255, 0.22);
-      box-shadow: 0 12px 28px -4px rgba(0, 229, 255, 0.5);
-    }
-
-    .btn-secondary {
-      background: rgba(30, 41, 59, 0.78);
-      color: var(--text-primary);
-      border: 1px solid var(--border-subtle);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-    }
-
-    .btn-secondary:hover {
-      transform: translateY(-3px);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-      background: rgba(30, 41, 59, 0.95);
-      box-shadow: 0 10px 26px -6px rgba(0, 229, 255, 0.28);
-    }
-
-    /* ==========================================================================
-       4. HERO VISUAL COLUMN & QUICK TAB SWITCHER PILLS
-       Placed directly above the phone simulator with tight spacing
-       ========================================================================== */
-    .hero-visual-col {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-    }
-
-    .tour-prompt-box {
-      background: rgba(30, 41, 59, 0.65);
-      border: 1px solid rgba(51, 65, 85, 0.85);
-      border-radius: 16px;
-      padding: 7px 10px;
-      display: inline-flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      max-width: 410px;
-      width: 100%;
-    }
-
-    .tour-pill-group {
-      display: inline-flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-
-    .tour-pill-btn {
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid var(--border-subtle);
-      color: var(--text-muted);
-      padding: 5px 11px;
-      border-radius: 999px;
-      font-size: 0.74rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-
-    .tour-pill-btn:hover {
-      color: var(--text-primary);
-      border-color: var(--accent-sky);
-    }
-
-    .tour-pill-btn.active {
-      background: rgba(0, 229, 255, 0.16);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-      box-shadow: 0 0 12px rgba(0, 229, 255, 0.25);
-    }
-
-    /* ==========================================================================
-       5. FIXED-HEIGHT INTERACTIVE PHONE SIMULATOR
-       Compact 515px screen area + flex-start layout eliminates dead vertical gaps
-       while preserving zero layout shift across Home, Rivalry, and Records tabs.
-       ========================================================================== */
-    .phone-simulator {
-      background: linear-gradient(180deg, #162038 0%, #0F172A 100%);
-      border: 2px solid #334155;
-      border-radius: 30px;
-      padding: 14px 14px 12px;
-      box-shadow:
-        0 28px 64px -12px rgba(0, 0, 0, 0.75),
-        0 0 0 1px rgba(255, 255, 255, 0.04),
-        0 0 48px rgba(0, 229, 255, 0.1);
-      max-width: 410px;
-      margin: 0 auto;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      transition: border-color 0.25s ease, box-shadow 0.25s ease;
-    }
-
-    .phone-simulator.demo-running {
-      border-color: var(--accent-cyan);
-      box-shadow:
-        0 28px 64px -12px rgba(0, 0, 0, 0.85),
-        0 0 40px rgba(0, 229, 255, 0.32);
-    }
-
-    /* Fixed 515px Screen Container: zero vertical bloat, zero layout shift */
-    .phone-screen-area {
-      height: 515px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-      scrollbar-width: thin;
-      scrollbar-color: #334155 transparent;
-    }
-
-    .phone-screen-area::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    .phone-screen-area::-webkit-scrollbar-thumb {
-      background: #334155;
-      border-radius: 4px;
-    }
-
-    /* ==========================================================================
-       6. CINEMATIC DEMO OVERLAYS & HIGH-CONTRAST SPOTLIGHT CAPTIONS
-       All overlays use position: absolute inside .phone-screen-area
-       ========================================================================== */
-    .demo-progress-track {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
-      background: rgba(51, 65, 85, 0.55);
-      border-radius: 4px;
-      overflow: hidden;
-      z-index: 30;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.2s ease;
-    }
-
-    .demo-progress-track.visible {
-      opacity: 1;
-    }
-
-    .demo-progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-emerald) 100%);
-      box-shadow: 0 0 12px var(--accent-cyan);
-      transition: width 0.4s ease;
-    }
-
-    .demo-close-btn {
-      position: absolute;
-      top: 7px;
-      right: 4px;
-      z-index: 35;
-      background: rgba(11, 19, 43, 0.95);
-      border: 1.5px solid var(--accent-cyan);
-      color: var(--text-primary);
-      font-size: 0.7rem;
-      font-weight: 800;
-      padding: 4px 11px;
-      border-radius: 999px;
-      cursor: pointer;
-      display: none;
-      align-items: center;
-      gap: 4px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65);
-      transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-    }
-
-    .demo-close-btn.visible {
-      display: inline-flex;
-    }
-
-    .demo-close-btn:hover {
-      background: rgba(239, 68, 68, 0.25);
-      border-color: var(--accent-red);
-      color: #FCA5A5;
-    }
-
-    /* Floating Share Toast Pill for Step 10 ("Shared to chat ✓") */
-    .demo-toast-pill {
-      position: absolute;
-      top: 52%;
-      left: 50%;
-      transform: translate(-50%, -50%) scale(0.92);
-      z-index: 36;
-      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-      color: #04131D;
-      border: 2px solid #A7F3D0;
-      border-radius: 999px;
-      padding: 8px 18px;
-      font-size: 0.86rem;
-      font-weight: 900;
-      letter-spacing: 0.03em;
-      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.75), 0 0 24px rgba(16, 185, 129, 0.65);
-      opacity: 0;
-      pointer-events: none;
-      white-space: nowrap;
-      transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-
-    .demo-toast-pill.visible {
-      opacity: 1;
-      transform: translate(-50%, -50%) scale(1);
-    }
-
-    /* Eye-Catching Neon Spotlight Caption Banner */
-    @keyframes captionSpotlightPop {
-      0% {
-        transform: translateY(6px) scale(0.97);
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.85), 0 0 34px rgba(0, 229, 255, 0.65);
-      }
-      100% {
-        transform: translateY(0) scale(1);
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.85), 0 0 22px rgba(0, 229, 255, 0.35);
-      }
-    }
-
-    .demo-caption-pill {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 32;
-      background: linear-gradient(135deg, rgba(8, 22, 48, 0.98) 0%, rgba(15, 38, 68, 0.98) 100%);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 2px solid var(--accent-cyan);
-      border-radius: 16px;
-      padding: 10px 14px 11px;
-      color: #FFFFFF;
-      font-size: 0.92rem;
-      font-weight: 800;
-      line-height: 1.35;
-      text-align: center;
-      box-shadow:
-        0 14px 32px rgba(0, 0, 0, 0.88),
-        0 0 22px rgba(0, 229, 255, 0.35),
-        inset 0 1px 0 rgba(255, 255, 255, 0.22);
-      opacity: 0;
-      transform: translateY(10px);
-      pointer-events: none;
-      transition: opacity 0.22s ease, transform 0.22s ease, bottom 0.22s ease;
-    }
-
-    /* Lift caption above Live Challenge Seed pill during Steps 9 & 10 */
-    .demo-caption-pill.raise-above-seed {
-      bottom: 58px;
-    }
-
-    .demo-caption-pill.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .demo-caption-pill.pop-anim {
-      animation: captionSpotlightPop 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-
-    .demo-caption-header {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 5px;
-    }
-
-    .demo-caption-step {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 2px 10px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-emerald) 100%);
-      color: #04121F;
-      font-size: 0.65rem;
-      font-weight: 900;
-      letter-spacing: 0.09em;
-      text-transform: uppercase;
-      box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
-    }
-
-    .demo-caption-text {
-      display: block;
-      color: #FFFFFF;
-      text-shadow: 0 1px 10px rgba(0, 229, 255, 0.35);
-    }
-
-    /* Step 17 Finale Overlay */
-    .demo-finale-overlay {
-      position: absolute;
-      inset: 0;
-      z-index: 40;
-      background: rgba(11, 19, 43, 0.96);
-      border-radius: 16px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 24px;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.35s ease;
-    }
-
-    .demo-finale-overlay.visible {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .demo-finale-dots {
-      display: inline-flex;
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-
-    .demo-finale-quote {
-      font-size: 1.45rem;
-      font-weight: 900;
-      letter-spacing: 0.03em;
-      line-height: 1.3;
-      background: linear-gradient(135deg, #FFFFFF 0%, #00E5FF 60%, #10B981 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    /* Synthetic Tap Ring Pulse Animation */
-    @keyframes demoTapRing {
-      0% {
-        transform: scale(0.95);
-        box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.95), 0 0 18px rgba(0, 229, 255, 0.75);
-      }
-      50% {
-        transform: scale(1.04);
-        box-shadow: 0 0 0 12px rgba(0, 229, 255, 0), 0 0 24px rgba(0, 229, 255, 0.55);
-      }
-      100% {
-        transform: scale(1);
-        box-shadow: 0 0 0 16px rgba(0, 229, 255, 0);
-      }
-    }
-
-    .demo-tap-pulse {
-      animation: demoTapRing 0.65s cubic-bezier(0.2, 0.8, 0.2, 1);
-      position: relative;
-      z-index: 20;
-    }
-
-    /* ==========================================================================
-       7. PHONE TOP BAR & COMPACT SCREEN VIEWS (ZERO EXCESS VERTICAL GAP)
-       ========================================================================== */
-    .phone-top-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      padding: 6px 4px 0;
-      flex-shrink: 0;
-    }
-
-    .phone-app-title {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 0.9rem;
-      font-weight: 800;
-      letter-spacing: 0.1em;
-      color: var(--text-primary);
-    }
-
-    .phone-top-icons {
-      display: inline-flex;
-      gap: 6px;
-    }
-
-    .icon-circle-btn {
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      background: #1E293B;
-      border: 1px solid #334155;
-      color: var(--accent-sky);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.7rem;
-    }
-
-    /* Screen views use flex-start + 8px gap instead of space-between to prevent giant gaps */
-    .phone-screen-view {
-      display: none;
-      flex: 1;
-      flex-direction: column;
-      justify-content: flex-start;
-      gap: 8px;
-    }
-
-    .phone-screen-view.active {
-      display: flex;
-    }
-
-    /* Segmented Mode Track [SOLO | 2P | 3P | 4P] */
-    .sim-mode-track {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 4px;
-      background: #1E293B;
-      border: 1px solid #334155;
-      border-radius: 20px;
-      padding: 3px;
-      flex-shrink: 0;
-    }
-
-    .sim-mode-btn {
-      background: transparent;
-      border: 1px solid transparent;
-      color: var(--text-muted);
-      font-size: 0.74rem;
-      font-weight: 700;
-      padding: 4px 4px;
-      border-radius: 16px;
-      cursor: pointer;
-      transition: all 0.16s ease;
-    }
-
-    .sim-mode-btn.active {
-      background: rgba(2, 132, 199, 0.42);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-    }
-
-    /* Home Config Row: Board Pill + Difficulty Pill */
-    .sim-context-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      flex-shrink: 0;
-    }
-
-    .sim-board-pill {
-      background: #1E293B;
-      border: 1px solid #334155;
-      border-radius: 11px;
-      padding: 4px 10px;
-      font-size: 0.74rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .sim-board-pill span {
-      color: var(--accent-sky);
-    }
-
-    .sim-diff-pill {
-      display: inline-flex;
-      background: #1E293B;
-      border: 1px solid #334155;
-      border-radius: 11px;
-      padding: 2px;
-    }
-
-    .sim-diff-opt {
-      padding: 3px 9px;
-      border-radius: 8px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      cursor: pointer;
-      border: 1px solid transparent;
-      background: transparent;
-      transition: all 0.16s ease;
-    }
-
-    .sim-diff-opt.active.easy {
-      background: rgba(16, 185, 129, 0.22);
-      border-color: var(--accent-emerald);
-      color: #34D399;
-    }
-
-    .sim-diff-opt.active.hard {
-      background: rgba(239, 68, 68, 0.22);
-      border-color: var(--accent-red);
-      color: #F87171;
-    }
-
-    /* HUD Scoreboard Cards */
-    .hud-score-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      flex-shrink: 0;
-    }
-
-    .mini-score-card {
-      background: rgba(11, 19, 43, 0.9);
-      border: 1px solid rgba(51, 65, 85, 0.75);
-      border-radius: 12px;
-      padding: 6px 10px;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-
-    .mini-score-label {
-      font-size: 0.62rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
-    }
-
-    .mini-score-val {
-      font-family: var(--font-mono);
-      font-size: 1.14rem;
-      font-weight: 800;
-      color: var(--text-primary);
-      line-height: 1.2;
-    }
-
-    .mini-score-val.gold {
-      color: #FBBF24;
-    }
-
-    .sim-status-banner {
-      text-align: center;
-      font-size: 0.76rem;
-      font-weight: 800;
-      letter-spacing: 0.07em;
-      color: var(--accent-cyan);
-      text-transform: uppercase;
-      padding: 2px 0;
-      flex-shrink: 0;
-    }
-
-    /* Dynamic Visual Pad Grid:
-       - 2x2, 3x3, 4x4 use 236px width
-       - 5x4 (5 rows × 4 columns) uses 186px width so 5 rows match the exact vertical height */
-    .pad-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      max-width: 236px;
-      width: 100%;
-      margin: auto;
-      gap: 10px;
-    }
-
-    .pad-grid[data-grid-size="3x3"] {
-      max-width: 232px;
-      gap: 8px;
-    }
-
-    .pad-grid[data-grid-size="4x4"] {
-      max-width: 228px;
-      gap: 7px;
-    }
-
-    .pad-grid[data-grid-size="5x4"] {
-      max-width: 184px;
-      gap: 6px;
-    }
-
-    .simon-pad {
-      aspect-ratio: 1 / 1;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      cursor: pointer;
-      user-select: none;
-      transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
-    }
-
-    .pad-grid[data-grid-size="4x4"] .simon-pad,
-    .pad-grid[data-grid-size="5x4"] .simon-pad {
-      border-radius: 10px;
-    }
-
-    .simon-pad-symbol {
-      font-size: 2.15rem;
-      font-weight: 900;
-      color: rgba(248, 250, 252, 0.94);
-      line-height: 1;
-      pointer-events: none;
-      transition: transform 0.15s ease, text-shadow 0.15s ease, color 0.15s ease;
-    }
-
-    .pad-grid[data-grid-size="3x3"] .simon-pad-symbol {
-      font-size: 1.5rem;
-    }
-
-    .pad-grid[data-grid-size="4x4"] .simon-pad-symbol {
-      font-size: 1.15rem;
-    }
-
-    .pad-grid[data-grid-size="5x4"] .simon-pad-symbol {
-      font-size: 0.98rem;
-    }
-
-    .pad-green {
-      background: rgba(6, 95, 70, 0.78);
-      border: 2px solid rgba(16, 185, 129, 0.55);
-      box-shadow: inset 0 0 16px rgba(16, 185, 129, 0.15);
-    }
-
-    .pad-green.active, .pad-green:hover {
-      background: rgba(16, 185, 129, 0.92);
-      border-color: #6EE7B7;
-      transform: scale(1.04);
-      box-shadow: 0 0 24px rgba(16, 185, 129, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.35);
-    }
-
-    .pad-red {
-      background: rgba(127, 29, 29, 0.8);
-      border: 2px solid rgba(239, 68, 68, 0.55);
-      box-shadow: inset 0 0 16px rgba(239, 68, 68, 0.15);
-    }
-
-    .pad-red.active, .pad-red:hover {
-      background: rgba(239, 68, 68, 0.92);
-      border-color: #FCA5A5;
-      transform: scale(1.04);
-      box-shadow: 0 0 24px rgba(239, 68, 68, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.35);
-    }
-
-    .pad-amber {
-      background: rgba(120, 53, 15, 0.8);
-      border: 2px solid rgba(245, 158, 11, 0.55);
-      box-shadow: inset 0 0 16px rgba(245, 158, 11, 0.15);
-    }
-
-    .pad-amber.active, .pad-amber:hover {
-      background: rgba(245, 158, 11, 0.92);
-      border-color: #FDE68A;
-      transform: scale(1.04);
-      box-shadow: 0 0 24px rgba(245, 158, 11, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.35);
-    }
-
-    .pad-blue {
-      background: rgba(30, 58, 138, 0.8);
-      border: 2px solid rgba(59, 130, 246, 0.55);
-      box-shadow: inset 0 0 16px rgba(59, 130, 246, 0.15);
-    }
-
-    .pad-blue.active, .pad-blue:hover {
-      background: rgba(59, 130, 246, 0.92);
-      border-color: #93C5FD;
-      transform: scale(1.04);
-      box-shadow: 0 0 24px rgba(59, 130, 246, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.35);
-    }
-
-    .simon-pad.active .simon-pad-symbol,
-    .simon-pad:hover .simon-pad-symbol {
-      color: #FFFFFF;
-      text-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
-      transform: scale(1.08);
-    }
-
-    /* Live Challenge Seed Pill anchored at bottom of Home view */
-    .code-pill-box {
-      background: var(--bg-deep);
-      border: 1px solid rgba(0, 229, 255, 0.4);
-      border-radius: 12px;
-      padding: 7px 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-top: auto;
-      flex-shrink: 0;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-    }
-
-    .code-pill-meta {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-    }
-
-    .code-pill-caption {
-      font-size: 0.58rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-    }
-
-    .code-pill-value {
-      font-family: var(--font-mono);
-      font-size: 0.74rem;
-      font-weight: 700;
-      color: var(--accent-cyan);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .copy-code-btn {
-      background: rgba(0, 229, 255, 0.14);
-      color: var(--accent-cyan);
-      border: 1px solid rgba(0, 229, 255, 0.4);
-      border-radius: 8px;
-      padding: 5px 9px;
-      font-size: 0.7rem;
-      font-weight: 700;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.16s ease;
-    }
-
-    .copy-code-btn:hover {
-      background: rgba(0, 229, 255, 0.25);
-    }
-
-    /* ==========================================================================
-       8. LEADERBOARD VIEW (RIVALRY & RECORDS SUBTABS)
-       ========================================================================== */
-    .hall-subtabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      border-bottom: 1px solid #334155;
-      flex-shrink: 0;
-    }
-
-    .hall-subtab-btn {
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
-      padding: 7px 6px;
-      font-size: 0.78rem;
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-
-    .hall-subtab-btn.active {
-      color: var(--accent-cyan);
-      border-bottom-color: var(--accent-cyan);
-    }
-
-    .hall-pane {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-      flex: 1;
-    }
-
-    .hall-pane.active {
-      display: flex;
-    }
-
-    /* Rivalry Sub-Tab Components */
-    .rivalry-top-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .rivalry-action-btn {
-      padding: 8px 8px;
-      border-radius: 12px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-align: center;
-      border: 1px solid rgba(0, 229, 255, 0.45);
-      background: rgba(0, 229, 255, 0.08);
-      color: var(--accent-cyan);
-    }
-
-    .rivalry-action-btn.filled {
-      background: rgba(0, 229, 255, 0.85);
-      color: #06131F;
-      border-color: var(--accent-cyan);
-    }
-
-    .rival-card-sim {
-      background: #1E293B;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .rival-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .rival-name-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .rival-avatar {
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      background: rgba(0, 229, 255, 0.16);
-      border: 1px solid var(--accent-cyan);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.8rem;
-      font-weight: 800;
-      color: var(--accent-cyan);
-    }
-
-    .rival-name-title {
-      font-size: 0.88rem;
-      font-weight: 800;
-      color: var(--text-primary);
-    }
-
-    .rival-wlt-badge {
-      font-family: var(--font-mono);
-      font-size: 0.72rem;
-      font-weight: 800;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: #0F172A;
-      border: 1px solid #334155;
-      color: var(--accent-emerald);
-      transition: transform 0.2s ease, border-color 0.2s ease;
-    }
-
-    .rival-grid-chips {
-      display: flex;
-      gap: 6px;
-      overflow-x: auto;
-      padding-bottom: 2px;
-    }
-
-    .rival-grid-chip {
-      background: #0F172A;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      padding: 4px 8px;
-      font-size: 0.68rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.15s ease;
-    }
-
-    .rival-grid-chip.active {
-      background: rgba(0, 229, 255, 0.15);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-    }
-
-    .rival-match-summary {
-      background: #0F172A;
-      border-left: 3px solid var(--accent-emerald);
-      border-radius: 8px;
-      padding: 7px 10px;
-      font-size: 0.73rem;
-      color: var(--text-secondary);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .rival-match-summary strong {
-      color: var(--accent-emerald);
-    }
-
-    .rival-reply-btn {
-      width: 100%;
-      padding: 8px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--accent-emerald);
-      background: rgba(16, 185, 129, 0.16);
-      color: #34D399;
-      font-size: 0.74rem;
-      font-weight: 800;
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-
-    .rival-reply-btn:hover {
-      background: rgba(16, 185, 129, 0.26);
-    }
-
-    .rival-reply-btn.copied {
-      background: rgba(15, 23, 42, 0.7);
-      border-color: #334155;
-      color: var(--text-muted);
-      font-weight: 600;
-    }
-
-    /* Sleeping Score Recommendation Mini Card */
-    .rec-mini-card {
-      background: rgba(16, 185, 129, 0.08);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      border-radius: 12px;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .rec-mini-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .rec-mini-title {
-      font-size: 0.66rem;
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      color: var(--accent-emerald);
-      text-transform: uppercase;
-    }
-
-    .rec-target-badge {
-      font-size: 0.66rem;
-      font-weight: 800;
-      padding: 2px 7px;
-      border-radius: 6px;
-      background: rgba(16, 185, 129, 0.18);
-      color: #34D399;
-    }
-
-    .rec-chip-row {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-
-    .rec-chip-pill {
-      background: #0F172A;
-      border: 1px solid rgba(16, 185, 129, 0.5);
-      border-radius: 8px;
-      padding: 4px 9px;
-      font-size: 0.7rem;
-      font-weight: 700;
-      color: var(--text-primary);
-    }
-
-    /* Records Sub-Tab Components */
-    .records-grid-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-
-    .records-grid-btn {
-      background: transparent;
-      border: 1px solid #334155;
-      color: var(--text-muted);
-      border-radius: 10px;
-      padding: 6px 4px;
-      font-size: 0.74rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .records-grid-btn.active {
-      background: rgba(0, 229, 255, 0.15);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-    }
-
-    .record-cards-stack {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .record-score-row {
-      background: #0F172A;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 11px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .record-score-row.green { border-color: rgba(16, 185, 129, 0.45); }
-    .record-score-row.sky { border-color: rgba(56, 189, 248, 0.45); }
-    .record-score-row.amber { border-color: rgba(245, 158, 11, 0.45); }
-    .record-score-row.red { border-color: rgba(239, 68, 68, 0.45); }
-
-    .record-row-left {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    .record-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-    }
-
-    .record-best-val {
-      font-family: var(--font-mono);
-      font-size: 0.84rem;
-      font-weight: 800;
-      color: #FFD600;
-    }
-
-    /* Multiplayer Records View inside Phone */
-    .mp-records-box {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .mp-records-box.active {
-      display: flex;
-    }
-
-    .mp-survival-card {
-      background: #0F172A;
-      border: 1px solid var(--accent-sky);
-      border-radius: 12px;
-      padding: 12px;
-    }
-
-    .mp-survival-label {
-      font-size: 0.68rem;
-      color: var(--text-muted);
-    }
-
-    .mp-survival-val {
-      font-size: 1rem;
-      font-weight: 800;
-      color: #FFD600;
-    }
-
-    .mp-wins-card {
-      background: #0F172A;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .mp-win-row {
-      background: #1E293B;
-      border-radius: 8px;
-      padding: 7px 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 0.74rem;
-      font-weight: 600;
-    }
-
-    .mp-win-row span:last-child {
-      color: var(--accent-cyan);
-      font-weight: 800;
-    }
-
-    /* Phone Bottom Navigation Bar */
-    .phone-bottom-nav {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      background: #0B132B;
-      border: 1px solid #1E293B;
-      border-radius: 18px;
-      padding: 5px;
-      flex-shrink: 0;
-    }
-
-    .phone-nav-item {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      padding: 4px 8px;
-      border-radius: 12px;
-      font-size: 0.69rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.16s ease;
-    }
-
-    .phone-nav-item.active {
-      color: var(--accent-cyan);
-      background: rgba(0, 229, 255, 0.12);
-    }
-
-    /* ==========================================================================
-       9. MARKETING SECTIONS & SHARED HEADINGS
-       ========================================================================== */
-    .section {
-      padding: 80px 0;
-      border-top: 1px solid rgba(51, 65, 85, 0.45);
-    }
-
-    .section-header {
-      text-align: center;
-      max-width: 700px;
-      margin: 0 auto 48px;
-    }
-
-    .section-tag {
-      display: inline-block;
-      font-size: 0.76rem;
-      font-weight: 800;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--accent-cyan);
-      margin-bottom: 10px;
-    }
-
-    .section-title {
-      font-size: clamp(1.85rem, 3.5vw, 2.5rem);
-      font-weight: 800;
-      color: var(--text-primary);
-      margin-bottom: 12px;
-      line-height: 1.2;
-    }
-
-    .section-subtitle {
-      font-size: 1.02rem;
-      color: var(--text-muted);
-    }
-
-    /* Hall of Fame Showcase Section (Rivalry + Records) */
-    .hof-showcase-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 28px;
-    }
-
-    .hof-panel {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 22px;
-      padding: 32px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-    }
-
-    .hof-panel:hover {
-      transform: translateY(-4px);
-      border-color: rgba(0, 229, 255, 0.5);
-      box-shadow: 0 20px 42px -14px rgba(0, 0, 0, 0.6), 0 0 28px rgba(0, 229, 255, 0.12);
-    }
-
-    .hof-panel.emerald:hover {
-      border-color: rgba(16, 185, 129, 0.55);
-      box-shadow: 0 20px 42px -14px rgba(0, 0, 0, 0.6), 0 0 28px rgba(16, 185, 129, 0.14);
-    }
-
-    .hof-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.74rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 4px 11px;
-      border-radius: 999px;
-      background: rgba(0, 229, 255, 0.12);
-      color: var(--accent-cyan);
-      border: 1px solid rgba(0, 229, 255, 0.35);
-      margin-bottom: 16px;
-      width: fit-content;
-    }
-
-    .hof-panel.emerald .hof-badge {
-      background: rgba(16, 185, 129, 0.14);
-      color: var(--accent-emerald);
-      border-color: rgba(16, 185, 129, 0.4);
-    }
-
-    .hof-title {
-      font-size: 1.45rem;
-      font-weight: 800;
-      margin-bottom: 10px;
-      color: var(--text-primary);
-    }
-
-    .hof-desc {
-      font-size: 0.96rem;
-      color: var(--text-muted);
-      margin-bottom: 22px;
-    }
-
-    .hof-bullet-list {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .hof-bullet-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      font-size: 0.92rem;
-      color: var(--text-secondary);
-      background: rgba(15, 23, 42, 0.65);
-      border: 1px solid rgba(51, 65, 85, 0.7);
-      border-radius: 12px;
-      padding: 11px 14px;
-    }
-
-    .hof-bullet-item strong {
-      color: var(--text-primary);
-    }
-
-    .hof-bullet-dot {
-      color: var(--accent-cyan);
-      font-weight: 900;
-      flex-shrink: 0;
-    }
-
-    .hof-panel.emerald .hof-bullet-dot {
-      color: var(--accent-emerald);
-    }
-
-    /* Multi-Grid Explorer (2x2 to 5x4) & Pass-and-Play Standings */
-    .modes-explorer-grid {
-      display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
-      gap: 28px;
-      align-items: stretch;
-    }
-
-    .explorer-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 22px;
-      padding: 30px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-
-    .grid-switcher-tabs {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      margin-bottom: 20px;
-    }
-
-    .grid-switch-btn {
-      background: #0F172A;
-      border: 1px solid #334155;
-      color: var(--text-muted);
-      padding: 10px 8px;
-      border-radius: 12px;
-      font-size: 0.84rem;
-      font-weight: 800;
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-
-    .grid-switch-btn:hover {
-      color: var(--text-primary);
-      border-color: var(--accent-sky);
-    }
-
-    .grid-switch-btn.active {
-      background: rgba(0, 229, 255, 0.16);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-      box-shadow: 0 0 16px rgba(0, 229, 255, 0.22);
-    }
-
-    .grid-preview-stage {
-      background: #0F172A;
-      border: 1px solid #334155;
-      border-radius: 18px;
-      padding: 20px;
-      min-height: 250px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
-    }
-
-    .mini-board-preview {
-      display: none;
-      gap: 8px;
-      width: 100%;
-      max-width: 240px;
-      margin: 0 auto;
-    }
-
-    .mini-board-preview.active {
-      display: grid;
-    }
-
-    .mini-board-preview.g-2x2 { grid-template-columns: repeat(2, 1fr); max-width: 180px; }
-    .mini-board-preview.g-3x3 { grid-template-columns: repeat(3, 1fr); max-width: 210px; }
-    .mini-board-preview.g-4x4 { grid-template-columns: repeat(4, 1fr); max-width: 230px; }
-    .mini-board-preview.g-5x4 { grid-template-columns: repeat(4, 1fr); max-width: 200px; }
-
-    .mini-tile {
-      aspect-ratio: 1 / 1;
-      border-radius: 10px;
-      background: rgba(30, 41, 59, 0.9);
-      border: 1.5px solid var(--accent-cyan);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.95rem;
-      font-weight: 800;
-      color: var(--text-primary);
-      box-shadow: inset 0 0 10px rgba(0, 229, 255, 0.18);
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    .mini-tile:hover {
-      transform: scale(1.08);
-      box-shadow: 0 0 14px rgba(0, 229, 255, 0.55);
-    }
-
-    .mini-tile.c1 { border-color: #10B981; color: #34D399; }
-    .mini-tile.c2 { border-color: #EF4444; color: #F87171; }
-    .mini-tile.c3 { border-color: #F59E0B; color: #FBBF24; }
-    .mini-tile.c4 { border-color: #3B82F6; color: #60A5FA; }
-    .mini-tile.c5 { border-color: #00E5FF; color: #00E5FF; }
-    .mini-tile.c6 { border-color: #A855F7; color: #C084FC; }
-
-    .grid-meta-caption {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 0.86rem;
-      color: var(--text-secondary);
-      background: rgba(15, 23, 42, 0.65);
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 10px 14px;
-      gap: 10px;
-    }
-
-    .grid-meta-caption strong {
-      color: var(--accent-cyan);
-    }
-
-    .standings-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin: 18px 0;
-    }
-
-    .standing-row {
-      background: #0F172A;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 10px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .standing-row.winner {
-      border-color: rgba(251, 191, 36, 0.6);
-      background: rgba(251, 191, 36, 0.07);
-    }
-
-    .standing-left {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 0.9rem;
-      font-weight: 700;
-    }
-
-    .player-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-
-    .standing-rounds {
-      font-family: var(--font-mono);
-      font-size: 0.84rem;
-      font-weight: 800;
-      color: var(--accent-cyan);
-    }
-
-    /* ==========================================================================
-       10. PURE-DISPLAY CHALLENGE CODE ANATOMY INSPECTOR
-       Strictly hover/tap display — zero text input, zero validation logic
-       ========================================================================== */
-    .anatomy-shell {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 24px;
-      padding: 36px 28px;
-      max-width: 920px;
-      margin: 0 auto;
-      box-shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.6);
-    }
-
-    .code-segments-bar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      background: var(--bg-deep);
-      border: 1px solid #334155;
-      border-radius: 16px;
-      padding: 18px 16px;
-      margin-bottom: 24px;
-    }
-
-    .code-seg-btn {
-      font-family: var(--font-mono);
-      font-size: clamp(0.95rem, 2vw, 1.25rem);
-      font-weight: 800;
-      padding: 8px 14px;
-      border-radius: 10px;
-      background: #1E293B;
-      border: 1.5px solid #334155;
-      color: var(--text-primary);
-      cursor: pointer;
-      transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
-    }
-
-    .code-seg-btn:hover,
-    .code-seg-btn.active {
-      transform: translateY(-2px);
-      background: rgba(0, 229, 255, 0.16);
-      border-color: var(--accent-cyan);
-      color: var(--accent-cyan);
-      box-shadow: 0 0 18px rgba(0, 229, 255, 0.32);
-    }
-
-    .code-seg-hyphen {
-      font-family: var(--font-mono);
-      font-size: 1.2rem;
-      font-weight: 800;
-      color: #64748B;
-      user-select: none;
-    }
-
-    .segment-detail-card {
-      background: #0F172A;
-      border: 1px solid rgba(0, 229, 255, 0.45);
-      border-radius: 16px;
-      padding: 22px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      text-align: center;
-    }
-
-    .segment-detail-tag {
-      font-size: 0.74rem;
-      font-weight: 800;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--accent-emerald);
-    }
-
-    .segment-detail-title {
-      font-size: 1.22rem;
-      font-weight: 800;
-      color: var(--text-primary);
-    }
-
-    .segment-detail-desc {
-      font-size: 0.96rem;
-      color: var(--text-secondary);
-      max-width: 640px;
-      margin: 0 auto;
-    }
-
-    /* ==========================================================================
-       11. FEATURES GRID (4 CARDS) & 4-STEP RIVALRY LOOP
-       ========================================================================== */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 24px;
-    }
-
-    .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 20px;
-      padding: 30px;
-      transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
-    }
-
-    .feature-card:hover {
-      transform: translateY(-5px);
-      background: var(--bg-card-hover);
-      border-color: rgba(0, 229, 255, 0.55);
-      box-shadow: 0 18px 38px -12px rgba(0, 0, 0, 0.55), 0 0 24px rgba(0, 229, 255, 0.14);
-    }
-
-    .feature-card.emerald-accent:hover {
-      border-color: rgba(16, 185, 129, 0.6);
-      box-shadow: 0 18px 38px -12px rgba(0, 0, 0, 0.55), 0 0 24px rgba(16, 185, 129, 0.16);
-    }
-
-    .feature-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 14px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 18px;
-      background: rgba(0, 229, 255, 0.12);
-      border: 1px solid rgba(0, 229, 255, 0.35);
-      color: var(--accent-cyan);
-    }
-
-    .feature-card.emerald-accent .feature-icon {
-      background: rgba(16, 185, 129, 0.14);
-      border-color: rgba(16, 185, 129, 0.4);
-      color: var(--accent-emerald);
-    }
-
-    .feature-title {
-      font-size: 1.25rem;
-      font-weight: 800;
-      color: var(--text-primary);
-      margin-bottom: 10px;
-    }
-
-    .feature-desc {
-      font-size: 0.96rem;
-      color: var(--text-muted);
-      line-height: 1.65;
-    }
-
-    .steps-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 20px;
-    }
-
-    .step-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: 18px;
-      padding: 24px 20px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-    }
-
-    .step-card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(0, 229, 255, 0.5);
-      box-shadow: 0 14px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 229, 255, 0.1);
-    }
-
-    .step-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .step-badge {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 800;
-      font-size: 0.92rem;
-      flex-shrink: 0;
-    }
-
-    .step-1 .step-badge { background: rgba(0, 229, 255, 0.18); color: var(--accent-cyan); border: 1px solid rgba(0, 229, 255, 0.45); }
-    .step-2 .step-badge { background: rgba(56, 189, 248, 0.18); color: var(--accent-sky); border: 1px solid rgba(56, 189, 248, 0.45); }
-    .step-3 .step-badge { background: rgba(16, 185, 129, 0.18); color: var(--accent-emerald); border: 1px solid rgba(16, 185, 129, 0.45); }
-    .step-4 .step-badge { background: rgba(245, 158, 11, 0.18); color: var(--accent-amber); border: 1px solid rgba(245, 158, 11, 0.45); }
-
-    .step-title {
-      font-size: 1.08rem;
-      font-weight: 800;
-      color: var(--text-primary);
-    }
-
-    .step-desc {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      margin-bottom: 16px;
-      line-height: 1.55;
-    }
-
-    .step-code-tag {
-      font-family: var(--font-mono);
-      font-size: 0.74rem;
-      font-weight: 700;
-      padding: 7px 10px;
-      border-radius: 8px;
-      background: var(--bg-deep);
-      border: 1px solid rgba(51, 65, 85, 0.85);
-      text-align: center;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .step-1 .step-code-tag { color: var(--accent-cyan); }
-    .step-2 .step-code-tag { color: var(--accent-sky); }
-    .step-3 .step-code-tag { color: var(--accent-emerald); }
-    .step-4 .step-code-tag { color: var(--accent-amber); }
-
-    /* Footer */
-    .site-footer {
-      border-top: 1px solid rgba(51, 65, 85, 0.65);
-      padding: 36px 0;
-      background: rgba(11, 19, 43, 0.65);
-    }
-
-    .footer-inner {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      font-size: 0.92rem;
-      color: var(--text-muted);
-    }
-
-    .footer-links {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-    }
-
-    .footer-link {
-      color: var(--text-secondary);
-      font-weight: 600;
-      transition: color 0.2s ease, text-shadow 0.2s ease;
-    }
-
-    .footer-link:hover {
-      color: var(--accent-cyan);
-      text-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
-    }
-
-    /* ==========================================================================
-       12. RESPONSIVE BREAKPOINTS (LAPTOP, TABLET, LANDSCAPE, PHONE, FOLD)
-       ========================================================================== */
-    @media (min-width: 961px) and (max-width: 1140px) {
-      .hero-grid {
-        gap: 32px;
-      }
-
-      .section {
-        padding: 64px 0;
-      }
-    }
-
-    @media (max-width: 960px), (orientation: landscape) and (max-height: 500px) {
-      .nav-links {
-        gap: 14px;
-      }
-
-      .nav-link {
-        font-size: 0.85rem;
-      }
-
-      .hero-grid,
-      .hof-showcase-grid,
-      .modes-explorer-grid {
-        grid-template-columns: 1fr;
-        gap: 36px;
-      }
-
-      .hero-copy {
-        text-align: center;
-      }
-
-      .hero-description {
-        margin-left: auto;
-        margin-right: auto;
-      }
-
-      .cta-group,
-      .tour-prompt-box {
-        justify-content: center;
-      }
-
-      .steps-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    @media (max-width: 640px) {
-      .hero {
-        padding: 36px 0 54px;
-      }
-
-      .features-grid,
-      .steps-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .cta-group {
-        flex-direction: column;
-        width: 100%;
-      }
-
-      .btn {
-        width: 100%;
-      }
-
-      .footer-inner {
-        flex-direction: column;
-        text-align: center;
-      }
-    }
-
-    @media (max-width: 420px) {
-      .sim-mode-track,
-      .records-grid-row,
-      .grid-switcher-tabs {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .code-seg-btn {
-        font-size: 0.85rem;
-        padding: 6px 10px;
-      }
-
-      .phone-simulator {
-        max-width: 360px;
-      }
-    }
-
-    @media (max-width: 360px) {
-      .tour-prompt-box {
-        display: none;
-      }
-
-      .grid-meta-caption span:last-child {
-        display: none;
-      }
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GlowBack — an offline neon memory duel</title>
+<meta name="description" content="GlowBack is a 100% offline neon sequence-memory game for Android. Beat your own best, then challenge a friend with a deterministic text code — no accounts, no servers, no ads." />
+<meta name="theme-color" content="#05080F" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#05080F;
+    --ink-2:#080D1A;
+    --panel:#0E1527;
+    --panel-2:#121B33;
+    --screen:#0B1222;
+    --line: rgba(148,163,184,0.14);
+    --line-strong: rgba(148,163,184,0.26);
+    --paper:#F4F7FB;
+    --dim:#8DA0BE;
+    --dim-2:#5E7094;
+    --green:#10B981;   --green-glow:#6EE7B7;
+    --red:#EF4444;     --red-glow:#FCA5A5;
+    --amber:#F59E0B;   --amber-glow:#FDE68A;
+    --blue:#3B82F6;    --blue-glow:#93C5FD;
+    --violet:#8B5CF6;
+    --font-display:'Space Grotesk', system-ui, sans-serif;
+    --font-body:'Inter', system-ui, sans-serif;
+    --font-mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+  }
+
+  *{ box-sizing: border-box; }
+  html{ background: var(--ink); scroll-behavior: smooth; }
+  body{
+    margin:0;
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 900px 500px at 18% -8%, rgba(16,185,129,0.10), transparent 60%),
+      radial-gradient(ellipse 900px 600px at 86% 6%, rgba(59,130,246,0.09), transparent 60%),
+      radial-gradient(ellipse 1000px 700px at 50% 100%, rgba(245,158,11,0.05), transparent 60%);
+    color: var(--paper);
+    font-family: var(--font-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a{ color: inherit; }
+  img,svg{ display:block; max-width:100%; }
+  button{ font-family: inherit; cursor:pointer; }
+  :focus-visible{ outline: 2px solid var(--blue-glow); outline-offset: 3px; border-radius: 4px; }
+
+  .wrap{ width:100%; max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+  section{ padding: 108px 0; }
+  @media (max-width: 760px){ section{ padding: 72px 0; } .wrap{ padding: 0 20px; } }
+
+  h1,h2,h3{ font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; margin:0; }
+  .eyebrow{ font: 500 14px/1 var(--font-body); color: var(--dim); margin: 0 0 14px; }
+  code, .code{ font-family: var(--font-mono); }
+
+  /* ---------- header ---------- */
+  header{
+    position: sticky; top:0; z-index: 50;
+    background: rgba(5,8,15,0.78);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav{ display:flex; align-items:center; justify-content:space-between; gap:20px; padding: 16px 0; flex-wrap: wrap; }
+  .wordmark{ display:flex; align-items:center; gap:10px; font-family: var(--font-display); font-weight:700; font-size: 20px; text-decoration:none; }
+  .wordmark .dot{ width:10px; height:10px; border-radius: 3px; background: var(--green); box-shadow: 0 0 14px 2px var(--green); }
+  .wordmark .dot2{ background: var(--blue); box-shadow: 0 0 14px 2px var(--blue); }
+  .navlinks{ display:flex; gap: 30px; list-style:none; margin:0; padding:0; }
+  .navlinks a{ text-decoration:none; color: var(--dim); font-size: 15px; font-weight: 500; transition: color .15s; }
+  .navlinks a:hover{ color: var(--paper); }
+  .navcta{ display:flex; gap:12px; align-items:center; }
+  @media (max-width: 720px){ .navlinks{ display:none; } }
+
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    padding: 11px 20px; border-radius: 10px; font-weight: 600; font-size: 14.5px;
+    border: 1px solid transparent; text-decoration:none; white-space:nowrap;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:active{ transform: translateY(1px); }
+  .btn-primary{ background: var(--paper); color: var(--ink); }
+  .btn-primary:hover{ background: #fff; }
+  .btn-ghost{ color: var(--paper); border-color: var(--line-strong); background: rgba(255,255,255,0.02); }
+  .btn-ghost:hover{ border-color: var(--dim); background: rgba(255,255,255,0.05); }
+  .btn-sm{ padding: 8px 14px; font-size: 13px; border-radius: 8px; }
+
+  /* ---------- hero ---------- */
+  .hero{ padding-top: 86px; padding-bottom: 40px; text-align:center; }
+  .hero h1{ font-size: clamp(40px, 6.4vw, 72px); line-height: 1.04; max-width: 820px; margin: 0 auto; }
+  .hero p.lede{ max-width: 540px; margin: 22px auto 0; color: var(--dim); font-size: 18px; }
+  .hero .ctas{ display:flex; gap: 14px; justify-content:center; margin-top: 34px; flex-wrap: wrap; }
+
+  .pill-row{ display:flex; gap:10px; justify-content:center; margin-top: 30px; flex-wrap:wrap; }
+  .pill{ font-size: 13px; color: var(--dim-2); border:1px solid var(--line); padding: 6px 13px; border-radius: 999px; }
+
+  /* ---------- live demo grid ---------- */
+  .demo-stage{ margin: 56px auto 0; max-width: 360px; display:flex; flex-direction:column; align-items:center; gap:18px; }
+  .pad-grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; width: 280px; }
+  .pad{
+    position:relative; aspect-ratio: 1; border-radius: 22px;
+    background: var(--panel); border: 1px solid var(--line-strong);
+    display:flex; align-items:center; justify-content:center;
+    transition: background .18s ease, box-shadow .18s ease, border-color .18s ease, transform .1s ease;
+  }
+  .pad:active{ transform: scale(0.96); }
+  .pad svg{ width: 38%; height: 38%; opacity: 0.85; }
+  .pad.lit{ border-color: transparent; }
+  .pad.lit.c0{ background: var(--green); box-shadow: 0 0 36px 6px var(--green-glow); }
+  .pad.lit.c1{ background: var(--red); box-shadow: 0 0 36px 6px var(--red-glow); }
+  .pad.lit.c2{ background: var(--amber); box-shadow: 0 0 36px 6px var(--amber-glow); }
+  .pad.lit.c3{ background: var(--blue); box-shadow: 0 0 36px 6px var(--blue-glow); }
+  .demo-caption{ font-size: 13.5px; color: var(--dim-2); min-height: 18px; }
+
+  /* ---------- section headers ---------- */
+  .section-head{ max-width: 620px; margin-bottom: 56px; }
+  .section-head.center{ margin-left:auto; margin-right:auto; text-align:center; }
+  .section-head h2{ font-size: clamp(28px, 3.6vw, 40px); }
+  .section-head p{ color: var(--dim); font-size: 16.5px; margin-top: 14px; }
+
+  /* ---------- how it works (genuine sequence) ---------- */
+  .flow{ display:grid; grid-template-columns: 340px 1fr; gap: 56px; align-items: start; }
+  @media (max-width: 920px){ .flow{ grid-template-columns: 1fr; gap: 28px; } }
+
+  .steps{ display:flex; flex-direction:column; border-left: 1px solid var(--line); }
+  .step{
+    text-align:left; background:none; border:none; color: inherit; padding: 16px 0 16px 24px;
+    position: relative; border-bottom: none;
+  }
+  .step::before{
+    content: attr(data-n); position:absolute; left:-13px; top: 16px;
+    width: 26px; height:26px; border-radius:50%; background: var(--ink);
+    border: 1px solid var(--line-strong); color: var(--dim);
+    font: 600 12px/26px var(--font-display); text-align:center;
+    transition: all .18s ease;
+  }
+  .step h3{ font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--dim); transition: color .18s ease; }
+  .step p{ font-size: 14px; color: var(--dim-2); margin:0; max-height:0; overflow:hidden; transition: max-height .2s ease; }
+  .step.active{ }
+  .step.active::before{ background: var(--green); border-color: var(--green); color: var(--ink); box-shadow: 0 0 14px 1px var(--green-glow); }
+  .step.active h3{ color: var(--paper); }
+  .step.active p{ max-height: 60px; margin-top:6px; }
+  @media (max-width: 920px){
+    .steps{ border-left:none; flex-direction:row; flex-wrap:wrap; gap:8px; }
+    .step{ padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; }
+    .step::before{ display:none; }
+    .step p{ display:none; }
+    .step.active{ border-color: var(--green); background: rgba(16,185,129,0.08); }
+  }
+
+  /* ---------- phone mock ---------- */
+  .phone-frame{
+    width: 280px; margin: 0 auto; border-radius: 34px; padding: 10px;
+    background: linear-gradient(160deg, #1b2440, #0a0f1c);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.6);
+  }
+  .phone-screen{
+    position:relative; width:100%; aspect-ratio: 9/18.5; border-radius: 24px; overflow:hidden;
+    background: var(--screen); border: 1px solid rgba(255,255,255,0.06);
+  }
+  .screen{ position:absolute; inset:0; display:none; flex-direction:column; padding: 20px 16px 16px; }
+  .screen.active{ display:flex; }
+  .sbar{ font-size: 11px; color: var(--dim-2); text-align:center; margin-bottom: 14px; letter-spacing: .02em; }
+  .scr-title{ font-family: var(--font-display); font-size: 15px; font-weight:600; margin-bottom: 4px; }
+  .scr-sub{ font-size: 11.5px; color: var(--dim); margin-bottom: 14px; }
+  .mini-grid{ display:grid; gap:7px; margin: 6px 0 14px; }
+  .mini-pad{ border-radius: 9px; aspect-ratio:1; }
+  .chip-row{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom: 10px; }
+  .chip{ font-size: 10.5px; padding: 5px 10px; border-radius:999px; border:1px solid var(--line-strong); color: var(--dim); }
+  .chip.on{ background: rgba(16,185,129,0.16); border-color: var(--green); color: #B4F3DA; }
+  .scr-btn{ margin-top:auto; text-align:center; font-size: 12.5px; font-weight:600; padding: 10px; border-radius: 10px; background: var(--paper); color: var(--ink); }
+  .scr-btn.outline{ background:none; border: 1px solid var(--line-strong); color: var(--paper); }
+  .code-box{ font-family: var(--font-mono); font-size: 10.5px; background: var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:10px; line-height:1.9; word-break:break-all; margin-bottom:10px; }
+  .code-box b{ color: var(--green); }
+  .code-box .r{ color: var(--blue); }
+  .seg-label{ font-size: 9.5px; color: var(--dim-2); margin-bottom: 14px; }
+  .rival-row{ display:flex; justify-content:space-between; align-items:center; font-size:12px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+  .rival-row .score{ font-family: var(--font-mono); color: var(--green); }
+  .result-badge{ align-self:center; font-size: 11px; font-weight:700; letter-spacing:.03em; padding: 5px 14px; border-radius: 999px; margin: 4px 0 10px; }
+  .result-badge.win{ background: rgba(16,185,129,0.18); color:#8CF0C4; border:1px solid var(--green); }
+  .result-badge.tie{ background: rgba(59,130,246,0.18); color:#AFD1FF; border:1px solid var(--blue); }
+  .big-score{ font-family: var(--font-display); font-size: 40px; text-align:center; margin: 4px 0 2px; }
+  .big-score span{ font-size: 16px; color: var(--dim); }
+  .countdown{ font-family: var(--font-display); font-size: 52px; text-align:center; color: var(--amber); margin: 20px 0; }
+  .grid-sizes{ display:grid; grid-template-columns: repeat(2,1fr); gap:10px; }
+  .gs-card{ border:1px solid var(--line-strong); border-radius:12px; padding:10px; text-align:center; }
+  .gs-card.sel{ border-color: var(--green); background: rgba(16,185,129,0.08); }
+  .gs-card .lbl{ font-size:11px; font-weight:600; margin-top:6px; }
+  .tiny-grid{ display:grid; gap:3px; margin: 0 auto; }
+  .tiny-pad{ aspect-ratio:1; border-radius:3px; }
+
+  /* ---------- feature bento ---------- */
+  .bento{ display:grid; grid-template-columns: repeat(6, 1fr); gap: 18px; }
+  .bento .card{ grid-column: span 2; background: var(--panel); border:1px solid var(--line); border-radius: 18px; padding: 26px; }
+  .bento .card.wide{ grid-column: span 3; }
+  .bento .card.tall{ grid-row: span 2; }
+  @media (max-width: 920px){ .bento{ grid-template-columns: repeat(2,1fr);} .bento .card, .bento .card.wide{ grid-column: span 2; } }
+  .card h3{ font-size: 17px; margin-bottom: 8px; }
+  .card p{ font-size: 14.5px; color: var(--dim); margin:0; }
+  .icon-tile{ width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
+  .icon-tile svg{ width:20px; height:20px; }
+
+  /* ---------- code spec ---------- */
+  .spec{ background: var(--panel); border:1px solid var(--line); border-radius: 20px; padding: 36px; }
+  .spec-code{ font-family: var(--font-mono); font-size: clamp(13px, 2.4vw, 19px); display:flex; flex-wrap:wrap; gap: 4px 0; justify-content:center; padding: 18px 0; }
+  .spec-code span{ padding: 4px 2px; border-radius: 4px; }
+  .spec-legend{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-top: 22px; }
+  .spec-legend .item{ font-size: 13px; color: var(--dim); border-top: 2px solid var(--line-strong); padding-top:8px; }
+  .spec-legend .item b{ display:block; color: var(--paper); font-size: 13px; margin-bottom:2px; }
+
+  /* ---------- privacy band ---------- */
+  .privacy{ background: var(--panel); border:1px solid var(--line); border-radius: 22px; padding: 48px; text-align:center; }
+  .privacy-grid{ display:grid; grid-template-columns: repeat(3,1fr); gap: 28px; margin-top: 30px; text-align:left; }
+  @media (max-width:760px){ .privacy-grid{ grid-template-columns:1fr; } .privacy{padding:30px;} }
+  .privacy-grid .row{ font-size: 14.5px; color: var(--dim); }
+  .privacy-grid .row b{ color: var(--paper); display:block; font-size:14.5px; margin-bottom:3px; }
+
+  /* ---------- cta / footer ---------- */
+  .cta-band{ text-align:center; }
+  .cta-band h2{ font-size: clamp(28px,4vw,42px); max-width: 560px; margin: 0 auto 16px; }
+  .cta-band p{ color: var(--dim); max-width: 480px; margin: 0 auto 30px; }
+  footer{ border-top: 1px solid var(--line); padding: 44px 0; }
+  .foot-row{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:18px; }
+  .foot-links{ display:flex; gap: 22px; list-style:none; padding:0; margin:0; }
+  .foot-links a{ color: var(--dim); text-decoration:none; font-size: 14px; }
+  .foot-links a:hover{ color: var(--paper); }
+  .foot-note{ color: var(--dim-2); font-size: 13px; margin-top: 18px; }
+</style>
 </head>
 <body>
 
-  <!-- ==========================================================================
-       STICKY HEADER
-       ========================================================================== -->
-  <header class="site-header">
-    <div class="container header-inner">
-      <a href="#" class="brand-logo" aria-label="Glowback Home">
-        <span class="brand-dots" aria-hidden="true">
-          <span class="brand-dot emerald"></span>
-          <span class="brand-dot red"></span>
-        </span>
-        <span>GLOWBACK</span>
-      </a>
-      <nav class="nav-links" aria-label="Primary Navigation">
-        <a href="#hall-of-fame" class="nav-link">Rivalry &amp; Records</a>
-        <a href="#grids-and-modes" class="nav-link">Grids &amp; Modes</a>
-        <a href="#code-anatomy" class="nav-link">Code Anatomy</a>
-        <a href="#features" class="nav-link">Features</a>
-        <a href="#how-to-play" class="nav-link">How to Play</a>
-      </nav>
+<header>
+  <div class="wrap nav">
+    <a class="wordmark" href="#top"><span class="dot"></span><span class="dot dot2"></span>GlowBack</a>
+    <ul class="navlinks">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#codes">Challenge codes</a></li>
+      <li><a href="#privacy">Privacy</a></li>
+    </ul>
+    <div class="navcta">
+      <a class="btn btn-ghost btn-sm" href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">Source</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download APK</a>
     </div>
-  </header>
+  </div>
+</header>
 
-  <main>
-    <!-- ========================================================================
-         HERO SECTION + FIXED-HEIGHT INTERACTIVE PHONE SIMULATOR
-         ======================================================================== -->
-    <section class="hero">
-      <div class="container hero-grid">
-        <div class="hero-copy">
-          <div class="eyebrow-pill">
-            <span class="eyebrow-dot"></span>
-            <span>100% Offline &middot; Zero Ads &middot; Android</span>
-          </div>
-          <h1 class="hero-title">GLOWBACK</h1>
-          <p class="hero-tagline">
-            The Offline, Cheat-Proof <span>Memory Rivalry Game.</span>
-          </p>
-          <p class="hero-description">
-            Watch the glow. Send it back. Master expanding neon sequences across 4 grid sizes, battle friends asynchronously with tamper-proof challenge codes, and track head-to-head rivalries — zero accounts, zero servers, and zero ads.
-          </p>
+<main id="top">
 
-          <div class="cta-group">
-            <a
-              href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/latest"
-              class="btn btn-primary"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              <span>Download APK</span>
-            </a>
-            <button
-              type="button"
-              class="btn btn-demo"
-              id="play-demo-btn"
-              aria-label="Play Guided Demo"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M5 3.86v16.28c0 .85.95 1.36 1.66.89l12.44-8.14a1.06 1.06 0 0 0 0-1.78L6.66 2.97A1.06 1.06 0 0 0 5 3.86z" />
-              </svg>
-              <span>Play Demo</span>
-            </button>
-            <a
-              href="#how-to-play"
-              class="btn btn-secondary"
-              aria-label="Coming to Google Play"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M5 3.86v16.28c0 .85.95 1.36 1.66.89l12.44-8.14a1.06 1.06 0 0 0 0-1.78L6.66 2.97A1.06 1.06 0 0 0 5 3.86z" />
-              </svg>
-              <span>Coming to Google Play</span>
-            </a>
-          </div>
-        </div>
+  <!-- ============ HERO ============ -->
+  <section class="hero wrap">
+    <p class="eyebrow">A neon sequence-memory game for Android</p>
+    <h1>Watch the glow.<br>Send it back.</h1>
+    <p class="lede">Memorize an expanding pattern of light and sound, then challenge a friend to beat it — using nothing but a short text code. No accounts, no internet connection, no server in between.</p>
+    <div class="ctas">
+      <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
+      <a class="btn btn-ghost" href="#how">See how a duel works</a>
+    </div>
+    <div class="pill-row">
+      <span class="pill">Zero network permission</span>
+      <span class="pill">No accounts</span>
+      <span class="pill">Open source, MIT</span>
+    </div>
 
-        <!-- Right Column: Quick Tab Switcher + Fixed-Height Phone Simulator -->
-        <div class="hero-visual-col">
-          <div class="tour-prompt-box">
-            <div class="tour-pill-group">
-              <button type="button" class="tour-pill-btn active" data-jump-tab="home">&#127968; Home Board</button>
-              <button type="button" class="tour-pill-btn" data-jump-tab="rivalry">&#9876;&#65039; Rivalry Hub</button>
-              <button type="button" class="tour-pill-btn" data-jump-tab="records">&#127942; Records &amp; Scores</button>
-            </div>
-          </div>
-
-          <div class="phone-simulator" id="phone-simulator" aria-label="Interactive Glowback App Preview">
-            <!-- Fixed 515px Screen Container: snug fit, zero dead gap -->
-            <div class="phone-screen-area" id="phone-screen-area">
-              <!-- Cinematic Demo Overlays (position: absolute -> zero layout shift) -->
-              <div class="demo-progress-track" id="demo-progress-track" aria-hidden="true">
-                <div class="demo-progress-fill" id="demo-progress-fill"></div>
-              </div>
-              <button type="button" class="demo-close-btn" id="demo-close-btn" aria-label="Close Demo">
-                &#10005; Close
-              </button>
-              <div class="demo-toast-pill" id="demo-toast-pill" aria-live="polite">
-                &#128640; Shared to chat &#10003;
-              </div>
-              <div class="demo-caption-pill" id="demo-caption-pill" aria-live="polite">
-                <div class="demo-caption-header">
-                  <span class="demo-caption-step" id="demo-caption-step">&#10024; STEP 1 OF 16</span>
-                </div>
-                <span class="demo-caption-text" id="demo-caption-text">Watch the glow. Repeat it. Reach 5.</span>
-              </div>
-              <div class="demo-finale-overlay" id="demo-finale-overlay" aria-hidden="true">
-                <div class="demo-finale-dots">
-                  <span class="brand-dot emerald"></span>
-                  <span class="brand-dot red"></span>
-                </div>
-                <div class="demo-finale-quote">Watch the glow.<br />Send it back.</div>
-              </div>
-
-              <!-- Top App Bar -->
-              <div class="phone-top-bar">
-                <div class="phone-app-title" id="phone-header-title">
-                  <span class="brand-dots" aria-hidden="true">
-                    <span class="brand-dot emerald"></span>
-                    <span class="brand-dot red"></span>
-                  </span>
-                  <span>GLOWBACK</span>
-                </div>
-                <div class="phone-top-icons" aria-hidden="true">
-                  <span class="icon-circle-btn">&#128266;</span>
-                  <span class="icon-circle-btn">&#9881;</span>
-                </div>
-              </div>
-
-              <!-- SCREEN 1: HOME VIEW -->
-              <div class="phone-screen-view active" id="sim-view-home">
-                <div class="sim-mode-track" id="home-mode-track">
-                  <button type="button" class="sim-mode-btn active" data-home-mode="SOLO">SOLO</button>
-                  <button type="button" class="sim-mode-btn" data-home-mode="2P">2P</button>
-                  <button type="button" class="sim-mode-btn" data-home-mode="3P">3P</button>
-                  <button type="button" class="sim-mode-btn" data-home-mode="4P">4P</button>
-                </div>
-
-                <div class="sim-context-row">
-                  <div class="sim-board-pill" id="sim-board-pill">
-                    <span>&#8862;</span> 2&times;2 &middot; Classic
-                  </div>
-                  <div class="sim-diff-pill">
-                    <button type="button" class="sim-diff-opt active easy" id="sim-diff-easy" data-diff="easy">Easy</button>
-                    <button type="button" class="sim-diff-opt hard" id="sim-diff-hard" data-diff="hard">Hard</button>
-                  </div>
-                </div>
-
-                <div class="hud-score-row">
-                  <div class="mini-score-card">
-                    <div class="mini-score-label">&#9889; Current Score</div>
-                    <div class="mini-score-val" id="showcase-score">4</div>
-                  </div>
-                  <div class="mini-score-card">
-                    <div class="mini-score-label" id="home-best-label">&#127942; Best (2&times;2)</div>
-                    <div class="mini-score-val gold" id="home-best-score">12</div>
-                  </div>
-                </div>
-
-                <div class="sim-status-banner" id="showcase-status">WATCH SEQUENCE</div>
-
-                <!-- Dynamic Pad Grid: Populated by renderPadGrid(rows, cols) -->
-                <div class="pad-grid" id="simon-pad-grid" data-grid-size="2x2"></div>
-
-                <div class="code-pill-box" id="sim-code-pill-box">
-                  <div class="code-pill-meta">
-                    <span class="code-pill-caption">Live Challenge Seed</span>
-                    <span class="code-pill-value" id="challenge-code-text">2x2-5-T3E-ALEX-DG9A-Q579D-B</span>
-                  </div>
-                  <button type="button" class="copy-code-btn" id="copy-code-btn">Copy Code</button>
-                </div>
-              </div>
-
-              <!-- SCREEN 2: LEADERBOARD (RIVALRY & RECORDS) VIEW -->
-              <div class="phone-screen-view" id="sim-view-leaderboard">
-                <div class="hall-subtabs">
-                  <button type="button" class="hall-subtab-btn active" data-subtab="rivalry">&#9876;&#65039; RIVALRY</button>
-                  <button type="button" class="hall-subtab-btn" data-subtab="records">&#127942; RECORDS</button>
-                </div>
-
-                <!-- SUB-PANE A: RIVALRY TAB -->
-                <div class="hall-pane active" id="pane-rivalry">
-                  <div class="rivalry-top-actions">
-                    <div class="rivalry-action-btn" id="sim-rivalry-share-btn">&#128279; Share to Everyone</div>
-                    <div class="rivalry-action-btn filled" id="sim-rivalry-paste-btn">&#128203; Paste Code</div>
-                  </div>
-
-                  <!-- Rival Card (HERO) -->
-                  <div class="rival-card-sim" id="sim-rival-card">
-                    <div class="rival-card-header">
-                      <div class="rival-name-group">
-                        <span class="rival-avatar">H</span>
-                        <div>
-                          <div class="rival-name-title">HERO</div>
-                        </div>
-                      </div>
-                      <span class="rival-wlt-badge" id="rival-wlt-badge">4W - 2L - 1T</span>
-                    </div>
-
-                    <!-- Clickable Per-Grid Stat Chips -->
-                    <div class="rival-grid-chips" id="rival-chip-group">
-                      <button type="button" class="rival-grid-chip active" data-rival-grid="4x4">4&times;4: 1W - 0L</button>
-                      <button type="button" class="rival-grid-chip" data-rival-grid="3x3">3&times;3: 1W - 1L</button>
-                      <button type="button" class="rival-grid-chip" data-rival-grid="2x2">2&times;2: 2W - 1L</button>
-                    </div>
-
-                    <div class="rival-match-summary" id="rival-match-banner">
-                      <span>Last Duel (4&times;4 Easy)</span>
-                      <strong>WON &middot; You 7 vs Target 6</strong>
-                    </div>
-
-                    <!-- State-Aware Reply Copy Button -->
-                    <button type="button" class="rival-reply-btn" id="rival-reply-btn">
-                      &#128228; Send Reply to HERO (Tap to Copy)
-                    </button>
-                  </div>
-
-                  <!-- Sleeping Score Recommendation Box -->
-                  <div class="rec-mini-card">
-                    <div class="rec-mini-header">
-                      <span class="rec-mini-title">&#127919; Recommendation</span>
-                      <span class="rec-target-badge">Target: 5</span>
-                    </div>
-                    <div class="rec-chip-row">
-                      <span class="rec-chip-pill">4&times;4 Easy &bull; You 8 &#8599;</span>
-                      <span class="rec-chip-pill">3&times;3 Hard &bull; You 6 &#8599;</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- SUB-PANE B: RECORDS & SCORES TAB -->
-                <div class="hall-pane" id="pane-records">
-                  <!-- Mode Selector [SOLO | 2P | 3P | 4P] -->
-                  <div class="sim-mode-track" id="records-mode-track">
-                    <button type="button" class="sim-mode-btn active" data-rec-mode="SOLO">SOLO</button>
-                    <button type="button" class="sim-mode-btn" data-rec-mode="2P">2P</button>
-                    <button type="button" class="sim-mode-btn" data-rec-mode="3P">3P</button>
-                    <button type="button" class="sim-mode-btn" data-rec-mode="4P">4P</button>
-                  </div>
-
-                  <!-- SOLO RECORDS STACK -->
-                  <div id="records-solo-box">
-                    <div class="records-grid-row" id="records-grid-chips">
-                      <button type="button" class="records-grid-btn active" data-rec-grid="2x2">2&times;2</button>
-                      <button type="button" class="records-grid-btn" data-rec-grid="3x3">3&times;3</button>
-                      <button type="button" class="records-grid-btn" data-rec-grid="4x4">4&times;4</button>
-                      <button type="button" class="records-grid-btn" data-rec-grid="5x4">5&times;4</button>
-                    </div>
-
-                    <div class="record-cards-stack">
-                      <div class="record-score-row green" id="sim-record-row-ec">
-                        <span class="record-row-left">
-                          <span class="record-dot" style="background:#00E676;"></span>
-                          Easy &middot; Classic
-                        </span>
-                        <span class="record-best-val" id="rec-val-ec">Best: 12</span>
-                      </div>
-                      <div class="record-score-row sky">
-                        <span class="record-row-left">
-                          <span class="record-dot" style="background:#38BDF8;"></span>
-                          Easy &middot; Progressive
-                        </span>
-                        <span class="record-best-val" id="rec-val-ep">Best: 10</span>
-                      </div>
-                      <div class="record-score-row amber">
-                        <span class="record-row-left">
-                          <span class="record-dot" style="background:#FFB300;"></span>
-                          Hard &middot; Classic
-                        </span>
-                        <span class="record-best-val" id="rec-val-hc">Best: 8</span>
-                      </div>
-                      <div class="record-score-row red">
-                        <span class="record-row-left">
-                          <span class="record-dot" style="background:#FF5252;"></span>
-                          Hard &middot; Progressive
-                        </span>
-                        <span class="record-best-val" id="rec-val-hp">Best: 7</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- MULTIPLAYER RECORDS STACK (2P/3P/4P) -->
-                  <div class="mp-records-box" id="records-mp-box">
-                    <div class="mp-survival-card">
-                      <div class="mp-survival-label">Longest Match Survival</div>
-                      <div class="mp-survival-val" id="mp-survival-text">Round 14 Survived</div>
-                    </div>
-                    <div class="mp-wins-card" id="mp-wins-list">
-                      <div class="mp-win-row">
-                        <span><strong style="color:#38BDF8;">&bull;</strong> Player 1</span>
-                        <span>6 wins</span>
-                      </div>
-                      <div class="mp-win-row">
-                        <span><strong style="color:#EF4444;">&bull;</strong> Player 2</span>
-                        <span>4 wins</span>
-                      </div>
-                      <div class="mp-win-row" id="mp-row-p3" style="display:none;">
-                        <span><strong style="color:#10B981;">&bull;</strong> Player 3</span>
-                        <span>3 wins</span>
-                      </div>
-                      <div class="mp-win-row" id="mp-row-p4" style="display:none;">
-                        <span><strong style="color:#F59E0B;">&bull;</strong> Player 4</span>
-                        <span>2 wins</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Bottom Navigation Bar -->
-            <div class="phone-bottom-nav">
-              <button type="button" class="phone-nav-item active" data-bottom-nav="home">
-                <span>&#127968;</span>
-                <span>Home</span>
-              </button>
-              <button type="button" class="phone-nav-item" data-bottom-nav="leaderboard">
-                <span>&#127942;</span>
-                <span>Leaderboard</span>
-              </button>
-            </div>
-          </div>
-        </div>
+    <div class="demo-stage">
+      <div class="pad-grid" id="heroGrid" aria-hidden="true">
+        <div class="pad" data-c="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 20 L2 20 Z"/></svg></div>
+        <div class="pad" data-c="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <div class="pad" data-c="2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+        <div class="pad" data-c="3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></div>
       </div>
-    </section>
+      <p class="demo-caption" id="heroCaption">Watching the sequence…</p>
+    </div>
+  </section>
 
-    <!-- ========================================================================
-         HALL OF FAME SHOWCASE SECTION (RIVALRY + RECORDS DEEP DIVE)
-         ======================================================================== -->
-    <section id="hall-of-fame" class="section">
-      <div class="container">
-        <div class="section-header">
-          <span class="section-tag">Inside the Hall of Fame</span>
-          <h2 class="section-title">Rivalry Hub &amp; Personal Records</h2>
-          <p class="section-subtitle">
-            Every friend you duel and every personal best across all 16 solo configurations and local multiplayer modes lives right on your phone.
-          </p>
-        </div>
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="how" class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">How a duel unfolds</p>
+      <h2>Every challenge is nine small steps,<br>all of them offline.</h2>
+      <p>This is the actual path a rivalry takes in the app — from opening the game, to a reply code landing back in your Hall of Fame.</p>
+    </div>
 
-        <div class="hof-showcase-grid">
-          <!-- Left Panel: Rivalry Tab -->
-          <div class="hof-panel">
-            <div>
-              <span class="hof-badge">&#9876;&#65039; Tab 1 &middot; Rivalry Hub</span>
-              <h3 class="hof-title">Head-to-Head Feuds Without a Server</h3>
-              <p class="hof-desc">
-                Your Rivalry tab automatically groups incoming challenges and outbound duels by challenger name, keeping lifetime stats per opponent.
-              </p>
-              <ul class="hof-bullet-list">
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>Per-Grid Stat Chips:</strong> Tap <em>2&times;2</em>, <em>3&times;3</em>, <em>4&times;4</em>, or <em>5&times;4</em> on any rival card to inspect grid-specific W-L records and saved replies.</span>
-                </li>
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>Sleeping Score Recommendations:</strong> Instantly spots high scores you already hold that beat your rival's latest target — share in one tap.</span>
-                </li>
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>State-Aware Reply Tracking:</strong> Never wonder if you sent your result back. Unsent replies glow emerald until copied, then collapse with a timestamp.</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <!-- Right Panel: Records & Scores Tab -->
-          <div class="hof-panel emerald">
-            <div>
-              <span class="hof-badge">&#127942; Tab 2 &middot; Records &amp; Scores</span>
-              <h3 class="hof-title">Every Board, Pace &amp; Difficulty Tracked</h3>
-              <p class="hof-desc">
-                Switch effortlessly between Solo high scores and 2P–4P Pass-and-Play survival milestones with zero cross-mode pollution.
-              </p>
-              <ul class="hof-bullet-list">
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>4 Showcase Cards per Grid:</strong> Dedicated best-score tracking for <em>Easy &middot; Classic</em>, <em>Easy &middot; Progressive</em>, <em>Hard &middot; Classic</em>, and <em>Hard &middot; Progressive</em>.</span>
-                </li>
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>Pure Solo Isolation:</strong> Playing a friend's seeded challenge never overwrites or inflates your personal Solo high scores.</span>
-                </li>
-                <li class="hof-bullet-item">
-                  <span class="hof-bullet-dot">&#10003;</span>
-                  <span><strong>2P–4P Survival Leaderboards:</strong> Tracks longest round survival and individual Player 1–4 win tallies for local couch battles.</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
+    <div class="flow">
+      <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
+        <button class="step active" data-step="1" data-n="1" role="tab" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: solo play, pass-and-play, or your rivalry hub.</p></button>
+        <button class="step" data-step="2" data-n="2" role="tab" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy appends one pad per round. Hard reshuffles the whole sequence.</p></button>
+        <button class="step" data-step="3" data-n="3" role="tab" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
+        <button class="step" data-step="4" data-n="4" role="tab" aria-selected="false"><h3>Share a challenge</h3><p>Game Over mints a deterministic code naming your score and seed.</p></button>
+        <button class="step" data-step="5" data-n="5" role="tab" aria-selected="false"><h3>Your rival plays it</h3><p>They paste the code and play the identical sequence, blind to your run.</p></button>
+        <button class="step" data-step="6" data-n="6" role="tab" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
+        <button class="step" data-step="7" data-n="7" role="tab" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
+        <button class="step" data-step="8" data-n="8" role="tab" aria-selected="false"><h3>It's recorded</h3><p>The rival card updates — win, loss or tie — broken down per grid.</p></button>
+        <button class="step" data-step="9" data-n="9" role="tab" aria-selected="false"><h3>Hall of Fame</h3><p>Every rivalry, lifetime record and all, lives in one scoreboard.</p></button>
       </div>
-    </section>
 
-    <!-- ========================================================================
-         MULTI-GRID SWITCHER (2x2 TO 5x4) & PASS-AND-PLAY MULTIPLAYER SECTION
-         ======================================================================== -->
-    <section id="grids-and-modes" class="section">
-      <div class="container">
-        <div class="section-header">
-          <span class="section-tag">Built for Depth &amp; Variety</span>
-          <h2 class="section-title">4 Neon Grids &amp; Local Pass-and-Play</h2>
-          <p class="section-subtitle">
-            Scale from classic 4-pad memory sprints up to 20-pad grandmaster boards, or pass one phone around with up to 4 friends.
-          </p>
-        </div>
+      <div class="phone-frame">
+        <div class="phone-screen" id="phoneScreen">
 
-        <div class="modes-explorer-grid">
-          <!-- Interactive Grid Switcher -->
-          <div class="explorer-card">
-            <div>
-              <div class="hof-badge">&#8862; Interactive Board Explorer</div>
-              <h3 class="hof-title">Tap a Grid Size to Preview</h3>
-              <p class="hof-desc">
-                Every pad features a distinct geometric symbol and psychoacoustic sine-wave harmonic so you memorize by sight, shape, and pitch.
-              </p>
-
-              <div class="grid-switcher-tabs" id="explorer-grid-tabs">
-                <button type="button" class="grid-switch-btn active" data-exp-grid="2x2">2&times;2 (4)</button>
-                <button type="button" class="grid-switch-btn" data-exp-grid="3x3">3&times;3 (9)</button>
-                <button type="button" class="grid-switch-btn" data-exp-grid="4x4">4&times;4 (16)</button>
-                <button type="button" class="grid-switch-btn" data-exp-grid="5x4">5&times;4 (20)</button>
-              </div>
-
-              <div class="grid-preview-stage">
-                <!-- 2x2 Board -->
-                <div class="mini-board-preview g-2x2 active" id="board-exp-2x2">
-                  <div class="mini-tile c1">&#9651;</div>
-                  <div class="mini-tile c2">&#9675;</div>
-                  <div class="mini-tile c3">&#9633;</div>
-                  <div class="mini-tile c4">&#9671;</div>
-                </div>
-                <!-- 3x3 Board -->
-                <div class="mini-board-preview g-3x3" id="board-exp-3x3">
-                  <div class="mini-tile c1">&#9651;</div>
-                  <div class="mini-tile c2">&#9675;</div>
-                  <div class="mini-tile c3">&#9633;</div>
-                  <div class="mini-tile c4">&#9671;</div>
-                  <div class="mini-tile c5">&#9734;</div>
-                  <div class="mini-tile c6">&#11041;</div>
-                  <div class="mini-tile c1">&#10070;</div>
-                  <div class="mini-tile c2">&#9790;</div>
-                  <div class="mini-tile c3">&#9889;</div>
-                </div>
-                <!-- 4x4 Board -->
-                <div class="mini-board-preview g-4x4" id="board-exp-4x4">
-                  <div class="mini-tile c1">&#9651;</div>
-                  <div class="mini-tile c2">&#9675;</div>
-                  <div class="mini-tile c3">&#9633;</div>
-                  <div class="mini-tile c4">&#9671;</div>
-                  <div class="mini-tile c5">&#9734;</div>
-                  <div class="mini-tile c6">&#11041;</div>
-                  <div class="mini-tile c1">&#10070;</div>
-                  <div class="mini-tile c2">&#9790;</div>
-                  <div class="mini-tile c3">&#9889;</div>
-                  <div class="mini-tile c4">&#9825;</div>
-                  <div class="mini-tile c5">&#10022;</div>
-                  <div class="mini-tile c6">&#9670;</div>
-                  <div class="mini-tile c1">&#9653;</div>
-                  <div class="mini-tile c2">&#9679;</div>
-                  <div class="mini-tile c3">&#9635;</div>
-                  <div class="mini-tile c4">&#10038;</div>
-                </div>
-                <!-- 5x4 Board (5 rows × 4 columns) -->
-                <div class="mini-board-preview g-5x4" id="board-exp-5x4">
-                  <div class="mini-tile c1">&#9651;</div>
-                  <div class="mini-tile c2">&#9675;</div>
-                  <div class="mini-tile c3">&#9633;</div>
-                  <div class="mini-tile c4">&#9671;</div>
-                  <div class="mini-tile c5">&#9734;</div>
-                  <div class="mini-tile c6">&#11041;</div>
-                  <div class="mini-tile c1">&#10070;</div>
-                  <div class="mini-tile c2">&#9790;</div>
-                  <div class="mini-tile c3">&#9889;</div>
-                  <div class="mini-tile c4">&#9825;</div>
-                  <div class="mini-tile c5">&#10022;</div>
-                  <div class="mini-tile c6">&#9670;</div>
-                  <div class="mini-tile c1">&#9653;</div>
-                  <div class="mini-tile c2">&#9679;</div>
-                  <div class="mini-tile c3">&#9635;</div>
-                  <div class="mini-tile c4">&#10038;</div>
-                  <div class="mini-tile c5">&#9813;</div>
-                  <div class="mini-tile c6">&#9728;</div>
-                  <div class="mini-tile c1">&#10042;</div>
-                  <div class="mini-tile c2">&#9830;</div>
-                </div>
-              </div>
+          <div class="screen active" data-screen="1">
+            <div class="sbar">GLOWBACK</div>
+            <div class="scr-title">Ready to play?</div>
+            <div class="scr-sub">Pick a mode to begin</div>
+            <div class="chip-row"><span class="chip on">Solo</span><span class="chip">2-Player</span><span class="chip">Rivalry Hub</span></div>
+            <div class="mini-grid" style="grid-template-columns:repeat(3,1fr); max-width:140px;">
+              <div class="mini-pad" style="background:var(--green)"></div><div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div>
+              <div class="mini-pad" style="background:var(--blue)"></div><div class="mini-pad" style="background:var(--violet)"></div><div class="mini-pad" style="background:var(--green)"></div>
+              <div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div><div class="mini-pad" style="background:var(--blue)"></div>
             </div>
+            <div class="scr-btn">Start</div>
+          </div>
 
-            <div class="grid-meta-caption" id="explorer-grid-caption">
-              <span><strong>2&times;2 Classic Board:</strong> 4 Geometric Pads</span>
-              <span>261 Hz &ndash; 523 Hz Harmonics</span>
+          <div class="screen" data-screen="2">
+            <div class="sbar">DIFFICULTY</div>
+            <div class="scr-title">Choose how it grows</div>
+            <div class="scr-sub">Changes how each round builds the sequence</div>
+            <div class="gs-card sel" style="margin-bottom:10px;"><div class="lbl">Easy — cumulative</div><div style="font-size:10px;color:var(--dim-2);margin-top:4px;">Round 4 replays rounds 1–3, then adds one new pad</div></div>
+            <div class="gs-card"><div class="lbl">Hard — fresh each round</div><div style="font-size:10px;color:var(--dim-2);margin-top:4px;">Every round is an entirely new sequence of the same length</div></div>
+          </div>
+
+          <div class="screen" data-screen="3">
+            <div class="sbar">BOARD SIZE</div>
+            <div class="scr-title">Pick your grid</div>
+            <div class="scr-sub">Bigger boards, more ways to go wrong</div>
+            <div class="grid-sizes">
+              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(2,1fr); width:40px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">2×2</div></div>
+              <div class="gs-card sel"><div class="tiny-grid" style="grid-template-columns:repeat(3,1fr); width:48px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">3×3</div></div>
+              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:56px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div></div><div class="lbl">4×4</div></div>
+              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(5,1fr); width:60px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div></div><div class="lbl">5×4</div></div>
             </div>
           </div>
 
-          <!-- Local 2P-4P Pass-and-Play Card -->
-          <div class="explorer-card">
-            <div>
-              <div class="hof-badge" style="color:var(--accent-amber);border-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.12);">
-                &#128101; 2P &ndash; 4P Local Multiplayer
-              </div>
-              <h3 class="hof-title">Single-Device Pass-and-Play</h3>
-              <p class="hof-desc">
-                No second phone? Select <strong>2P</strong>, <strong>3P</strong>, or <strong>4P</strong> on the Home screen and pass one device around the table in elimination survival rounds.
-              </p>
-
-              <div class="standings-list">
-                <div class="standing-row winner">
-                  <span class="standing-left">
-                    <span>&#129351;</span>
-                    <span class="player-dot" style="background:#38BDF8;"></span>
-                    <span>Player 1</span>
-                  </span>
-                  <span class="standing-rounds">9 Rounds Survived</span>
-                </div>
-                <div class="standing-row">
-                  <span class="standing-left">
-                    <span>&#129352;</span>
-                    <span class="player-dot" style="background:#10B981;"></span>
-                    <span>Player 3</span>
-                  </span>
-                  <span class="standing-rounds">7 Rounds Survived</span>
-                </div>
-                <div class="standing-row">
-                  <span class="standing-left">
-                    <span>&#129353;</span>
-                    <span class="player-dot" style="background:#EF4444;"></span>
-                    <span>Player 2</span>
-                  </span>
-                  <span class="standing-rounds">5 Rounds Survived</span>
-                </div>
-                <div class="standing-row">
-                  <span class="standing-left">
-                    <span style="font-size:0.78rem;color:var(--text-muted);width:18px;text-align:center;">4th</span>
-                    <span class="player-dot" style="background:#F59E0B;"></span>
-                    <span>Player 4</span>
-                  </span>
-                  <span class="standing-rounds">3 Rounds Survived</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="grid-meta-caption">
-              <span><strong>Easy vs Hard Mode:</strong> Cumulative or Fresh Random Each Round</span>
-              <span>Local Standings</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================================================
-         PURE-DISPLAY CHALLENGE CODE ANATOMY INSPECTOR
-         ======================================================================== -->
-    <section id="code-anatomy" class="section">
-      <div class="container">
-        <div class="section-header">
-          <span class="section-tag">Deterministic &amp; Tamper-Proof</span>
-          <h2 class="section-title">Anatomy of a Challenge Code</h2>
-          <p class="section-subtitle">
-            Tap or hover any segment of this sample code to see how Glowback packs an entire multiplayer duel into a short offline string.
-          </p>
-        </div>
-
-        <div class="anatomy-shell">
-          <div class="code-segments-bar" id="code-anatomy-bar" role="group" aria-label="Sample Challenge Code Segments">
-            <button type="button" class="code-seg-btn active" data-seg="grid">4x4</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="target">6</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="rules">T3E</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="sender">ALEX</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="chain">DG9A</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="seed">Q579D</button>
-            <span class="code-seg-hyphen">-</span>
-            <button type="button" class="code-seg-btn" data-seg="checksum">B</button>
+          <div class="screen" data-screen="4">
+            <div class="sbar">GAME OVER</div>
+            <div class="big-score">6 <span>pads recalled</span></div>
+            <div class="scr-sub" style="text-align:center;margin-top:0;">Challenge a friend to beat it</div>
+            <div class="code-box"><b>4x4-6-T3E</b>-ALEX-<span class="r">DG9A</span>-Q579D-B</div>
+            <div class="seg-label">grid · target · tries+difficulty · you → rival · chain · seed · checksum</div>
+            <div class="scr-btn">Copy &amp; share code</div>
           </div>
 
-          <div class="segment-detail-card" aria-live="polite">
-            <span class="segment-detail-tag" id="seg-detail-tag">Segment 1 of 7 &middot; Board Size</span>
-            <h3 class="segment-detail-title" id="seg-detail-title">4x4 &mdash; 16-Pad Grid Lock</h3>
-            <p class="segment-detail-desc" id="seg-detail-desc">
-              Locks the duel to the 4&times;4 (16-pad) board so both players compete on the exact same geometry. Supports 2x2, 3x3, 4x4, and 5x4.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================================================
-         FEATURES SECTION (4 CARDS)
-         ======================================================================== -->
-    <section id="features" class="section">
-      <div class="container">
-        <div class="section-header">
-          <span class="section-tag">Engineered for Pure Focus</span>
-          <h2 class="section-title">Zero Cloud. Total Rivalry.</h2>
-          <p class="section-subtitle">
-            Everything you need for high-stakes sequence battles with friends, stripped of modern mobile bloat.
-          </p>
-        </div>
-
-        <div class="features-grid">
-          <article class="feature-card">
-            <div class="feature-icon" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-              </svg>
-            </div>
-            <h3 class="feature-title">100% Offline</h3>
-            <p class="feature-desc">
-              Play anywhere — on flights, subways, or completely off-grid. Low-latency PCM audio synthesis, custom haptic waveforms, and match tracking run strictly on your device.
-            </p>
-          </article>
-
-          <article class="feature-card emerald-accent">
-            <div class="feature-icon" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-            </div>
-            <h3 class="feature-title">Cheat-Proof Challenge Codes</h3>
-            <p class="feature-desc">
-              Compact deterministic seeds recreate the exact same neon pad sequence on your friend's phone. Protected by a 7-segment cryptographic checksum that rejects altered codes instantly.
-            </p>
-          </article>
-
-          <article class="feature-card emerald-accent">
-            <div class="feature-icon" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.5 17.5L3 6V3h3l11.5 11.5"></path>
-                <path d="M13 19l6-6"></path>
-                <path d="M16 16l4 4"></path>
-                <path d="M19 21l2-2"></path>
-                <path d="M9.5 17.5L21 6V3h-3L6.5 14.5"></path>
-              </svg>
-            </div>
-            <h3 class="feature-title">Asynchronous Rivalry</h3>
-            <p class="feature-desc">
-              Exchange codes over WhatsApp, SMS, or Discord at your own pace. Track lifetime Wins, Losses, Ties, and per-grid records for every rival in your personal Hall of Fame.
-            </p>
-          </article>
-
-          <article class="feature-card">
-            <div class="feature-icon" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                <polyline points="9 12 11 14 15 10"></polyline>
-              </svg>
-            </div>
-            <h3 class="feature-title">No Accounts or Ads</h3>
-            <p class="feature-desc">
-              Zero logins, zero analytics trackers, zero pop-up ads, and zero network permissions. Install and jump straight into solo runs, local 2P–4P pass-and-play, or friend duels.
-            </p>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================================================
-         HOW TO PLAY SECTION (4-STEP RIVALRY LOOP)
-         ======================================================================== -->
-    <section id="how-to-play" class="section">
-      <div class="container">
-        <div class="section-header">
-          <span class="section-tag">The 4-Step Rivalry Loop</span>
-          <h2 class="section-title">How Asynchronous Duels Work</h2>
-          <p class="section-subtitle">
-            No matchmaking lobbies required. Settle the score through pure deterministic codes.
-          </p>
-        </div>
-
-        <div class="steps-grid">
-          <div class="step-card step-1">
-            <div>
-              <div class="step-header">
-                <span class="step-badge">1</span>
-                <h3 class="step-title">Share Code</h3>
-              </div>
-              <p class="step-desc">
-                Reach a score of 5 or higher in Solo mode, then send your generated Challenge Code to a friend. It locks in your exact sequence and target score.
-              </p>
-            </div>
-            <div class="step-code-tag">2x2-5-T3E-ALEX-DG9A-Q579D-B</div>
+          <div class="screen" data-screen="5">
+            <div class="sbar">ENTER CODE</div>
+            <div class="scr-title">Challenge received</div>
+            <div class="code-box">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
+            <div class="scr-sub" style="margin-top:0;">Beat a score of <b style="color:var(--paper)">6</b> on the 4×4 board · 3 tries</div>
+            <div class="countdown">3</div>
+            <div class="scr-btn outline">Same board. Same seed. No peeking.</div>
           </div>
 
-          <div class="step-card step-2">
-            <div>
-              <div class="step-header">
-                <span class="step-badge">2</span>
-                <h3 class="step-title">Friend Plays</h3>
-              </div>
-              <p class="step-desc">
-                Your friend pastes the code in Glowback and plays the exact same pad sequence seed within the allowed tries to beat your target score.
-              </p>
-            </div>
-            <div class="step-code-tag">Target: 5 &middot; 3 Tries &middot; Same Seed</div>
+          <div class="screen" data-screen="6">
+            <div class="sbar">RESULT</div>
+            <div class="result-badge win" style="margin:18px auto 14px;">YOU WON</div>
+            <div class="big-score">7 <span>vs their 6</span></div>
+            <div class="scr-sub" style="text-align:center;">1 try left, unused</div>
+            <div class="scr-btn" style="margin-top:18px;">Send reply to ALEX</div>
+            <div class="scr-btn outline" style="margin-top:8px;">Play again</div>
           </div>
 
-          <div class="step-card step-3">
-            <div>
-              <div class="step-header">
-                <span class="step-badge">3</span>
-                <h3 class="step-title">Send Reply</h3>
-              </div>
-              <p class="step-desc">
-                When their tries finish, Glowback mints a tamper-proof Reply Code containing their final score so they can send it right back to you.
-              </p>
-            </div>
-            <div class="step-code-tag">2x2-6-R3E-HERO-DG9A-Q579D-K</div>
+          <div class="screen" data-screen="7">
+            <div class="sbar">REPLY CODE</div>
+            <div class="scr-title">Ready to send back</div>
+            <div class="scr-sub">ALEX will see exactly how you did</div>
+            <div class="code-box"><span class="r">4x4-7-R3E-HERO-DG9A-Q579D-B</span></div>
+            <div class="seg-label">your score · reply · sender · same chain &amp; seed</div>
+            <div class="scr-btn">✓ Copied — send it anywhere</div>
           </div>
 
-          <div class="step-card step-4">
-            <div>
-              <div class="step-header">
-                <span class="step-badge">4</span>
-                <h3 class="step-title">Settle Score</h3>
-              </div>
-              <p class="step-desc">
-                Paste their Reply Code in your Rivalry tab to log the Win, Loss, or Tie — then tap Revenge or Send Challenge to keep the feud alive.
-              </p>
-            </div>
-            <div class="step-code-tag">Rivalry Updated &middot; Fire Back &#8599;</div>
+          <div class="screen" data-screen="8">
+            <div class="sbar">RIVALRY HUB</div>
+            <div class="scr-title">ALEX</div>
+            <div class="chip-row"><span class="chip on">2×2 · 3W–1L</span><span class="chip">3×3 · 1W–0L</span><span class="chip">4×4 · 2W–1L</span></div>
+            <div class="rival-row"><span>4×4 · Hard</span><span class="score">7 — 6</span></div>
+            <div class="scr-sub" style="margin-top:0;">Updated just now · won</div>
+            <div class="scr-btn outline">Rematch · Revenge · Tie-break</div>
           </div>
+
+          <div class="screen" data-screen="9">
+            <div class="sbar">HALL OF FAME</div>
+            <div class="scr-title">Lifetime record</div>
+            <div class="rival-row"><span>ALEX</span><span class="score">9W – 4L – 1T</span></div>
+            <div class="rival-row"><span>NEON_KING</span><span class="score">3W – 6L – 0T</span></div>
+            <div class="rival-row"><span>MAYA</span><span class="score">5W – 2L – 2T</span></div>
+            <div class="scr-sub" style="margin-top:4px;">Sorted by most recently played</div>
+          </div>
+
         </div>
-      </div>
-    </section>
-  </main>
-
-  <!-- ==========================================================================
-       FOOTER
-       ========================================================================== -->
-  <footer class="site-footer">
-    <div class="container footer-inner">
-      <div>&copy; 2026 Glowback</div>
-      <div class="footer-links">
-        <a href="PRIVACY.md" class="footer-link">Privacy Policy</a>
-        <a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" class="footer-link" target="_blank" rel="noopener noreferrer">GitHub</a>
       </div>
     </div>
-  </footer>
+  </section>
 
-  <!-- ==========================================================================
-       CLEAN VANILLA JS: VISUAL PAD RENDERER, DELEGATED CLICKS & 16-STEP DEMO
-       ========================================================================== -->
-  <script>
-    (function () {
-      // ------------------------------------------------------------------------
-      // 1. Visual-Only Pad Renderer & Live DOM Pad Flash Helpers
-      //    - Uses renderPadGrid(rows, cols): e.g. renderPadGrid(5, 4) builds
-      //      5 rows × 4 columns (repeat(4, 1fr)) to match the Android board.
-      //    - Queries live .simon-pad nodes on every call (no cached array).
-      //    - Uses ONE delegated click listener on #simon-pad-grid via closest().
-      // ------------------------------------------------------------------------
-      var simonPadGridEl = document.getElementById('simon-pad-grid');
-      var simBoardPillEl = document.getElementById('sim-board-pill');
-      var homeBestLabelEl = document.getElementById('home-best-label');
-      var statusEl = document.getElementById('showcase-status');
-      var scoreEl = document.getElementById('showcase-score');
-      var copyBtn = document.getElementById('copy-code-btn');
-      var codeTextEl = document.getElementById('challenge-code-text');
+  <!-- ============ FEATURES ============ -->
+  <section id="features" class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">What's actually in the box</p>
+      <h2>Built to be memorized, not metered</h2>
+    </div>
+    <div class="bento">
+      <div class="card wide">
+        <div class="icon-tile" style="background:rgba(16,185,129,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <h3>Four grids, two difficulties, two paces</h3>
+        <p>2×2 through 5×4, Easy's cumulative recall or Hard's fresh sequence every round, at a steady Classic tempo or an accelerating Progressive one. Sixteen ways to play the same core loop.</p>
+      </div>
+      <div class="card">
+        <div class="icon-tile" style="background:rgba(59,130,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+        <h3>Real synthesized tone per pad</h3>
+        <p>Each pad plays its own sine-wave frequency, generated on the device in real time — not a sample file.</p>
+      </div>
+      <div class="card">
+        <div class="icon-tile" style="background:rgba(245,158,11,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
+        <h3>Haptics that mean something</h3>
+        <p>Distinct vibration waveforms for a tap, a streak, a loss, and a win — felt, not just seen.</p>
+      </div>
+      <div class="card tall">
+        <div class="icon-tile" style="background:rgba(139,92,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" stroke-width="2"><path d="M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m5-1.13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></div>
+        <h3>A rivalry, not a leaderboard</h3>
+        <p>No global ranking, no server to climb. Each rival card is its own private head-to-head: lifetime wins, losses, ties, and a per-grid breakdown you build up one duel at a time. Tie-breakers, revenge rematches, and a resume for the match you had to step away from are all built in.</p>
+      </div>
+      <div class="card">
+        <div class="icon-tile" style="background:rgba(239,68,68,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+        <h3>Reminders you control</h3>
+        <p>Opt-in daily nudges about unplayed challenges, scheduled locally — never on by default.</p>
+      </div>
+      <div class="card">
+        <div class="icon-tile" style="background:rgba(16,185,129,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Nothing to log into</h3>
+        <p>No account, no email, no password — install it and you're already playing.</p>
+      </div>
+    </div>
+  </section>
 
-      var padColorClasses = ['pad-green', 'pad-red', 'pad-amber', 'pad-blue'];
-      var padSymbols = ['\u25B3', '\u25CB', '\u25A1', '\u25C7', '\u2605', '\u2606', '\u2B21', '\u2726', '\u26A1', '\u2665'];
+  <!-- ============ CODE SPEC ============ -->
+  <section id="codes" class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">The part that replaces a server</p>
+      <h2>A duel fits in one line of text</h2>
+      <p>Every challenge and reply is a short deterministic string. The same code always rebuilds the same sequence on the other device — that's the entire multiplayer layer.</p>
+    </div>
+    <div class="spec">
+      <div class="spec-code">
+        <span style="background:rgba(16,185,129,0.18);color:#8CF0C4;">4x4</span><span>-</span>
+        <span style="background:rgba(59,130,246,0.18);color:#AFD1FF;">6</span><span>-</span>
+        <span style="background:rgba(245,158,11,0.18);color:#FFDB9E;">T3E</span><span>-</span>
+        <span style="background:rgba(139,92,246,0.18);color:#D7C4FB;">ALEX</span><span>-</span>
+        <span style="background:rgba(236,72,153,0.18);color:#FBC4E2;">DG9A</span><span>-</span>
+        <span style="background:rgba(239,68,68,0.18);color:#FCA5A5;">Q579D</span><span>-</span>
+        <span style="color:var(--dim);">B</span>
+      </div>
+      <div class="spec-legend">
+        <div class="item"><b>Grid</b>Board size — here, 4×4</div>
+        <div class="item"><b>Target</b>Score to beat</div>
+        <div class="item"><b>Tries · difficulty</b>3 attempts, Easy mode</div>
+        <div class="item"><b>Sender</b>Who issued the challenge</div>
+        <div class="item"><b>Chain</b>Links replies and rematches together</div>
+        <div class="item"><b>Seed</b>Recreates the exact sequence</div>
+        <div class="item"><b>Checksum</b>Catches a mistyped or corrupted code</div>
+      </div>
+    </div>
+  </section>
 
-      function renderPadGrid(rows, cols) {
-        if (!simonPadGridEl) return;
-        var total = rows * cols;
-        var html = '';
-        for (var i = 0; i < total; i++) {
-          var colorCls = padColorClasses[i % padColorClasses.length];
-          var sym = padSymbols[i % padSymbols.length];
-          html +=
-            '<div class="simon-pad ' + colorCls + '" data-pad="' + i + '" role="button" tabindex="0" aria-label="Pad ' + (i + 1) + '">' +
-              '<span class="simon-pad-symbol" aria-hidden="true">' + sym + '</span>' +
-            '</div>';
-        }
-        // Set columns = cols (so 5x4 has 5 rows and 4 columns)
-        simonPadGridEl.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
-        simonPadGridEl.setAttribute('data-grid-size', rows + 'x' + cols);
-        simonPadGridEl.innerHTML = html;
+  <!-- ============ PRIVACY ============ -->
+  <section id="privacy" class="wrap">
+    <div class="privacy">
+      <p class="eyebrow">Privacy, plainly</p>
+      <h2 style="font-size:clamp(26px,3.4vw,36px);">Your scores never leave your phone — the codes you choose to send are the only thing that does.</h2>
+      <div class="privacy-grid">
+        <div class="row"><b>No network permission</b>GlowBack can't reach the internet even if it wanted to — the permission isn't in the app.</div>
+        <div class="row"><b>No analytics, no ads</b>Nothing is measured, tracked, or sold. There's no SDK for it to go through.</div>
+        <div class="row"><b>Storage stays local</b>Rivals, records, and settings live in on-device storage only, excluded from cloud backup and device transfer.</div>
+      </div>
+    </div>
+  </section>
 
-        if (simBoardPillEl) {
-          simBoardPillEl.innerHTML = '<span>&#8862;</span> ' + rows + '&times;' + cols + ' &middot; Classic';
-        }
-        if (homeBestLabelEl) {
-          homeBestLabelEl.innerHTML = '&#127942; Best (' + rows + '&times;' + cols + ')';
-        }
+  <!-- ============ CTA ============ -->
+  <section class="wrap cta-band">
+    <h2>Memorize something. Send it back.</h2>
+    <p>Free, open source, and yours to keep — no account required to start.</p>
+    <div class="ctas">
+      <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
+      <a class="btn btn-ghost" href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">Browse the source</a>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-row">
+    <a class="wordmark" href="#top" style="font-size:16px;"><span class="dot"></span><span class="dot dot2"></span>GlowBack</a>
+    <ul class="foot-links">
+      <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="PRIVACY.md">Privacy policy</a></li>
+      <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a></li>
+    </ul>
+  </div>
+  <div class="wrap foot-note">GlowBack is an independent, offline game. Not affiliated with any platform or service it may be shared through.</div>
+</footer>
+
+<script>
+(function(){
+  // ---- hero demo: lights a short sequence on loop, then invites a tap ----
+  var pads = Array.prototype.slice.call(document.querySelectorAll('#heroGrid .pad'));
+  var caption = document.getElementById('heroCaption');
+  var sequence = [0,2,1,3,0];
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var playing = false;
+
+  function lightPad(i, on){
+    var p = pads[i];
+    if(!p) return;
+    p.classList.toggle('lit', on);
+    if(on) p.classList.add('c' + p.dataset.c); else p.classList.remove('c0','c1','c2','c3');
+  }
+
+  function playSequence(){
+    if(playing) return;
+    playing = true;
+    caption.textContent = 'Watching the sequence…';
+    var i = 0;
+    var step = 480;
+    function tick(){
+      if(i > 0) lightPad(sequence[i-1], false);
+      if(i >= sequence.length){
+        playing = false;
+        caption.textContent = 'Your turn — tap the pads back in order';
+        return;
       }
+      lightPad(sequence[i], true);
+      setTimeout(function(){ lightPad(sequence[i], false); setTimeout(tick, 90); }, step - 90);
+      i++;
+    }
+    tick();
+  }
 
-      // Live DOM query on every call — never uses a cached pads array
-      function clearActivePads() {
-        var livePads = document.querySelectorAll('#simon-pad-grid .simon-pad');
-        for (var i = 0; i < livePads.length; i++) {
-          livePads[i].classList.remove('active');
-        }
+  var userSeq = [];
+  pads.forEach(function(p, idx){
+    p.addEventListener('click', function(){
+      if(playing) return;
+      lightPad(idx, true);
+      setTimeout(function(){ lightPad(idx, false); }, 180);
+      userSeq.push(idx);
+      var pos = userSeq.length - 1;
+      if(sequence[pos] !== idx){
+        caption.textContent = 'Not quite — watch again';
+        userSeq = [];
+        setTimeout(playSequence, 900);
+        return;
       }
-
-      // Live DOM query on every call — wraps padIndex safely across any grid size
-      function triggerPadFlash(padIndex, duration) {
-        clearActivePads();
-        var livePads = document.querySelectorAll('#simon-pad-grid .simon-pad');
-        if (!livePads.length) return;
-        var target = livePads[padIndex % livePads.length];
-        if (!target) return;
-        target.classList.add('active');
-        setTimeout(function () {
-          target.classList.remove('active');
-        }, duration || 340);
+      if(userSeq.length === sequence.length){
+        caption.textContent = 'Recalled it — replaying…';
+        userSeq = [];
+        setTimeout(playSequence, 1100);
       }
+    });
+  });
+
+  if(!reduced){
+    playSequence();
+    setInterval(function(){ if(!playing && userSeq.length === 0) playSequence(); }, 5200);
+  } else {
+    caption.textContent = 'A short memorize-and-repeat sequence plays here';
+  }
+
+  // ---- step walkthrough ----
+  var stepBtns = Array.prototype.slice.call(document.querySelectorAll('.step'));
+  var screens = Array.prototype.slice.call(document.querySelectorAll('.screen'));
+  var autoTimer = null;
+
+  function showStep(n){
+    stepBtns.forEach(function(b){
+      var active = b.dataset.step === n;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    screens.forEach(function(s){ s.classList.toggle('active', s.dataset.screen === n); });
+  }
+
+  function startAuto(){
+    if(reduced) return;
+    clearInterval(autoTimer);
+    autoTimer = setInterval(function(){
+      var current = document.querySelector('.step.active');
+      var idx = stepBtns.indexOf(current);
+      var next = stepBtns[(idx + 1) % stepBtns.length];
+      showStep(next.dataset.step);
+    }, 4200);
+  }
+
+  stepBtns.forEach(function(b){
+    b.addEventListener('click', function(){
+      showStep(b.dataset.step);
+      startAuto();
+    });
+  });
+
+  startAuto();
+})();
+</script>
 
-      // Single delegated click listener on #simon-pad-grid
-      if (simonPadGridEl) {
-        simonPadGridEl.addEventListener('click', function (e) {
-          var pad = e.target.closest('.simon-pad');
-          if (!pad) return;
-          var idx = parseInt(pad.getAttribute('data-pad') || '0', 10);
-          triggerPadFlash(idx, 300);
-        });
-      }
-
-      // Initialize default 2x2 grid on page load
-      renderPadGrid(2, 2);
-
-      // ------------------------------------------------------------------------
-      // 2. Ambient Auto-Playing 2x2 Sequence Loop (when Demo Mode is inactive)
-      // ------------------------------------------------------------------------
-      var sequence = [0, 1, 3, 2, 0];
-      var stepIndex = 0;
-      var phase = 'WATCH';
-      var ambientTimer = null;
-      var isDemoActive = false;
-
-      function runSequenceTick() {
-        if (isDemoActive) return;
-        if (phase === 'WATCH') {
-          statusEl.textContent = 'WATCH SEQUENCE';
-          statusEl.style.color = '#00E5FF';
-          scoreEl.textContent = String(stepIndex + 1);
-          triggerPadFlash(sequence[stepIndex], 420);
-          stepIndex++;
-          if (stepIndex >= sequence.length) {
-            phase = 'COMPLETE';
-            ambientTimer = setTimeout(runSequenceTick, 700);
-          } else {
-            ambientTimer = setTimeout(runSequenceTick, 620);
-          }
-        } else {
-          statusEl.textContent = 'TARGET 5 LOCKED \u2713';
-          statusEl.style.color = '#10B981';
-          scoreEl.textContent = '5';
-          stepIndex = 0;
-          phase = 'WATCH';
-          ambientTimer = setTimeout(runSequenceTick, 1600);
-        }
-      }
-
-      if (copyBtn && codeTextEl) {
-        copyBtn.addEventListener('click', function () {
-          var code = codeTextEl.textContent.trim();
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(code).catch(function () {});
-          }
-          copyBtn.textContent = '\u2713 Copied';
-          copyBtn.style.borderColor = '#10B981';
-          copyBtn.style.color = '#10B981';
-          setTimeout(function () {
-            if (!isDemoActive) {
-              copyBtn.textContent = 'Copy Code';
-              copyBtn.style.borderColor = 'rgba(0, 229, 255, 0.4)';
-              copyBtn.style.color = '#00E5FF';
-            }
-          }, 1800);
-        });
-      }
-
-      ambientTimer = setTimeout(runSequenceTick, 600);
-
-      // ------------------------------------------------------------------------
-      // 3. Phone Simulator Tab & Sub-Tab Switching
-      // ------------------------------------------------------------------------
-      var viewHome = document.getElementById('sim-view-home');
-      var viewLeaderboard = document.getElementById('sim-view-leaderboard');
-      var paneRivalry = document.getElementById('pane-rivalry');
-      var paneRecords = document.getElementById('pane-records');
-      var bottomNavBtns = Array.from(document.querySelectorAll('[data-bottom-nav]'));
-      var subtabBtns = Array.from(document.querySelectorAll('[data-subtab]'));
-      var tourJumpBtns = Array.from(document.querySelectorAll('[data-jump-tab]'));
-
-      function activateSimulatorView(targetKey) {
-        tourJumpBtns.forEach(function (btn) {
-          btn.classList.toggle('active', btn.getAttribute('data-jump-tab') === targetKey);
-        });
-
-        if (targetKey === 'home') {
-          viewHome.classList.add('active');
-          viewLeaderboard.classList.remove('active');
-          bottomNavBtns.forEach(function (b) {
-            b.classList.toggle('active', b.getAttribute('data-bottom-nav') === 'home');
-          });
-        } else {
-          viewHome.classList.remove('active');
-          viewLeaderboard.classList.add('active');
-          bottomNavBtns.forEach(function (b) {
-            b.classList.toggle('active', b.getAttribute('data-bottom-nav') === 'leaderboard');
-          });
-          var isRivalry = targetKey === 'rivalry';
-          paneRivalry.classList.toggle('active', isRivalry);
-          paneRecords.classList.toggle('active', !isRivalry);
-          subtabBtns.forEach(function (sb) {
-            sb.classList.toggle('active', sb.getAttribute('data-subtab') === targetKey);
-          });
-        }
-      }
-
-      bottomNavBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          if (isDemoActive) stopDemoMode();
-          var nav = btn.getAttribute('data-bottom-nav');
-          activateSimulatorView(nav === 'home' ? 'home' : 'rivalry');
-        });
-      });
-
-      subtabBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          if (isDemoActive) stopDemoMode();
-          activateSimulatorView(btn.getAttribute('data-subtab'));
-        });
-      });
-
-      tourJumpBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          if (isDemoActive) stopDemoMode();
-          activateSimulatorView(btn.getAttribute('data-jump-tab'));
-        });
-      });
-
-      // ------------------------------------------------------------------------
-      // 4. Home Mode & Difficulty Toggles inside Simulator
-      // ------------------------------------------------------------------------
-      var homeModeBtns = Array.from(document.querySelectorAll('[data-home-mode]'));
-      function setHomeModeActive(modeKey) {
-        homeModeBtns.forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-home-mode') === modeKey);
-        });
-      }
-
-      homeModeBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var mode = btn.getAttribute('data-home-mode');
-          setHomeModeActive(mode);
-          if (!isDemoActive && statusEl) {
-            if (mode === 'SOLO') {
-              statusEl.textContent = 'WATCH SEQUENCE';
-              statusEl.style.color = '#00E5FF';
-            } else {
-              statusEl.textContent = '\uD83D\uDD35 PLAYER 1 TURN (' + mode + ')';
-              statusEl.style.color = '#38BDF8';
-            }
-          }
-        });
-      });
-
-      var diffBtns = Array.from(document.querySelectorAll('[data-diff]'));
-      diffBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          diffBtns.forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-        });
-      });
-
-      // ------------------------------------------------------------------------
-      // 5. Rivalry Per-Grid Stat Chips & State-Aware Reply Button
-      // ------------------------------------------------------------------------
-      var rivalGridData = {
-        '4x4': { label: 'Last Duel (4\u00d74 Easy)', result: 'WON \u00b7 You 7 vs Target 6', color: '#10B981' },
-        '3x3': { label: 'Last Duel (3\u00d73 Hard)', result: 'LOST \u00b7 You 5 vs Target 8', color: '#EF4444' },
-        '2x2': { label: 'Last Duel (2\u00d72 Easy)', result: 'WON \u00b7 You 11 vs Target 9', color: '#10B981' }
-      };
-      var rivalChips = Array.from(document.querySelectorAll('[data-rival-grid]'));
-      var rivalBanner = document.getElementById('rival-match-banner');
-      var rivalReplyBtn = document.getElementById('rival-reply-btn');
-      var rivalWltBadge = document.getElementById('rival-wlt-badge');
-
-      rivalChips.forEach(function (chip) {
-        chip.addEventListener('click', function () {
-          rivalChips.forEach(function (c) { c.classList.remove('active'); });
-          chip.classList.add('active');
-          var gridKey = chip.getAttribute('data-rival-grid');
-          var info = rivalGridData[gridKey];
-          if (info && rivalBanner) {
-            rivalBanner.style.borderLeftColor = info.color;
-            rivalBanner.innerHTML = '<span>' + info.label + '</span><strong style="color:' + info.color + ';">' + info.result + '</strong>';
-          }
-          if (rivalReplyBtn) {
-            rivalReplyBtn.classList.remove('copied');
-            rivalReplyBtn.textContent = '\uD83D\uDCE4 Send Reply to HERO (' + gridKey + ')';
-          }
-        });
-      });
-
-      if (rivalReplyBtn) {
-        rivalReplyBtn.addEventListener('click', function () {
-          rivalReplyBtn.classList.add('copied');
-          rivalReplyBtn.textContent = '\u2713 Reply copied just now \u00b7 copy again';
-        });
-      }
-
-      // ------------------------------------------------------------------------
-      // 6. Records Tab Mode & Grid Chip Switcher
-      // ------------------------------------------------------------------------
-      var recModeBtns = Array.from(document.querySelectorAll('[data-rec-mode]'));
-      var recGridBtns = Array.from(document.querySelectorAll('[data-rec-grid]'));
-      var soloBox = document.getElementById('records-solo-box');
-      var mpBox = document.getElementById('records-mp-box');
-      var mpSurvivalText = document.getElementById('mp-survival-text');
-      var mpRowP3 = document.getElementById('mp-row-p3');
-      var mpRowP4 = document.getElementById('mp-row-p4');
-
-      var soloScoresByGrid = {
-        '2x2': ['Best: 12', 'Best: 10', 'Best: 8', 'Best: 7'],
-        '3x3': ['Best: 10', 'Best: 9', 'Best: 7', 'Best: 6'],
-        '4x4': ['Best: 9', 'Best: 8', 'Best: 6', 'Best: 5'],
-        '5x4': ['Best: 8', 'Best: 7', 'Best: 5', 'Best: 5']
-      };
-
-      function selectRecordsMode(mode) {
-        recModeBtns.forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-rec-mode') === mode);
-        });
-        if (mode === 'SOLO') {
-          soloBox.style.display = 'block';
-          mpBox.classList.remove('active');
-        } else {
-          soloBox.style.display = 'none';
-          mpBox.classList.add('active');
-          var roundsMap = { '2P': 'Round 14 Survived', '3P': 'Round 11 Survived', '4P': 'Round 9 Survived' };
-          if (mpSurvivalText) mpSurvivalText.textContent = roundsMap[mode] || 'Round 12 Survived';
-          if (mpRowP3) mpRowP3.style.display = (mode === '3P' || mode === '4P') ? 'flex' : 'none';
-          if (mpRowP4) mpRowP4.style.display = (mode === '4P') ? 'flex' : 'none';
-        }
-      }
-
-      recModeBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          selectRecordsMode(btn.getAttribute('data-rec-mode'));
-        });
-      });
-
-      recGridBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          recGridBtns.forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          var g = btn.getAttribute('data-rec-grid');
-          var vals = soloScoresByGrid[g];
-          if (vals) {
-            document.getElementById('rec-val-ec').textContent = vals[0];
-            document.getElementById('rec-val-ep').textContent = vals[1];
-            document.getElementById('rec-val-hc').textContent = vals[2];
-            document.getElementById('rec-val-hp').textContent = vals[3];
-          }
-        });
-      });
-
-      // ------------------------------------------------------------------------
-      // 7. Interactive Grid Size Explorer (2x2 to 5x4)
-      // ------------------------------------------------------------------------
-      var expGridBtns = Array.from(document.querySelectorAll('[data-exp-grid]'));
-      var expCaptions = {
-        '2x2': ['2\u00d72 Classic Board: 4 Geometric Pads', '261 Hz \u2013 523 Hz Harmonics'],
-        '3x3': ['3\u00d73 Tactical Board: 9 Geometric Pads', '261 Hz \u2013 740 Hz Harmonics'],
-        '4x4': ['4\u00d74 Master Board: 16 Geometric Pads', '261 Hz \u2013 932 Hz Harmonics'],
-        '5x4': ['5\u00d74 Grandmaster Board: 20 Geometric Pads (5 Rows \u00d7 4 Cols)', '261 Hz \u2013 1046 Hz Harmonics']
-      };
-      var expCaptionEl = document.getElementById('explorer-grid-caption');
-
-      expGridBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var g = btn.getAttribute('data-exp-grid');
-          expGridBtns.forEach(function (b) { b.classList.toggle('active', b === btn); });
-          ['2x2', '3x3', '4x4', '5x4'].forEach(function (key) {
-            var board = document.getElementById('board-exp-' + key);
-            if (board) board.classList.toggle('active', key === g);
-          });
-          var cap = expCaptions[g];
-          if (cap && expCaptionEl) {
-            expCaptionEl.innerHTML = '<span><strong>' + cap[0] + '</strong></span><span>' + cap[1] + '</span>';
-          }
-        });
-      });
-
-      // ------------------------------------------------------------------------
-      // 8. Pure-Display Challenge Code Anatomy Inspector (Hover / Tap)
-      // ------------------------------------------------------------------------
-      var segmentInfo = {
-        grid: {
-          tag: 'Segment 1 of 7 \u00b7 Board Size',
-          title: '4x4 \u2014 16-Pad Grid Lock',
-          desc: 'Locks the duel to the 4\u00d74 (16-pad) board so both players compete on the exact same geometry. Supports 2x2, 3x3, 4x4, and 5x4.'
-        },
-        target: {
-          tag: 'Segment 2 of 7 \u00b7 Target Score',
-          title: '6 \u2014 Score to Beat (or Final Score in Reply)',
-          desc: 'In a Challenge code (T-Code), this is the target score your friend must beat. In a Reply code (R-Code), it carries the challenger\u2019s achieved score.'
-        },
-        rules: {
-          tag: 'Segment 3 of 7 \u00b7 Match Rules Token',
-          title: 'T3E \u2014 Type, Tries & Difficulty',
-          desc: 'T = Challenge Code (or R = Reply Code), 3 = 3 Attempts allowed (1, 3, 5, or X for Free tries), and E = Easy cumulative mode (or H = Hard random mode).'
-        },
-        sender: {
-          tag: 'Segment 4 of 7 \u00b7 Challenger Identity',
-          title: 'ALEX \u2014 Sender Callsign',
-          desc: 'Identifies who issued the challenge or reply so Glowback automatically files the match under the right Rival card in your Hall of Fame.'
-        },
-        chain: {
-          tag: 'Segment 5 of 7 \u00b7 Rivalry Thread ID',
-          title: 'DG9A \u2014 4-Character Chain Token',
-          desc: 'Links your outbound Awaiting Challenge card to your friend\u2019s incoming Reply code so matches pair up cleanly and prevent duplicate replays.'
-        },
-        seed: {
-          tag: 'Segment 6 of 7 \u00b7 Deterministic RNG Seed',
-          title: 'Q579D \u2014 Sequence Generator Seed',
-          desc: 'Compact Base36 seed that drives Glowback\u2019s deterministic pseudo-random generator, producing the exact same pad order on both devices offline.'
-        },
-        checksum: {
-          tag: 'Segment 7 of 7 \u00b7 Anti-Tamper Guard',
-          title: 'B \u2014 Cryptographic Checksum Character',
-          desc: 'Computed across all preceding segments. If someone manually edits the score, tries, or seed by even one character, validation rejects the code in 0ms.'
-        }
-      };
-
-      var segBtns = Array.from(document.querySelectorAll('[data-seg]'));
-      var segTagEl = document.getElementById('seg-detail-tag');
-      var segTitleEl = document.getElementById('seg-detail-title');
-      var segDescEl = document.getElementById('seg-detail-desc');
-
-      function selectSegment(segKey) {
-        var data = segmentInfo[segKey];
-        if (!data) return;
-        segBtns.forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-seg') === segKey);
-        });
-        segTagEl.textContent = data.tag;
-        segTitleEl.textContent = data.title;
-        segDescEl.textContent = data.desc;
-      }
-
-      segBtns.forEach(function (btn) {
-        var key = btn.getAttribute('data-seg');
-        btn.addEventListener('click', function () { selectSegment(key); });
-        btn.addEventListener('mouseenter', function () { selectSegment(key); });
-      });
-
-      // ------------------------------------------------------------------------
-      // 9. EXPANDED 16-STEP + FINALE CINEMATIC DEMO MODE
-      //    - Uses high-contrast spotlight captions with pop animation
-      //    - Shows 5 rows × 4 cols for 5x4
-      //    - Shows 2P turn-by-turn handoff (Player 1 -> Player 2)
-      // ------------------------------------------------------------------------
-      var playDemoBtn = document.getElementById('play-demo-btn');
-      var phoneSimEl = document.getElementById('phone-simulator');
-      var progressTrackEl = document.getElementById('demo-progress-track');
-      var progressFillEl = document.getElementById('demo-progress-fill');
-      var closeDemoBtn = document.getElementById('demo-close-btn');
-      var toastPillEl = document.getElementById('demo-toast-pill');
-      var captionPillEl = document.getElementById('demo-caption-pill');
-      var captionStepEl = document.getElementById('demo-caption-step');
-      var captionTextEl = document.getElementById('demo-caption-text');
-      var finaleOverlayEl = document.getElementById('demo-finale-overlay');
-
-      var diffEasyBtn = document.getElementById('sim-diff-easy');
-      var diffHardBtn = document.getElementById('sim-diff-hard');
-      var codePillBox = document.getElementById('sim-code-pill-box');
-      var pasteCodeBtn = document.getElementById('sim-rivalry-paste-btn');
-      var rivalCardEl = document.getElementById('sim-rival-card');
-      var recordRowEcEl = document.getElementById('sim-record-row-ec');
-      var recValEcEl = document.getElementById('rec-val-ec');
-
-      var homeModeSoloBtn = document.querySelector('[data-home-mode="SOLO"]');
-      var homeMode2pBtn = document.querySelector('[data-home-mode="2P"]');
-      var recMode2pBtn = document.querySelector('[data-rec-mode="2P"]');
-
-      var demoTimers = [];
-
-      function scheduleDemo(fn, delayMs) {
-        var id = setTimeout(fn, delayMs);
-        demoTimers.push(id);
-        return id;
-      }
-
-      function clearDemoTimers() {
-        while (demoTimers.length > 0) {
-          clearTimeout(demoTimers.pop());
-        }
-      }
-
-      function clearSyntheticPulses() {
-        Array.from(document.querySelectorAll('.demo-tap-pulse')).forEach(function (el) {
-          el.classList.remove('demo-tap-pulse');
-        });
-      }
-
-      function triggerSyntheticTap(el) {
-        if (!el) return;
-        el.classList.remove('demo-tap-pulse');
-        void el.offsetWidth;
-        el.classList.add('demo-tap-pulse');
-        scheduleDemo(function () {
-          el.classList.remove('demo-tap-pulse');
-        }, 680);
-      }
-
-      function showDemoCaption(stepNum, text, progressPct, raiseAboveSeed) {
-        captionStepEl.textContent = '\u2728 STEP ' + stepNum + ' OF 16';
-        captionTextEl.textContent = text;
-        captionPillEl.classList.toggle('raise-above-seed', Boolean(raiseAboveSeed));
-        captionPillEl.classList.add('visible');
-        captionPillEl.classList.remove('pop-anim');
-        void captionPillEl.offsetWidth;
-        captionPillEl.classList.add('pop-anim');
-        progressFillEl.style.width = progressPct + '%';
-      }
-
-      function resetSimulatorToDefaults() {
-        clearSyntheticPulses();
-        renderPadGrid(2, 2);
-        clearActivePads();
-        activateSimulatorView('home');
-        setHomeModeActive('SOLO');
-
-        if (diffEasyBtn && diffHardBtn) {
-          diffEasyBtn.classList.add('active');
-          diffHardBtn.classList.remove('active');
-        }
-
-        if (statusEl) {
-          statusEl.textContent = 'WATCH SEQUENCE';
-          statusEl.style.color = '#00E5FF';
-        }
-        if (scoreEl) {
-          scoreEl.textContent = '4';
-        }
-
-        if (copyBtn) {
-          copyBtn.textContent = 'Copy Code';
-          copyBtn.style.borderColor = 'rgba(0, 229, 255, 0.4)';
-          copyBtn.style.color = '#00E5FF';
-        }
-
-        if (toastPillEl) {
-          toastPillEl.classList.remove('visible');
-        }
-
-        if (rivalWltBadge) {
-          rivalWltBadge.textContent = '4W - 2L - 1T';
-        }
-
-        if (rivalBanner) {
-          rivalBanner.style.borderLeftColor = '#10B981';
-          rivalBanner.innerHTML = '<span>Last Duel (4\u00d74 Easy)</span><strong style="color:#10B981;">WON \u00b7 You 7 vs Target 6</strong>';
-        }
-
-        if (rivalReplyBtn) {
-          rivalReplyBtn.classList.remove('copied');
-          rivalReplyBtn.textContent = '\uD83D\uDCE4 Send Reply to HERO (Tap to Copy)';
-        }
-
-        if (recValEcEl) {
-          recValEcEl.textContent = 'Best: 12';
-        }
-
-        selectRecordsMode('SOLO');
-        recGridBtns.forEach(function (b, idx) { b.classList.toggle('active', idx === 0); });
-      }
-
-      function stopDemoMode() {
-        isDemoActive = false;
-        clearDemoTimers();
-        if (ambientTimer) clearTimeout(ambientTimer);
-
-        phoneSimEl.classList.remove('demo-running');
-        progressTrackEl.classList.remove('visible');
-        progressFillEl.style.width = '0%';
-        closeDemoBtn.classList.remove('visible');
-        if (toastPillEl) toastPillEl.classList.remove('visible');
-        captionPillEl.classList.remove('visible', 'raise-above-seed', 'pop-anim');
-        finaleOverlayEl.classList.remove('visible');
-
-        resetSimulatorToDefaults();
-
-        stepIndex = 0;
-        phase = 'WATCH';
-        ambientTimer = setTimeout(runSequenceTick, 600);
-      }
-
-      function startDemoMode() {
-        stopDemoMode();
-        isDemoActive = true;
-        if (ambientTimer) clearTimeout(ambientTimer);
-
-        if (window.innerWidth <= 960 && phoneSimEl.scrollIntoView) {
-          phoneSimEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-
-        phoneSimEl.classList.add('demo-running');
-        progressTrackEl.classList.add('visible');
-        closeDemoBtn.classList.add('visible');
-
-        var STEP_MS = 2200;
-
-        // STEP 1 (0ms): Home SOLO/Easy/2x2: flash pads, score 0 -> 5, status "TARGET 5 LOCKED ✓" emerald
-        activateSimulatorView('home');
-        setHomeModeActive('SOLO');
-        renderPadGrid(2, 2);
-        statusEl.textContent = 'WATCH SEQUENCE';
-        statusEl.style.color = '#00E5FF';
-        scoreEl.textContent = '0';
-        showDemoCaption(1, 'Watch the glow. Repeat it. Reach 5.', 6, false);
-
-        [0, 1, 3, 2, 0].forEach(function (padIdx, i) {
-          scheduleDemo(function () {
-            triggerPadFlash(padIdx, 280);
-            scoreEl.textContent = String(i + 1);
-            if (i === 4) {
-              statusEl.textContent = 'TARGET 5 LOCKED \u2713';
-              statusEl.style.color = '#10B981';
-            }
-          }, 220 + i * 340);
-        });
-
-        // STEP 2 (2200ms): Home: tap Hard
-        scheduleDemo(function () {
-          showDemoCaption(2, 'Hard mode: a brand-new sequence every round.', 12, false);
-          triggerSyntheticTap(diffHardBtn);
-          if (diffEasyBtn && diffHardBtn) {
-            diffEasyBtn.classList.remove('active');
-            diffHardBtn.classList.add('active');
-          }
-          statusEl.textContent = 'HARD MODE \u00b7 FRESH RNG';
-          statusEl.style.color = '#F87171';
-        }, STEP_MS * 1);
-
-        // STEP 3 (4400ms): Home: tap Easy
-        scheduleDemo(function () {
-          showDemoCaption(3, 'Easy mode: the sequence grows each round.', 19, false);
-          triggerSyntheticTap(diffEasyBtn);
-          if (diffEasyBtn && diffHardBtn) {
-            diffHardBtn.classList.remove('active');
-            diffEasyBtn.classList.add('active');
-          }
-          statusEl.textContent = 'EASY MODE \u00b7 CUMULATIVE';
-          statusEl.style.color = '#34D399';
-        }, STEP_MS * 2);
-
-        // STEP 4 (6600ms): Home: renderPadGrid(3, 3) -> 3 rows × 3 cols
-        scheduleDemo(function () {
-          showDemoCaption(4, 'Scale up: 3\u00d73 = 9 pads.', 25, false);
-          renderPadGrid(3, 3);
-          triggerSyntheticTap(simBoardPillEl);
-          scheduleDemo(function () { triggerPadFlash(0, 300); }, 250);
-          scheduleDemo(function () { triggerPadFlash(4, 300); }, 650);
-          scheduleDemo(function () { triggerPadFlash(8, 300); }, 1050);
-        }, STEP_MS * 3);
-
-        // STEP 5 (8800ms): Home: renderPadGrid(4, 4) -> 4 rows × 4 cols
-        scheduleDemo(function () {
-          showDemoCaption(5, '4\u00d74 = 16 pads.', 31, false);
-          renderPadGrid(4, 4);
-          triggerSyntheticTap(simBoardPillEl);
-          scheduleDemo(function () { triggerPadFlash(2, 300); }, 250);
-          scheduleDemo(function () { triggerPadFlash(9, 300); }, 650);
-          scheduleDemo(function () { triggerPadFlash(15, 300); }, 1050);
-        }, STEP_MS * 4);
-
-        // STEP 6 (11000ms): Home: renderPadGrid(5, 4) -> 5 rows × 4 cols (20 pads)
-        scheduleDemo(function () {
-          showDemoCaption(6, '5\u00d74 = 20 pads (5 rows \u00d7 4 cols). Grandmaster.', 38, false);
-          renderPadGrid(5, 4);
-          triggerSyntheticTap(simBoardPillEl);
-          scheduleDemo(function () { triggerPadFlash(3, 300); }, 250);
-          scheduleDemo(function () { triggerPadFlash(10, 300); }, 650);
-          scheduleDemo(function () { triggerPadFlash(19, 300); }, 1050);
-        }, STEP_MS * 5);
-
-        // STEP 7 (13200ms): Home: renderPadGrid(2, 2); tap 2P -> Show Player 1's Turn
-        scheduleDemo(function () {
-          showDemoCaption(7, '2P Pass-and-Play: Player 1 (P1) takes the turn\u2026', 44, false);
-          renderPadGrid(2, 2);
-          triggerSyntheticTap(homeMode2pBtn);
-          setHomeModeActive('2P');
-          statusEl.textContent = '\uD83D\uDD35 PLAYER 1 TURN (P1)';
-          statusEl.style.color = '#38BDF8';
-          scoreEl.textContent = '1';
-          scheduleDemo(function () { triggerPadFlash(0, 280); scoreEl.textContent = '2'; }, 350);
-          scheduleDemo(function () { triggerPadFlash(2, 280); scoreEl.textContent = '3'; }, 850);
-        }, STEP_MS * 6);
-
-        // STEP 8 (15400ms): Home (2P): Show Player 2's Turn handoff on the same device
-        scheduleDemo(function () {
-          showDemoCaption(8, '\u2026then pass the phone for Player 2\u2019s (P2) turn!', 50, false);
-          statusEl.textContent = '\uD83D\uDD34 PLAYER 2 TURN (P2) \u00b7 YOUR MOVE';
-          statusEl.style.color = '#F87171';
-          scheduleDemo(function () { triggerPadFlash(1, 280); scoreEl.textContent = '4'; }, 350);
-          scheduleDemo(function () { triggerPadFlash(3, 280); scoreEl.textContent = '5'; }, 850);
-        }, STEP_MS * 7);
-
-        // STEP 9 (17600ms): Home: tap SOLO; tap Copy Code -> ✓ Copied (raise caption above seed box)
-        scheduleDemo(function () {
-          showDemoCaption(9, 'Score 5+? Copy your challenge code.', 56, true);
-          triggerSyntheticTap(homeModeSoloBtn);
-          setHomeModeActive('SOLO');
-          statusEl.textContent = 'TARGET 5 LOCKED \u2713';
-          statusEl.style.color = '#10B981';
-          scoreEl.textContent = '5';
-          scheduleDemo(function () {
-            triggerSyntheticTap(copyBtn);
-            if (copyBtn) {
-              copyBtn.textContent = '\u2713 Copied';
-              copyBtn.style.borderColor = '#10B981';
-              copyBtn.style.color = '#10B981';
-            }
-          }, 420);
-        }, STEP_MS * 8);
-
-        // STEP 10 (19800ms): Home: brief toast overlay "Shared to chat ✓"
-        scheduleDemo(function () {
-          showDemoCaption(10, 'Send it to a friend \u2014 any chat app.', 63, true);
-          triggerSyntheticTap(codePillBox);
-          if (toastPillEl) {
-            toastPillEl.classList.add('visible');
-          }
-        }, STEP_MS * 9);
-
-        // STEP 11 (22000ms): Leaderboard -> Rivalry: tap Paste Code
-        scheduleDemo(function () {
-          if (toastPillEl) toastPillEl.classList.remove('visible');
-          activateSimulatorView('rivalry');
-          showDemoCaption(11, 'Friend pastes your code\u2026', 69, false);
-          scheduleDemo(function () {
-            triggerSyntheticTap(pasteCodeBtn);
-          }, 350);
-        }, STEP_MS * 10);
-
-        // STEP 12 (24200ms): Home (brief): status "FRIEND'S TURN", flash pads, score -> 7
-        scheduleDemo(function () {
-          activateSimulatorView('home');
-          showDemoCaption(12, '\u2026and plays your exact sequence.', 75, false);
-          statusEl.textContent = "FRIEND'S TURN";
-          statusEl.style.color = '#00E5FF';
-          [0, 1, 3, 2].forEach(function (padIdx, idx) {
-            scheduleDemo(function () {
-              triggerPadFlash(padIdx, 280);
-              if (idx === 3) {
-                scoreEl.textContent = '7';
-              } else {
-                scoreEl.textContent = String(5 + idx);
-              }
-            }, 250 + idx * 380);
-          });
-        }, STEP_MS * 11);
-
-        // STEP 13 (26400ms): Rivalry: tap Send Reply -> ✓ copied
-        scheduleDemo(function () {
-          activateSimulatorView('rivalry');
-          showDemoCaption(13, 'They send back a tamper-proof reply.', 81, false);
-          scheduleDemo(function () {
-            triggerSyntheticTap(rivalReplyBtn);
-            if (rivalReplyBtn) {
-              rivalReplyBtn.classList.add('copied');
-              rivalReplyBtn.textContent = '\u2713 Reply copied just now \u00b7 copy again';
-            }
-          }, 350);
-        }, STEP_MS * 12);
-
-        // STEP 14 (28600ms): Rivalry: banner -> "WON · You 7 vs Target 5"; #rival-wlt-badge -> "5W - 2L - 1T"
-        scheduleDemo(function () {
-          showDemoCaption(14, 'You paste the reply. Victory logged.', 88, false);
-          triggerSyntheticTap(rivalCardEl);
-          if (rivalBanner) {
-            rivalBanner.style.borderLeftColor = '#10B981';
-            rivalBanner.innerHTML = '<span>Last Duel (2\u00d72 Easy)</span><strong style="color:#10B981;">WON \u00b7 You 7 vs Target 5</strong>';
-          }
-          if (rivalWltBadge) {
-            rivalWltBadge.textContent = '5W - 2L - 1T';
-            triggerSyntheticTap(rivalWltBadge);
-          }
-        }, STEP_MS * 13);
-
-        // STEP 15 (30800ms): Records: tap Easy · Classic, 12 -> 13
-        scheduleDemo(function () {
-          activateSimulatorView('records');
-          selectRecordsMode('SOLO');
-          showDemoCaption(15, 'Personal bests update instantly.', 94, false);
-          scheduleDemo(function () {
-            triggerSyntheticTap(recordRowEcEl);
-            if (recValEcEl) {
-              recValEcEl.textContent = 'Best: 13';
-            }
-          }, 380);
-        }, STEP_MS * 14);
-
-        // STEP 16 (33000ms): Records: tap 2P (show survival standings)
-        scheduleDemo(function () {
-          showDemoCaption(16, 'Multiplayer survival tracked too.', 100, false);
-          scheduleDemo(function () {
-            triggerSyntheticTap(recMode2pBtn);
-            selectRecordsMode('2P');
-          }, 350);
-        }, STEP_MS * 15);
-
-        // STEP 17 (35200ms - 37400ms): Finale overlay 2s -> auto-close ("Watch the glow. Send it back.")
-        scheduleDemo(function () {
-          captionPillEl.classList.remove('visible');
-          finaleOverlayEl.classList.add('visible');
-        }, STEP_MS * 16);
-
-        scheduleDemo(function () {
-          stopDemoMode();
-        }, STEP_MS * 16 + 2200);
-      }
-
-      if (playDemoBtn) {
-        playDemoBtn.addEventListener('click', function () {
-          startDemoMode();
-        });
-      }
-
-      if (closeDemoBtn) {
-        closeDemoBtn.addEventListener('click', function () {
-          stopDemoMode();
-        });
-      }
-    })();
-  </script>
 </body>
 </html>
