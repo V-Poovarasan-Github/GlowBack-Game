@@ -76,10 +76,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -809,7 +817,9 @@ fun EnterChallengeDialog(
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.testTag("enter_challenge_dialog_title")
+                        modifier = Modifier
+                            .semantics { heading() }
+                            .testTag("enter_challenge_dialog_title")
                     )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -818,8 +828,9 @@ fun EnterChallengeDialog(
                         IconButton(
                             onClick = { showHelpBanner = !showHelpBanner },
                             modifier = Modifier
-                                .size(28.dp)
                                 .testTag("challenge_help_button")
+                                .minimumInteractiveComponentSize()
+                                .size(28.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.HelpOutline,
@@ -830,8 +841,9 @@ fun EnterChallengeDialog(
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
-                                .size(28.dp)
                                 .testTag("close_challenge_dialog_button")
+                                .minimumInteractiveComponentSize()
+                                .size(28.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
@@ -944,7 +956,9 @@ fun EnterChallengeDialog(
                         color = Color(0xFFFF5252),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.testTag("challenge_code_error_text")
+                        modifier = Modifier
+                            .semantics { liveRegion = LiveRegionMode.Assertive }
+                            .testTag("challenge_code_error_text")
                     )
                 }
 
@@ -1775,9 +1789,11 @@ fun PasteRivalCodeDialog(
                         color = Color.White,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.testTag("paste_rival_dialog_title")
+                        modifier = Modifier
+                            .semantics { heading() }
+                            .testTag("paste_rival_dialog_title")
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize().size(28.dp)) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                     }
                 }
@@ -1834,7 +1850,9 @@ fun PasteRivalCodeDialog(
                         color = Color(0xFFFF5252),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.testTag("paste_rival_error_text")
+                        modifier = Modifier
+                            .semantics { liveRegion = LiveRegionMode.Assertive }
+                            .testTag("paste_rival_error_text")
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1961,13 +1979,17 @@ fun ShareTriesSelectorDialog(
                             color = Color.White,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.weight(1f).testTag("share_challenge_header_title")
+                            modifier = Modifier
+                                .weight(1f)
+                                .semantics { heading() }
+                                .testTag("share_challenge_header_title")
                         )
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
-                                .size(28.dp)
                                 .testTag("close_tries_selector_button")
+                                .minimumInteractiveComponentSize()
+                                .size(28.dp)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
                         }
@@ -2127,7 +2149,15 @@ fun ShareTriesSelectorDialog(
                                     shape = RoundedCornerShape(12.dp),
                                     color = if (isChosen) Color(0xFF0284C7).copy(alpha = 0.45f) else Color(0xFF1E293B),
                                     border = BorderStroke(1.dp, if (isChosen) Color(0xFF00E5FF) else Color(0xFF334155)),
-                                    modifier = Modifier.testTag("board_option_$idx")
+                                    modifier = Modifier
+                                        .testTag("board_option_$idx")
+                                        .minimumInteractiveComponentSize()
+                                        .heightIn(min = 48.dp)
+                                        .semantics {
+                                            role = Role.RadioButton
+                                            selected = isChosen
+                                            stateDescription = if (isChosen) "Selected" else "Not selected"
+                                        }
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -2167,10 +2197,10 @@ fun ShareTriesSelectorDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(46.dp)
-                            .clip(RoundedCornerShape(23.dp))
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(23.dp))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
                             .padding(3.dp)
                             .testTag("tries_segmented_row"),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2184,6 +2214,8 @@ fun ShareTriesSelectorDialog(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxSize()
+                                    .testTag(tag)
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(20.dp))
                                     .background(
                                         if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent
@@ -2192,8 +2224,11 @@ fun ShareTriesSelectorDialog(
                                         if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(20.dp))
                                         else Modifier
                                     )
-                                    .clickable { selectedTries = triesVal }
-                                    .testTag(tag),
+                                    .clickable(role = Role.RadioButton) { selectedTries = triesVal }
+                                    .semantics {
+                                        selected = isSelected
+                                        stateDescription = if (isSelected) "Selected" else "Not selected"
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -2465,11 +2500,17 @@ fun RivalMatchSetupDialog(
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
-                        modifier = Modifier.weight(1f).testTag("rival_setup_dialog_title")
+                        modifier = Modifier
+                            .weight(1f)
+                            .semantics { heading() }
+                            .testTag("rival_setup_dialog_title")
                     )
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(28.dp).testTag("rival_setup_close_button")
+                        modifier = Modifier
+                            .testTag("rival_setup_close_button")
+                            .minimumInteractiveComponentSize()
+                            .size(28.dp)
                     ) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
                     }
@@ -2690,8 +2731,14 @@ fun RivalMatchSetupDialog(
                                 onClick = { selectedGridTag = tag },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .heightIn(min = 36.dp)
-                                    .testTag("rival_setup_grid_$tag"),
+                                    .testTag("rival_setup_grid_$tag")
+                                    .minimumInteractiveComponentSize()
+                                    .heightIn(min = 48.dp)
+                                    .semantics {
+                                        role = Role.RadioButton
+                                        selected = isSelected
+                                        stateDescription = if (isSelected) "Selected" else "Not selected"
+                                    },
                                 shape = RoundedCornerShape(8.dp),
                                 border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF334155)),
                                 colors = ButtonDefaults.buttonColors(
@@ -2728,8 +2775,14 @@ fun RivalMatchSetupDialog(
                                 onClick = { selectedDifficulty = diff },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .heightIn(min = 36.dp)
-                                    .testTag("rival_setup_diff_${diff.name.lowercase()}"),
+                                    .testTag("rival_setup_diff_${diff.name.lowercase()}")
+                                    .minimumInteractiveComponentSize()
+                                    .heightIn(min = 48.dp)
+                                    .semantics {
+                                        role = Role.RadioButton
+                                        selected = isSelected
+                                        stateDescription = if (isSelected) "Selected" else "Not selected"
+                                    },
                                 shape = RoundedCornerShape(8.dp),
                                 border = if (isSelected) null else BorderStroke(1.dp, Color(0xFF334155)),
                                 colors = ButtonDefaults.buttonColors(
@@ -2911,8 +2964,9 @@ fun HallOfFameScreen(
             IconButton(
                 onClick = onNavigateBack,
                 modifier = Modifier
-                    .size(40.dp)
                     .testTag("leaderboard_back_button")
+                    .minimumInteractiveComponentSize()
+                    .size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -2927,7 +2981,10 @@ fun HallOfFameScreen(
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = 1.sp,
-                modifier = Modifier.weight(1f).testTag("leaderboard_screen_title")
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { heading() }
+                    .testTag("leaderboard_screen_title")
             )
         }
 
@@ -2947,16 +3004,22 @@ fun HallOfFameScreen(
             modifier = Modifier.fillMaxWidth().testTag("leaderboard_tab_row")
         ) {
             tabs.forEachIndexed { index, title ->
+                val isTabSelected = selectedTab == index
                 Tab(
-                    selected = selectedTab == index,
+                    selected = isTabSelected,
                     onClick = { selectedTab = index },
-                    modifier = Modifier.testTag(if (index == 0) "tab_rivalry" else "tab_records"),
+                    modifier = Modifier
+                        .testTag(if (index == 0) "tab_rivalry" else "tab_records")
+                        .heightIn(min = 48.dp)
+                        .semantics {
+                            stateDescription = if (isTabSelected) "Selected" else "Not selected"
+                        },
                     text = {
                         Text(
                             text = title,
                             fontSize = 14.sp,
-                            fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
-                            color = if (selectedTab == index) Color(0xFF00E5FF) else Color(0xFF94A3B8)
+                            fontWeight = if (isTabSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isTabSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8)
                         )
                     }
                 )
@@ -3561,21 +3624,34 @@ fun RivalCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(text = "⚔️", fontSize = 18.sp)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = rival.name,
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.5.sp,
+                    Box(
                         modifier = Modifier
-                            .clickable { onDynamicAction() }
                             .testTag("rival_card_name_${rival.name}")
-                    )
+                            .minimumInteractiveComponentSize()
+                            .heightIn(min = 48.dp)
+                            .widthIn(min = 48.dp)
+                            .clickable(
+                                role = Role.Button,
+                                onClick = { onDynamicAction() }
+                            ),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(
+                            text = rival.name,
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
 
                 IconButton(
                     onClick = { showClearConfirm = true },
-                    modifier = Modifier.size(28.dp).testTag("delete_rival_${rival.name}")
+                    modifier = Modifier
+                        .testTag("delete_rival_${rival.name}")
+                        .minimumInteractiveComponentSize()
+                        .size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
@@ -3631,7 +3707,7 @@ fun RivalCard(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(28.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("rival_grid_chips_row_${rival.name}"),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -3649,27 +3725,42 @@ fun RivalCard(
                         val chipTextColor = if (isSelected) Color.White else Color(0xFF94A3B8)
                         Box(
                             modifier = Modifier
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(chipBgColor)
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = chipBorderColor,
-                                    shape = RoundedCornerShape(6.dp)
+                                .testTag("rival_grid_chip_${rival.name}_$gridKey")
+                                .minimumInteractiveComponentSize()
+                                .heightIn(min = 48.dp)
+                                .widthIn(min = 56.dp)
+                                .clickable(
+                                    role = Role.RadioButton,
+                                    onClick = { selectedGridKey = gridKey }
                                 )
-                                .clickable { selectedGridKey = gridKey }
-                                .padding(horizontal = 8.dp)
-                                .testTag("rival_grid_chip_${rival.name}_$gridKey"),
+                                .semantics {
+                                    selected = isSelected
+                                    stateDescription = if (isSelected) "Selected" else "Not selected"
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = chipText,
-                                color = chipTextColor,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(chipBgColor)
+                                    .border(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = chipBorderColor,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = chipText,
+                                    color = chipTextColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
@@ -4012,14 +4103,14 @@ fun RecordsTabContent(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Mode Selector: [SOLO] [2P] [3P] [4P]
-        val modeTrackHeight = (44f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.25f)).dp
+        val modeTrackHeight = (48f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.25f)).dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(modeTrackHeight)
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(Color(0xFF1E293B))
-                .border(1.dp, Color(0xFF334155), RoundedCornerShape(22.dp))
+                .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
                 .padding(3.dp)
                 .testTag("records_mode_selector"),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -4030,12 +4121,17 @@ fun RecordsTabContent(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxSize()
-                        .clip(RoundedCornerShape(19.dp))
+                        .testTag("records_mode_$modeLabel")
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(21.dp))
                         .background(if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent)
-                        .then(if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(19.dp)) else Modifier)
-                        .clickable { selectedModeIndex = index }
-                        .padding(horizontal = 4.dp)
-                        .testTag("records_mode_$modeLabel"),
+                        .then(if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(21.dp)) else Modifier)
+                        .clickable(role = Role.Tab) { selectedModeIndex = index }
+                        .semantics {
+                            selected = isSelected
+                            stateDescription = if (isSelected) "Selected" else "Not selected"
+                        }
+                        .padding(horizontal = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -4066,8 +4162,14 @@ fun RecordsTabContent(
                         onClick = { selectedGridIndex = index },
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 38.dp)
-                            .testTag("records_grid_$gridLabel"),
+                            .testTag("records_grid_$gridLabel")
+                            .minimumInteractiveComponentSize()
+                            .heightIn(min = 48.dp)
+                            .semantics {
+                                role = Role.RadioButton
+                                selected = isSelected
+                                stateDescription = if (isSelected) "Selected" else "Not selected"
+                            },
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         colors = ButtonDefaults.outlinedButtonColors(

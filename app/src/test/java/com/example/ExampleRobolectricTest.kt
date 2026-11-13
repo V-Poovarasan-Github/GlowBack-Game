@@ -6545,13 +6545,175 @@ class ExampleRobolectricTest {
         assertTrue("isReplySent must be true after share", afterShare!!.isReplySent)
         assertNotNull("copiedAt must be stamped after share", afterShare.lastReplies["3x3"]?.copiedAt)
     }
+
+    @Test
+    fun release1_phase3_accessibilitySemanticsAndTouchTargets() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "ALEX")
+        val prefs = context.getSharedPreferences("SimonSaysPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt("best_2x2_classic_EASY", 8).commit()
+
+        val now = System.currentTimeMillis()
+        val seededRival = RivalRecord(
+            name = "HERO",
+            wins = 2,
+            losses = 1,
+            ties = 0,
+            matches = 3,
+            lastGrid = "4x4",
+            lastDifficulty = GameDifficulty.EASY,
+            lastTarget = 6,
+            lastUserScore = 7,
+            lastStatus = "WON",
+            gridStats = mapOf(
+                "3x3" to GridStat(wins = 1, losses = 1, lastPlayedAt = now - 60_000L),
+                "4x4" to GridStat(wins = 1, losses = 0, lastPlayedAt = now)
+            )
+        )
+        ChallengeStorage.saveRival(context, seededRival)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        // 3.1 & 3.2: Home difficulty toggles & mode tabs stateDescription, Role, and >=48dp touch targets
+        val easyNode = composeTestRule.onNodeWithTag("difficulty_toggle_easy").fetchSemanticsNode()
+        val hardNode = composeTestRule.onNodeWithTag("difficulty_toggle_hard").fetchSemanticsNode()
+        assertEquals(
+            androidx.compose.ui.semantics.Role.RadioButton,
+            easyNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role]
+        )
+        assertEquals(
+            "Selected",
+            easyNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Not selected",
+            hardNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertTrue("difficulty_toggle_easy height must be >= 48dp", easyNode.boundsInRoot.height >= min48Px)
+        assertTrue("difficulty_toggle_hard height must be >= 48dp", hardNode.boundsInRoot.height >= min48Px)
+
+        // Toggle Hard and verify stateDescription flips
+        composeTestRule.onNodeWithTag("difficulty_toggle_hard").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Selected",
+            composeTestRule.onNodeWithTag("difficulty_toggle_hard").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Not selected",
+            composeTestRule.onNodeWithTag("difficulty_toggle_easy").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        composeTestRule.onNodeWithTag("difficulty_toggle_easy").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3.5: Pad idle stateDescription in IDLE
+        val padNode = composeTestRule.onNodeWithTag("pad_green").fetchSemanticsNode()
+        assertEquals(
+            "idle",
+            padNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+
+        // Navigate to Leaderboard -> Rivalry
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3.6: Heading on Hall of Fame title
+        val titleNode = composeTestRule.onNodeWithTag("leaderboard_screen_title").fetchSemanticsNode()
+        assertTrue(
+            "leaderboard_screen_title must be marked as a semantic heading",
+            titleNode.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Heading)
+        )
+
+        // D3 / Amendment A3: RivalCard must NOT set mergeDescendants = true
+        val rivalCardNode = composeTestRule.onNodeWithTag("rival_card_HERO").fetchSemanticsNode()
+        assertFalse(
+            "RivalCard must not merge descendants",
+            rivalCardNode.config.isMergingSemanticsOfDescendants
+        )
+
+        // 3.3: Clickable rival name has Role.Button and >= 48dp touch target
+        val rivalNameNode = composeTestRule.onNodeWithTag("rival_card_name_HERO").fetchSemanticsNode()
+        assertEquals(
+            androidx.compose.ui.semantics.Role.Button,
+            rivalNameNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role]
+        )
+        assertTrue("rival_card_name_HERO height must be >= 48dp", rivalNameNode.boundsInRoot.height >= min48Px)
+        assertTrue("rival_card_name_HERO width must be >= 48dp", rivalNameNode.boundsInRoot.width >= min48Px)
+
+        // 3.1 & 3.2: Per-rival grid-stat chips expose Selected / Not selected and >= 48dp height
+        val chip4x4 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_4x4").fetchSemanticsNode()
+        val chip3x3 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").fetchSemanticsNode()
+        assertEquals(
+            "Selected",
+            chip4x4.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Not selected",
+            chip3x3.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertTrue("rival_grid_chip_HERO_4x4 height must be >= 48dp", chip4x4.boundsInRoot.height >= min48Px)
+
+        // Open RivalMatchSetupDialog via rival name tap and check grid/difficulty selectors
+        composeTestRule.onNodeWithTag("rival_card_name_HERO").performClick()
+        composeTestRule.waitForIdle()
+        val setupGrid4x4 = composeTestRule.onNodeWithTag("rival_setup_grid_4x4").fetchSemanticsNode()
+        val setupGrid2x2 = composeTestRule.onNodeWithTag("rival_setup_grid_2x2").fetchSemanticsNode()
+        assertEquals(
+            "Selected",
+            setupGrid4x4.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Not selected",
+            setupGrid2x2.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertTrue("rival_setup_grid_4x4 height must be >= 48dp", setupGrid4x4.boundsInRoot.height >= min48Px)
+        composeTestRule.onNodeWithTag("rival_setup_close_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Switch to Records tab and verify mode & grid selectors
+        composeTestRule.onNodeWithTag("tab_records").performClick()
+        composeTestRule.waitForIdle()
+        val recSolo = composeTestRule.onNodeWithTag("records_mode_SOLO").fetchSemanticsNode()
+        val rec2p = composeTestRule.onNodeWithTag("records_mode_2P").fetchSemanticsNode()
+        val recGrid2x2 = composeTestRule.onNodeWithTag("records_grid_2×2").fetchSemanticsNode()
+        assertEquals(
+            "Selected",
+            recSolo.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Not selected",
+            rec2p.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertEquals(
+            "Selected",
+            recGrid2x2.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        assertTrue("records_grid_2×2 height must be >= 48dp", recGrid2x2.boundsInRoot.height >= min48Px)
+
+        // Return to Home, start game, and verify 3.4 liveRegion on status_header_text & current_score_text
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+        val statusHeaderNode = composeTestRule.onNodeWithTag("status_header_text").fetchSemanticsNode()
+        val scoreNode = composeTestRule.onNodeWithTag("current_score_text").fetchSemanticsNode()
+        assertEquals(
+            androidx.compose.ui.semantics.LiveRegionMode.Polite,
+            statusHeaderNode.config[androidx.compose.ui.semantics.SemanticsProperties.LiveRegion]
+        )
+        assertEquals(
+            androidx.compose.ui.semantics.LiveRegionMode.Polite,
+            scoreNode.config[androidx.compose.ui.semantics.SemanticsProperties.LiveRegion]
+        )
+    }
 }
-
-
-
-
-
-
-
-
 

@@ -83,9 +83,15 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -3695,7 +3701,14 @@ private fun TopTitleRow(
             Spacer(modifier = Modifier.width(6.dp))
             Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(Color(0xFFEF4444)))
             Spacer(modifier = Modifier.width(10.dp))
-            Text(text = "GLOWBACK", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+            Text(
+                text = "GLOWBACK",
+                color = Color(0xFFF8FAFC),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 2.sp,
+                modifier = Modifier.semantics { heading() }
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             val (modeIcon, modeDesc, modeTint) = when (feedbackMode) {
@@ -3750,7 +3763,16 @@ private fun RowScope.ScoreCard(title: String, value: Int, icon: ImageVector, acc
                 Text(text = title, color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
             Spacer(modifier = Modifier.height(2.dp))
-            Text(text = value.toString(), color = valueColor, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace, modifier = Modifier.testTag(tag))
+            Text(
+                text = value.toString(),
+                color = valueColor,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+                    .testTag(tag)
+            )
         }
     }
 }
@@ -3772,15 +3794,15 @@ private fun SegmentedModeTrack(
     val modes = GameMode.entries
     val selectedIndex = modes.indexOf(selectedMode).coerceAtLeast(0)
     val fontScaleFactor = LocalDensity.current.fontScale.coerceIn(1f, 1.25f)
-    val trackHeight = (44f * fontScaleFactor).dp
+    val trackHeight = (48f * fontScaleFactor).dp
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .height(trackHeight)
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(Color(0xFF1E293B))
-            .border(1.dp, Color(0xFF334155), RoundedCornerShape(22.dp))
+            .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
             .padding(3.dp)
             .testTag("segmented_mode_track")
     ) {
@@ -3800,9 +3822,9 @@ private fun SegmentedModeTrack(
                 .offset(x = thumbOffset)
                 .width(segmentWidth)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(19.dp))
+                .clip(RoundedCornerShape(21.dp))
                 .background(Color(0xFF0284C7).copy(alpha = 0.42f))
-                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(19.dp))
+                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(21.dp))
         )
 
         Row(
@@ -3815,14 +3837,19 @@ private fun SegmentedModeTrack(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(19.dp))
+                        .testTag(mode.tagId)
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(21.dp))
                         .clickable(
                             enabled = enabled,
                             role = Role.Tab,
                             onClick = { onSelectMode(mode) }
                         )
-                        .padding(horizontal = 4.dp)
-                        .testTag(mode.tagId),
+                        .semantics {
+                            selected = isSelected
+                            stateDescription = if (isSelected) "Selected" else "Not selected"
+                        }
+                        .padding(horizontal = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -3986,19 +4013,20 @@ private fun BoardAndContextRow(
                     )
                 }
 
-                // Foreground touch targets clipped to the track and 12.dp segment shapes
+                // Foreground touch targets spanning full 48dp+ containerHeight while visual track remains 40dp
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(trackVisualHeight)
-                        .clip(RoundedCornerShape(14.dp))
-                        .padding(2.dp),
+                        .fillMaxHeight()
+                        .padding(horizontal = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
                             .width(segmentWidth)
                             .fillMaxHeight()
+                            .testTag("difficulty_toggle_easy")
+                            .minimumInteractiveComponentSize()
                             .clip(RoundedCornerShape(12.dp))
                             .clickable(
                                 role = Role.RadioButton,
@@ -4007,8 +4035,9 @@ private fun BoardAndContextRow(
                             .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Easy difficulty"
-                            }
-                            .testTag("difficulty_toggle_easy"),
+                                selected = isEasy
+                                stateDescription = if (isEasy) "Selected" else "Not selected"
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -4025,6 +4054,8 @@ private fun BoardAndContextRow(
                         modifier = Modifier
                             .width(segmentWidth)
                             .fillMaxHeight()
+                            .testTag("difficulty_toggle_hard")
+                            .minimumInteractiveComponentSize()
                             .clip(RoundedCornerShape(12.dp))
                             .clickable(
                                 role = Role.RadioButton,
@@ -4033,8 +4064,9 @@ private fun BoardAndContextRow(
                             .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Hard difficulty"
-                            }
-                            .testTag("difficulty_toggle_hard"),
+                                selected = isHard
+                                stateDescription = if (isHard) "Selected" else "Not selected"
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -5201,7 +5233,15 @@ private fun SettingsSheetDialog(
                                     },
                                     colors = chipColors,
                                     border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
-                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(opt.testTagId)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .semantics {
+                                            role = Role.RadioButton
+                                            selected = sel
+                                            stateDescription = if (sel) "Selected" else "Not selected"
+                                        }
+                                        .testTag(opt.testTagId)
                                 )
                             }
                         }
@@ -5227,7 +5267,15 @@ private fun SettingsSheetDialog(
                                     },
                                     colors = chipColors,
                                     border = FilterChipDefaults.filterChipBorder(true, sel, borderColor = Color(0xFF334155), selectedBorderColor = Color(0xFF38BDF8)),
-                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag(tag)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .semantics {
+                                            role = Role.RadioButton
+                                            selected = sel
+                                            stateDescription = if (sel) "Selected" else "Not selected"
+                                        }
+                                        .testTag(tag)
                                 )
                             }
                         }
@@ -6429,6 +6477,8 @@ private fun StatusBanner(
         border = BorderStroke(1.5.dp, bannerAccentColor.copy(alpha = 0.65f))
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            val isUrgentStatus = gameState == GameState.GAME_OVER || eliminatedBannerText != null || isChallengeLost
+            val headerLiveRegion = if (isUrgentStatus) LiveRegionMode.Assertive else LiveRegionMode.Polite
             AnimatedContent(
                 targetState = statusTitle,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) },
@@ -6436,13 +6486,21 @@ private fun StatusBanner(
             ) { title ->
                 Text(
                     text = title, color = bannerAccentColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
-                    textAlign = TextAlign.Center, modifier = if (title == statusTitle) Modifier.testTag("status_header_text") else Modifier
+                    textAlign = TextAlign.Center,
+                    modifier = if (title == statusTitle) {
+                        Modifier
+                            .semantics { liveRegion = headerLiveRegion }
+                            .testTag("status_header_text")
+                    } else Modifier
                 )
             }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = statusSubtitle, color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center, modifier = Modifier.testTag("status_subtitle_text")
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+                    .testTag("status_subtitle_text")
             )
             if (isChallengeReadyGateVisible && gameState == GameState.WATCHING) {
                 Spacer(modifier = Modifier.height(6.dp))
@@ -6644,6 +6702,7 @@ private fun GlowPadButton(
                 } else {
                     "${pad.glyph.displayName} ${pad.colorName} game pad"
                 }
+                stateDescription = if (isFlashing) "lit" else "idle"
             }
             .testTag(pad.testTagId),
         contentAlignment = Alignment.Center
