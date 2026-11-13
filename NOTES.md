@@ -15,3 +15,11 @@
     - `uses-permission#android.permission.RECEIVE_BOOT_COMPLETED` merged from `app/src/main/AndroidManifest.xml:6:5-81` and `[androidx.work:work-runtime:2.10.0] AndroidManifest.xml:25:5-81`.
     - `receiver#androidx.work.impl.background.systemalarm.RescheduleReceiver` with `action#android.intent.action.BOOT_COMPLETED` added from `[androidx.work:work-runtime:2.10.0] AndroidManifest.xml:110:9-121:20`.
   - **Decision**: **KEEP**. `RECEIVE_BOOT_COMPLETED` is actively used by WorkManager's `RescheduleReceiver` (`androidx.work:work-runtime:2.10.0`) to reschedule periodic offline engagement notifications (`EngagementScheduler` / `EngagementWorker`) across device reboots.
+
+## Phase 2 — Release Build Config
+- **2.2 Release Signing Fail-Fast**: Added `verifyReleaseSigningConfig` task in `app/build.gradle.kts` wired as a dependency to all `Release` assemble/bundle/package/sign/validateSigning tasks. Throws a descriptive `GradleException` when `KEYSTORE_PATH` (or `${rootDir}/my-upload-key.jks`), `STORE_PASSWORD`, or `KEY_PASSWORD` are missing, preventing silent unsigned release builds while keeping `assembleDebug` and `testDebugUnitTest` unaffected.
+- **2.3 Version Name Consistency**: Updated `versionName` in `app/build.gradle.kts` from `"1.0"` to `"1.0.0"` to match `README.md` (`v1.0.0`).
+- **2.4 Theme Rename**: Renamed `Theme.MyApplication` to `Theme.GlowBack` in `app/src/main/res/values/themes.xml`, `app/src/main/res/values-v31/themes.xml`, and `app/src/main/AndroidManifest.xml` (`<application>` and `<activity>` tags).
+- **2.5 Dead Dependency Cleanup**: Removed commented `// implementation(platform(libs.firebase.bom))` from `app/build.gradle.kts` and removed `firebaseBom` / `firebase-bom` from `gradle/libs.versions.toml`.
+- **2.7 `applicationId` Finalization**: Set `applicationId = "com.rakesh.glowback"` in `app/build.gradle.kts`. ID finalized pre-launch; permanent after first Play upload; existing test installs reset. Confirmed `FileProvider` uses `android:authorities="${applicationId}.fileprovider"` in `AndroidManifest.xml` and `"${context.packageName}.fileprovider"` in `ChallengeShareHelper.kt`.
+- **Deferred (Unchanged per D1/D2)**: Left R8 (`isMinifyEnabled = false`) and `composeBom = "2024.09.00"` unchanged for v1.0 freeze.

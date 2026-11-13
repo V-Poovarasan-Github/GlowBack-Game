@@ -9,11 +9,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.poovarsan.glowback"
+    applicationId = "com.rakesh.glowback"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
-    versionName = "1.0"
+    versionName = "1.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -78,9 +78,35 @@ android {
   }
 }
 
+val verifyReleaseSigningConfig by tasks.registering {
+  doFirst {
+    val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+    val kFile = file(keystorePath)
+    val storePassword = System.getenv("STORE_PASSWORD")
+    val keyPassword = System.getenv("KEY_PASSWORD")
+    if (!kFile.exists() || storePassword.isNullOrBlank() || keyPassword.isNullOrBlank()) {
+      throw GradleException(
+        "Release signing config incomplete: missing keystore file ($keystorePath) or STORE_PASSWORD / KEY_PASSWORD environment variables. Refusing to build unsigned release artifact."
+      )
+    }
+  }
+}
+
+tasks.configureEach {
+  if (
+    name.contains("Release", ignoreCase = false) &&
+      (name.startsWith("assemble") ||
+        name.startsWith("bundle") ||
+        name.startsWith("package") ||
+        name.startsWith("sign") ||
+        name.startsWith("validateSigning"))
+  ) {
+    dependsOn(verifyReleaseSigningConfig)
+  }
+}
+
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  // implementation(platform(libs.firebase.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
