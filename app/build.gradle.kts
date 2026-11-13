@@ -79,12 +79,24 @@ android {
 }
 
 val verifyReleaseSigningConfig by tasks.registering {
+  val injectedStoreFile = project.findProperty("android.injected.signing.store.file")?.toString()
+  val injectedStorePassword = project.findProperty("android.injected.signing.store.password")?.toString()
+  val injectedKeyPassword = project.findProperty("android.injected.signing.key.password")?.toString()
   doFirst {
+    val hasInjectedSigning =
+      !injectedStoreFile.isNullOrBlank() &&
+        file(injectedStoreFile).exists() &&
+        !injectedStorePassword.isNullOrBlank() &&
+        !injectedKeyPassword.isNullOrBlank()
+
     val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
     val kFile = file(keystorePath)
     val storePassword = System.getenv("STORE_PASSWORD")
     val keyPassword = System.getenv("KEY_PASSWORD")
-    if (!kFile.exists() || storePassword.isNullOrBlank() || keyPassword.isNullOrBlank()) {
+    val hasEnvSigning =
+      kFile.exists() && !storePassword.isNullOrBlank() && !keyPassword.isNullOrBlank()
+
+    if (!hasInjectedSigning && !hasEnvSigning) {
       throw GradleException(
         "Release signing config incomplete: missing keystore file ($keystorePath) or STORE_PASSWORD / KEY_PASSWORD environment variables. Refusing to build unsigned release artifact."
       )
