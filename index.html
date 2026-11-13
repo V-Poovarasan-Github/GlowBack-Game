@@ -21,10 +21,10 @@
     --paper:#F4F7FB;
     --dim:#8DA0BE;
     --dim-2:#5E7094;
-    --green:#10B981;   --green-glow:#6EE7B7;
-    --red:#EF4444;     --red-glow:#FCA5A5;
-    --amber:#F59E0B;   --amber-glow:#FDE68A;
-    --blue:#3B82F6;    --blue-glow:#93C5FD;
+    --green:#10B981;   --green-glow:#6EE7B7;  --green-dim:#064E3B;
+    --red:#EF4444;     --red-glow:#FCA5A5;    --red-dim:#7F1D1D;
+    --amber:#F59E0B;   --amber-glow:#FDE68A;  --amber-dim:#78350F;
+    --blue:#3B82F6;    --blue-glow:#93C5FD;   --blue-dim:#1E3A8A;
     --violet:#8B5CF6;
     --font-display:'Space Grotesk', system-ui, sans-serif;
     --font-body:'Inter', system-ui, sans-serif;
@@ -107,12 +107,17 @@
   .pad-grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; width: 280px; }
   .pad{
     position:relative; aspect-ratio: 1; border-radius: 22px;
-    background: var(--panel); border: 1px solid var(--line-strong);
     display:flex; align-items:center; justify-content:center;
-    transition: background .18s ease, box-shadow .18s ease, border-color .18s ease, transform .1s ease;
+    transition: background .16s ease, box-shadow .16s ease, border-color .16s ease, transform .1s ease;
+    border: 1px solid transparent;
   }
   .pad:active{ transform: scale(0.96); }
-  .pad svg{ width: 38%; height: 38%; opacity: 0.85; }
+  .pad svg{ width: 38%; height: 38%; opacity: 0.92; color: rgba(255,255,255,0.8); }
+  /* resting state: each pad keeps its own dim color tint, same as the real board */
+  .pad.c0{ background: var(--green-dim); border-color: rgba(16,185,129,0.3); }
+  .pad.c1{ background: var(--red-dim); border-color: rgba(239,68,68,0.3); }
+  .pad.c2{ background: var(--amber-dim); border-color: rgba(245,158,11,0.3); }
+  .pad.c3{ background: var(--blue-dim); border-color: rgba(59,130,246,0.3); }
   .pad.lit{ border-color: transparent; }
   .pad.lit.c0{ background: var(--green); box-shadow: 0 0 36px 6px var(--green-glow); }
   .pad.lit.c1{ background: var(--red); box-shadow: 0 0 36px 6px var(--red-glow); }
@@ -127,8 +132,8 @@
   .section-head p{ color: var(--dim); font-size: 16.5px; margin-top: 14px; }
 
   /* ---------- how it works (genuine sequence) ---------- */
-  .flow{ display:grid; grid-template-columns: 340px 1fr; gap: 56px; align-items: start; }
-  @media (max-width: 920px){ .flow{ grid-template-columns: 1fr; gap: 28px; } }
+  .flow{ display:grid; grid-template-columns: minmax(300px,380px) minmax(260px,300px); gap: 48px; max-width: 760px; margin: 0 auto; align-items: center; justify-content: center; }
+  @media (max-width: 920px){ .flow{ grid-template-columns: 1fr; max-width: 460px; gap: 28px; } }
 
   .steps{ display:flex; flex-direction:column; border-left: 1px solid var(--line); }
   .step{
@@ -179,6 +184,9 @@
   .chip.on{ background: rgba(16,185,129,0.16); border-color: var(--green); color: #B4F3DA; }
   .scr-btn{ margin-top:auto; text-align:center; font-size: 12.5px; font-weight:600; padding: 10px; border-radius: 10px; background: var(--paper); color: var(--ink); }
   .scr-btn.outline{ background:none; border: 1px solid var(--line-strong); color: var(--paper); }
+  .bottom-nav{ display:flex; justify-content:space-around; margin: 12px -16px -16px; padding: 10px 0 12px; border-top: 1px solid var(--line); }
+  .nav-item{ font-size: 10.5px; color: var(--dim-2); }
+  .nav-item.on{ color: var(--green); font-weight: 600; }
   .code-box{ font-family: var(--font-mono); font-size: 10.5px; background: var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:10px; line-height:1.9; word-break:break-all; margin-bottom:10px; }
   .code-box b{ color: var(--green); }
   .code-box .r{ color: var(--blue); }
@@ -273,10 +281,10 @@
 
     <div class="demo-stage">
       <div class="pad-grid" id="heroGrid" aria-hidden="true">
-        <div class="pad" data-c="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 20 L2 20 Z"/></svg></div>
-        <div class="pad" data-c="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
-        <div class="pad" data-c="2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
-        <div class="pad" data-c="3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></div>
+        <div class="pad c0" data-c="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 20 L2 20 Z"/></svg></div>
+        <div class="pad c1" data-c="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <div class="pad c2" data-c="2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+        <div class="pad c3" data-c="3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></div>
       </div>
       <p class="demo-caption" id="heroCaption">Watching the sequence…</p>
     </div>
@@ -292,7 +300,7 @@
 
     <div class="flow">
       <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
-        <button class="step active" data-step="1" data-n="1" role="tab" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: solo play, pass-and-play, or your rivalry hub.</p></button>
+        <button class="step active" data-step="1" data-n="1" role="tab" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Leaderboard tab.</p></button>
         <button class="step" data-step="2" data-n="2" role="tab" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy appends one pad per round. Hard reshuffles the whole sequence.</p></button>
         <button class="step" data-step="3" data-n="3" role="tab" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
         <button class="step" data-step="4" data-n="4" role="tab" aria-selected="false"><h3>Share a challenge</h3><p>Game Over mints a deterministic code naming your score and seed.</p></button>
@@ -310,13 +318,14 @@
             <div class="sbar">GLOWBACK</div>
             <div class="scr-title">Ready to play?</div>
             <div class="scr-sub">Pick a mode to begin</div>
-            <div class="chip-row"><span class="chip on">Solo</span><span class="chip">2-Player</span><span class="chip">Rivalry Hub</span></div>
+            <div class="chip-row"><span class="chip on">Solo</span><span class="chip">2P</span><span class="chip">3P</span><span class="chip">4P</span></div>
             <div class="mini-grid" style="grid-template-columns:repeat(3,1fr); max-width:140px;">
               <div class="mini-pad" style="background:var(--green)"></div><div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div>
               <div class="mini-pad" style="background:var(--blue)"></div><div class="mini-pad" style="background:var(--violet)"></div><div class="mini-pad" style="background:var(--green)"></div>
               <div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div><div class="mini-pad" style="background:var(--blue)"></div>
             </div>
             <div class="scr-btn">Start</div>
+            <div class="bottom-nav"><span class="nav-item on">Home</span><span class="nav-item">Leaderboard</span></div>
           </div>
 
           <div class="screen" data-screen="2">
@@ -335,22 +344,22 @@
               <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(2,1fr); width:40px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">2×2</div></div>
               <div class="gs-card sel"><div class="tiny-grid" style="grid-template-columns:repeat(3,1fr); width:48px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">3×3</div></div>
               <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:56px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div></div><div class="lbl">4×4</div></div>
-              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(5,1fr); width:60px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div></div><div class="lbl">5×4</div></div>
+              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:46px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div></div><div class="lbl">5×4</div></div>
             </div>
           </div>
 
           <div class="screen" data-screen="4">
             <div class="sbar">GAME OVER</div>
+            <div class="scr-title" style="text-align:center;">Game Over!</div>
             <div class="big-score">6 <span>pads recalled</span></div>
-            <div class="scr-sub" style="text-align:center;margin-top:0;">Challenge a friend to beat it</div>
             <div class="code-box"><b>4x4-6-T3E</b>-ALEX-<span class="r">DG9A</span>-Q579D-B</div>
             <div class="seg-label">grid · target · tries+difficulty · you → rival · chain · seed · checksum</div>
-            <div class="scr-btn">Copy &amp; share code</div>
+            <div class="scr-btn">Share Challenge</div>
           </div>
 
           <div class="screen" data-screen="5">
-            <div class="sbar">ENTER CODE</div>
-            <div class="scr-title">Challenge received</div>
+            <div class="sbar">PASTE CODE</div>
+            <div class="scr-title">Paste Code from ALEX</div>
             <div class="code-box">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
             <div class="scr-sub" style="margin-top:0;">Beat a score of <b style="color:var(--paper)">6</b> on the 4×4 board · 3 tries</div>
             <div class="countdown">3</div>
@@ -358,16 +367,16 @@
           </div>
 
           <div class="screen" data-screen="6">
-            <div class="sbar">RESULT</div>
+            <div class="sbar">GAME OVER</div>
             <div class="result-badge win" style="margin:18px auto 14px;">YOU WON</div>
             <div class="big-score">7 <span>vs their 6</span></div>
             <div class="scr-sub" style="text-align:center;">1 try left, unused</div>
-            <div class="scr-btn" style="margin-top:18px;">Send reply to ALEX</div>
+            <div class="scr-btn" style="margin-top:18px;">Share Challenge</div>
             <div class="scr-btn outline" style="margin-top:8px;">Play again</div>
           </div>
 
           <div class="screen" data-screen="7">
-            <div class="sbar">REPLY CODE</div>
+            <div class="sbar">SHARE REPLY</div>
             <div class="scr-title">Ready to send back</div>
             <div class="scr-sub">ALEX will see exactly how you did</div>
             <div class="code-box"><span class="r">4x4-7-R3E-HERO-DG9A-Q579D-B</span></div>
@@ -376,7 +385,8 @@
           </div>
 
           <div class="screen" data-screen="8">
-            <div class="sbar">RIVALRY HUB</div>
+            <div class="sbar">HALL OF FAME</div>
+            <div class="chip-row"><span class="chip on">⚔️ RIVALRY</span><span class="chip">🏆 RECORDS</span></div>
             <div class="scr-title">ALEX</div>
             <div class="chip-row"><span class="chip on">2×2 · 3W–1L</span><span class="chip">3×3 · 1W–0L</span><span class="chip">4×4 · 2W–1L</span></div>
             <div class="rival-row"><span>4×4 · Hard</span><span class="score">7 — 6</span></div>
@@ -386,7 +396,7 @@
 
           <div class="screen" data-screen="9">
             <div class="sbar">HALL OF FAME</div>
-            <div class="scr-title">Lifetime record</div>
+            <div class="chip-row"><span class="chip">⚔️ RIVALRY</span><span class="chip on">🏆 RECORDS</span></div>
             <div class="rival-row"><span>ALEX</span><span class="score">9W – 4L – 1T</span></div>
             <div class="rival-row"><span>NEON_KING</span><span class="score">3W – 6L – 0T</span></div>
             <div class="rival-row"><span>MAYA</span><span class="score">5W – 2L – 2T</span></div>
@@ -506,67 +516,49 @@
 
 <script>
 (function(){
-  // ---- hero demo: lights a short sequence on loop, then invites a tap ----
+  // ---- hero demo: plays on its own, forever, like Easy/cumulative mode ----
+  // round 1 is 2 pads, each round appends one more pad to the previous sequence.
   var pads = Array.prototype.slice.call(document.querySelectorAll('#heroGrid .pad'));
   var caption = document.getElementById('heroCaption');
-  var sequence = [0,2,1,3,0];
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var playing = false;
+  var full = [0,2,1,3,0,2,3,1];
+  var round = 2;
 
   function lightPad(i, on){
     var p = pads[i];
     if(!p) return;
     p.classList.toggle('lit', on);
-    if(on) p.classList.add('c' + p.dataset.c); else p.classList.remove('c0','c1','c2','c3');
   }
 
-  function playSequence(){
-    if(playing) return;
-    playing = true;
-    caption.textContent = 'Watching the sequence…';
+  function flashClick(idx){
+    lightPad(idx, true);
+    setTimeout(function(){ lightPad(idx, false); }, 170);
+  }
+  pads.forEach(function(p, idx){ p.addEventListener('click', function(){ flashClick(idx); }); });
+
+  function playRound(){
+    var seq = full.slice(0, round);
+    caption.textContent = 'Round ' + (round - 1) + ' — watch carefully…';
     var i = 0;
-    var step = 480;
+    var step = 460;
     function tick(){
-      if(i > 0) lightPad(sequence[i-1], false);
-      if(i >= sequence.length){
-        playing = false;
-        caption.textContent = 'Your turn — tap the pads back in order';
+      if(i > 0) lightPad(seq[i-1], false);
+      if(i >= seq.length){
+        round = round >= full.length ? 2 : round + 1;
+        setTimeout(playRound, 900);
         return;
       }
-      lightPad(sequence[i], true);
-      setTimeout(function(){ lightPad(sequence[i], false); setTimeout(tick, 90); }, step - 90);
+      lightPad(seq[i], true);
+      setTimeout(function(){ lightPad(seq[i], false); setTimeout(tick, 90); }, step - 90);
       i++;
     }
     tick();
   }
 
-  var userSeq = [];
-  pads.forEach(function(p, idx){
-    p.addEventListener('click', function(){
-      if(playing) return;
-      lightPad(idx, true);
-      setTimeout(function(){ lightPad(idx, false); }, 180);
-      userSeq.push(idx);
-      var pos = userSeq.length - 1;
-      if(sequence[pos] !== idx){
-        caption.textContent = 'Not quite — watch again';
-        userSeq = [];
-        setTimeout(playSequence, 900);
-        return;
-      }
-      if(userSeq.length === sequence.length){
-        caption.textContent = 'Recalled it — replaying…';
-        userSeq = [];
-        setTimeout(playSequence, 1100);
-      }
-    });
-  });
-
   if(!reduced){
-    playSequence();
-    setInterval(function(){ if(!playing && userSeq.length === 0) playSequence(); }, 5200);
+    playRound();
   } else {
-    caption.textContent = 'A short memorize-and-repeat sequence plays here';
+    caption.textContent = 'A growing memorize-and-repeat sequence plays here';
   }
 
   // ---- step walkthrough ----
