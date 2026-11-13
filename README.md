@@ -95,13 +95,13 @@ Challenges and replies operate entirely offline using deterministic string token
 
 ## 🧪 Testing & Quality Assurance
 
-GlowBack maintains a local test suite with **106 passing unit and Robolectric tests** executed on local JVM:
+GlowBack maintains a local test suite with **107 passing unit and Robolectric tests** executed on local JVM:
 
 ```bash
 gradle :app:testDebugUnitTest
 ```
 
-- **91 Robolectric UI & Integration Tests (`ExampleRobolectricTest`):** Covers all user journeys from first install onboarding, sequence play, audio engine, Game Over, rival creation, multi-try challenge lifecycle, 3-button tie forfeit states, chip selectors, and settings synchronization.
+- **92 Robolectric UI & Integration Tests (`ExampleRobolectricTest`):** Covers all user journeys from first install onboarding, sequence play, audio engine, Game Over, rival creation, multi-try challenge lifecycle, 3-button tie forfeit states, chip selectors, accessibility/TalkBack semantics, and settings synchronization.
 - **14 Deterministic Seed & Code Tests (`ChallengeSeedTest`):** Tests seed generation, bidirectional code formatting/parsing, checksum validation, tampering detection, and roundtrip serialization.
 - **1 Unit Test (`ExampleUnitTest`):** Core configuration validation.
 

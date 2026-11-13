@@ -1,5 +1,6 @@
 package com.example.challenge
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -11,7 +12,10 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.util.Log
+import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -22,6 +26,7 @@ import java.io.FileOutputStream
  * using FileProvider without internet permissions.
  */
 object ChallengeShareHelper {
+    private const val LOG_TAG = "ChallengeShareHelper"
 
     /**
      * Renders a 1080x1350 high-resolution bitmap with a neon card design.
@@ -274,7 +279,19 @@ object ChallengeShareHelper {
         val chooser = Intent.createChooser(sendIntent, chooserTitle).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(chooser)
+        try {
+            context.startActivity(chooser)
+        } catch (t: ActivityNotFoundException) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "No activity found to share challenge text", t)
+            }
+            Toast.makeText(context, "No app available to share challenge.", Toast.LENGTH_SHORT).show()
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to launch text share chooser", t)
+            }
+            Toast.makeText(context, "Unable to open share menu.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
@@ -308,18 +325,27 @@ object ChallengeShareHelper {
             rivalName = rivalName
         )
 
-        val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
-        cleanOldSharedFiles(cacheFolder, 24L)
-        val imageFile = File(cacheFolder, "glowback_challenge_${code}.png")
-        FileOutputStream(imageFile).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        val contentUri = try {
+            val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
+            cleanOldSharedFiles(cacheFolder, 24L)
+            val imageFile = File(cacheFolder, "glowback_challenge_${code}.png")
+            FileOutputStream(imageFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                imageFile
+            )
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to prepare FileProvider URI for challenge card", t)
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Unable to prepare challenge card for sharing.", Toast.LENGTH_SHORT).show()
+            }
+            return@withContext
         }
-
-        val contentUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            imageFile
-        )
 
         val shareCaption = code
 
@@ -336,7 +362,19 @@ object ChallengeShareHelper {
             val chooser = Intent.createChooser(sendIntent, "Share Glowback Challenge").apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(chooser)
+            try {
+                context.startActivity(chooser)
+            } catch (t: ActivityNotFoundException) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(LOG_TAG, "No activity found to share challenge card", t)
+                }
+                Toast.makeText(context, "No app available to share challenge.", Toast.LENGTH_SHORT).show()
+            } catch (t: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(LOG_TAG, "Failed to launch challenge card chooser", t)
+                }
+                Toast.makeText(context, "Unable to open share menu.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -368,18 +406,27 @@ object ChallengeShareHelper {
             tied = tied
         )
 
-        val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
-        cleanOldSharedFiles(cacheFolder, 24L)
-        val imageFile = File(cacheFolder, "glowback_result_${code}.png")
-        FileOutputStream(imageFile).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        val contentUri = try {
+            val cacheFolder = File(context.cacheDir, "shared_challenges").apply { mkdirs() }
+            cleanOldSharedFiles(cacheFolder, 24L)
+            val imageFile = File(cacheFolder, "glowback_result_${code}.png")
+            FileOutputStream(imageFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                imageFile
+            )
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to prepare FileProvider URI for reply card", t)
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Unable to prepare result card for sharing.", Toast.LENGTH_SHORT).show()
+            }
+            return@withContext
         }
-
-        val contentUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            imageFile
-        )
 
         val shareCaption = code
 
@@ -396,7 +443,19 @@ object ChallengeShareHelper {
             val chooser = Intent.createChooser(sendIntent, "Send Result to Rival").apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(chooser)
+            try {
+                context.startActivity(chooser)
+            } catch (t: ActivityNotFoundException) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(LOG_TAG, "No activity found to share reply card", t)
+                }
+                Toast.makeText(context, "No app available to share result.", Toast.LENGTH_SHORT).show()
+            } catch (t: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(LOG_TAG, "Failed to launch reply card chooser", t)
+                }
+                Toast.makeText(context, "Unable to open share menu.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

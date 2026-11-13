@@ -1,6 +1,8 @@
 package com.example.challenge
 
 import android.content.Context
+import android.util.Log
+import com.example.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -9,6 +11,7 @@ import org.json.JSONObject
  * via SharedPreferences and JSON.
  */
 object ChallengeStorage {
+    private const val LOG_TAG = "ChallengeStorage"
     private const val PREFS_NAME = "glowback_challenge_prefs"
     private const val KEY_CHALLENGES = "active_challenges_json"
     private const val KEY_RIVALS = "glowback_rivalries_v1"
@@ -389,8 +392,10 @@ object ChallengeStorage {
                     )
                 )
             }
-        } catch (_: Exception) {
-            // Corrupt data fallback
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to parse challenges JSON", t)
+            }
         }
         return list
     }
@@ -587,8 +592,10 @@ object ChallengeStorage {
                     )
                 )
             }
-        } catch (_: Exception) {
-            // Corrupt data fallback
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to parse rivals JSON", t)
+            }
         }
         return list.sortedByDescending { it.updatedAt }.take(MAX_RIVALS_CAP)
     }
@@ -1571,8 +1578,10 @@ object ChallengeStorage {
                     )
                 )
             }
-        } catch (_: Exception) {
-            // Corrupt data fallback
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to parse awaiting challenges JSON", t)
+            }
         }
 
         if (hadExpired) {
@@ -1687,7 +1696,11 @@ object ChallengeStorage {
                     val item = arr.optString(i, "").trim().uppercase()
                     if (item.isNotEmpty()) result.add(item)
                 }
-            } catch (_: Exception) {}
+            } catch (t: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(LOG_TAG, "Failed to parse FIFO codes JSON for $fifoKey", t)
+                }
+            }
         }
         val legacySet = prefs.getStringSet(setKey, emptySet()) ?: emptySet()
         for (s in legacySet) {

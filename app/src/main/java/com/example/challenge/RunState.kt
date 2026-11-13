@@ -1,6 +1,8 @@
 package com.example.challenge
 
 import android.content.Context
+import android.util.Log
+import com.example.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,6 +30,7 @@ data class SerializedRunState(
 }
 
 object RunStateStorage {
+    private const val LOG_TAG = "RunStateStorage"
     private const val PREFS_NAME = "glowback_runstate_prefs"
     private const val KEY_ACTIVE_RUN = "active_run_json"
 
@@ -85,7 +88,10 @@ object RunStateStorage {
                 difficultyMode = diffMode,
                 timestamp = obj.optLong("timestamp", System.currentTimeMillis())
             )
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to parse active run JSON", t)
+            }
             null
         }
     }

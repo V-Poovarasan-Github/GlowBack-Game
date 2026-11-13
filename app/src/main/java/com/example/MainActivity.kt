@@ -415,7 +415,7 @@ class GlowAudioSynthesizer(initialGridSize: GridSize = GridSize.TWO_BY_TWO) {
                     }
                 }
             } catch (t: Throwable) {
-                if (t !is CancellationException) {
+                if (t !is CancellationException && BuildConfig.DEBUG) {
                     Log.w(LOG_TAG, "Audio warm-up prune failed", t)
                 }
             }
@@ -428,7 +428,7 @@ class GlowAudioSynthesizer(initialGridSize: GridSize = GridSize.TWO_BY_TWO) {
                 try {
                     getOrCreateTrack(pcm, forceRecreate = false)
                 } catch (t: Throwable) {
-                    if (t !is CancellationException) {
+                    if (t !is CancellationException && BuildConfig.DEBUG) {
                         Log.w(LOG_TAG, "Audio warm-up track creation failed", t)
                     }
                 }
@@ -553,7 +553,7 @@ class GlowAudioSynthesizer(initialGridSize: GridSize = GridSize.TWO_BY_TWO) {
                 healedTrack.play()
             }
         } catch (t: Throwable) {
-            if (t !is CancellationException) {
+            if (t !is CancellationException && BuildConfig.DEBUG) {
                 Log.w(LOG_TAG, "Audio playback failed", t)
             }
         }
@@ -904,7 +904,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var feedbackMode by remember {
         val saved = sharedPrefs.getString(KEY_FEEDBACK_MODE, null)
         val initial = if (saved != null) {
-            try { FeedbackMode.valueOf(saved) } catch (_: Exception) { FeedbackMode.SOUND }
+            try {
+                FeedbackMode.valueOf(saved)
+            } catch (t: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.w("GlowBack", "Failed to deserialize FeedbackMode: $saved", t)
+                }
+                FeedbackMode.SOUND
+            }
         } else {
             val isMuted = !sharedPrefs.getBoolean("feedback_enabled", true)
             val isVib = sharedPrefs.getBoolean(KEY_VIBRATE_ENABLED, false)
@@ -920,7 +927,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     val isVibrateEnabled = feedbackMode == FeedbackMode.VIBRATE
     var difficultyMode by remember {
         val raw = sharedPrefs.getString(KEY_DIFFICULTY_MODE, GameDifficulty.EASY.name)
-        mutableStateOf(try { GameDifficulty.valueOf(raw ?: "EASY") } catch (_: Exception) { GameDifficulty.EASY })
+        mutableStateOf(
+            try {
+                GameDifficulty.valueOf(raw ?: "EASY")
+            } catch (t: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.w("GlowBack", "Failed to deserialize GameDifficulty: $raw", t)
+                }
+                GameDifficulty.EASY
+            }
+        )
     }
     var showOnboardingPopup by remember { mutableStateOf(launchCount <= 3) }
 
@@ -1402,7 +1418,14 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         gameMode = restoredMode
         gridSize = restoredGrid
         paceMode = restoredPace
-        difficultyMode = try { GameDifficulty.valueOf(state.difficultyMode) } catch (_: Exception) { GameDifficulty.EASY }
+        difficultyMode = try {
+            GameDifficulty.valueOf(state.difficultyMode)
+        } catch (t: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.w("GlowBack", "Failed to deserialize RunState GameDifficulty: ${state.difficultyMode}", t)
+            }
+            GameDifficulty.EASY
+        }
         val padPool = padsForGridSize(restoredGrid)
 
         sequence.clear()

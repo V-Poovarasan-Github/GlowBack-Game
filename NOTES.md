@@ -35,3 +35,17 @@
 - **3.5 Pad Playback Semantics**: Added `stateDescription = if (isFlashing) "lit" else "idle"` to `GlowPadButton` in `MainActivity.kt`.
 - **3.6 Semantic Headings**: Added `heading()` semantics to screen and dialog titles (`GLOWBACK` header, `leaderboard_screen_title`, `enter_challenge_dialog_title`, `paste_rival_dialog_title`, `share_challenge_header_title`, `rival_setup_dialog_title`).
 - **3.8 Robolectric Accessibility Tests**: Added `release1_phase3_accessibilitySemanticsAndTouchTargets` in `ExampleRobolectricTest.kt` verifying `3.1`–`3.6` and `D3`.
+
+## Phase 4 — Robustness & Cleanup
+- **4.1 `FileProvider.getUriForFile` Guard**: Wrapped both `FileProvider.getUriForFile` blocks in `ChallengeShareHelper.kt` (`shareChallenge` and `shareReplyResult`) in `try / catch (t: Exception)` blocks that log via `if (BuildConfig.DEBUG) Log.w(LOG_TAG, ..., t)` and display a user-facing `Toast` on `Dispatchers.Main` instead of crashing.
+- **4.2 `context.startActivity(chooser)` Guard**: Wrapped all three `context.startActivity(chooser)` calls in `ChallengeShareHelper.kt` (`shareTextOnly`, `shareChallenge`, `shareReplyResult`) in `try / catch` handling `ActivityNotFoundException` and generic `Exception` gracefully with a user-facing `Toast` and `if (BuildConfig.DEBUG) Log.w(...)`.
+- **4.3 & 4.4 `catch` & `Log.*` Gating**:
+  - Gated all three existing `Log.w(LOG_TAG, ..., t)` calls in `GlowAudioSynthesizer` (`MainActivity.kt`) behind `if (BuildConfig.DEBUG)`.
+  - Fixed silent `catch (_: Exception)` blocks in enum/settings and JSON deserialization (`MainActivity.kt` `FeedbackMode` and `GameDifficulty` deserialization, `ChallengeStorage.kt` `loadFifoCodes`, `loadChallenges`, `loadRivals`, `loadAwaitingChallenges`, and `RunState.kt` `loadRunState`) to log via `if (BuildConfig.DEBUG) Log.w(...)` so zero logs leak in release builds while surfacing issues in debug builds.
+- **4.5 Unused Resources Cleanup**: Verified via grep across `app/src` (main, test, androidTest, and XML resources) before removing:
+  - Deleted `app/src/main/res/values/colors.xml` (0 references to `@color/*` or `R.color.*`).
+  - Removed 12 unreferenced template strings from `app/src/main/res/values/strings.xml`, retaining only `<string name="app_name">Glowback</string>`.
+  - Deleted unreferenced Compose template theme scaffold files `app/src/main/java/com/example/ui/theme/Theme.kt`, `Color.kt`, and `Type.kt` (0 references to `com.example.ui.theme` or `MyApplicationTheme`).
+  - Retained `glowback_store_icon_1794206618357.png` (referenced in `SplashScreen.kt:150` and `ic_launcher_foreground.xml:6`), `ic_launcher_background.xml`, and `ic_launcher_foreground.xml` (referenced in `mipmap-anydpi-v26/ic_launcher.xml` and `ic_launcher_round.xml`).
+- **4.6 Test Count Verification & `README.md` Sync**: Verified full test suite passes **107 tests** (`92` Robolectric tests in `ExampleRobolectricTest`, `14` in `ChallengeSeedTest`, `1` in `ExampleUnitTest`) and updated `README.md` from `106` (`91` Robolectric) to `107` (`92` Robolectric).
+- **4.7 AI-Studio Scaffold Cleanup**: Confirmed `public/assets/aistudio/*.png` is already removed and deleted unreferenced `.env.example` scaffold file after confirming 0 code/build references via grep.
