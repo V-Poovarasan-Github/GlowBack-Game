@@ -40,7 +40,7 @@ GlowBack is a neon sequence memory game for Android featuring a 100% offline, ze
 
 ### 🔒 100% Offline, Private & Zero-Permission
 - **Zero Internet Required:** Completely serverless. No user accounts, logins, telemetry, ads, or background network calls.
-- **Local Storage Only:** Game records, rival profiles, and settings reside strictly on-device in Android `SharedPreferences`.
+- **Local Storage Only (No Cloud Backup or Device Transfer):** Game records, rival profiles, and settings reside strictly on-device in Android `SharedPreferences`, with both Android Auto Backup (`cloud-backup` / `full-backup-content`) and device-to-device transfer (`device-transfer`) excluded so no data ever leaves the device.
 - **Automatic Hygiene Sweeps:** 30-day lifecycle purges obsolete reply codes without bloating device storage.
 
 ### 🔊 Psychoacoustic Audio & Haptic Synthesis

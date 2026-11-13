@@ -16,11 +16,11 @@ Welcome to **Glowback** ("the App"). We are committed to protecting your privacy
 
 ---
 
-## 2. On-Device Storage Only
+## 2. On-Device Storage Only & Backup Exclusion
 
-All data created within the App—including game scores, leaderboard records, sound/haptic preferences, and challenge codes—is stored strictly locally on your device via standard Android application storage (`SharedPreferences`).
+All data created within the App—including game scores, leaderboard records, sound/haptic preferences, and challenge codes—is stored strictly locally on your device via standard Android application storage (`SharedPreferences`) and local cache files.
 
-- This information never leaves your device.
+- **No Cloud Backup or Device Transfer:** Android Auto Backup (`full-backup-content` and `cloud-backup`) and device-to-device transfer (`device-transfer`) are explicitly excluded in `backup_rules.xml` and `data_extraction_rules.xml` for both `sharedpref` and `file` domains. Glowback does not upload your game data to cloud backups or transfer it during device migrations; no data ever leaves your device.
 - You can permanently delete all stored game data at any time by clearing the App's storage via your Android device settings (**Settings > Apps > Glowback > Storage > Clear Data**) or by uninstalling the application.
 
 ---
@@ -39,8 +39,9 @@ No third party receives any data from your use of the App.
 ## 4. Device Permissions
 
 Glowback only uses device capabilities essential for local gameplay:
-- **Vibration / Haptic Feedback:** Used exclusively to provide sensory feedback when tapping pads or clearing rounds.
-- **Notifications (Optional):** If enabled, local notifications are scheduled and delivered entirely on-device (via Android WorkManager) to notify you of offline challenge reminders. No notification data is sent or received over the network.
+- **Vibration / Haptic Feedback (`VIBRATE`):** Used exclusively to provide sensory feedback when tapping pads or clearing rounds.
+- **Notifications (`POST_NOTIFICATIONS`, Optional):** If enabled, local notifications are scheduled and delivered entirely on-device (via Android WorkManager) to notify you of offline challenge reminders. No notification data is sent or received over the network.
+- **Boot Completed (`RECEIVE_BOOT_COMPLETED`):** Used exclusively by Android Jetpack WorkManager (`RescheduleReceiver`) to keep your opt-in local notification schedule active after a device reboot.
 
 ---
 
