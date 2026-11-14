@@ -53,7 +53,7 @@
   button{ font-family: inherit; cursor:pointer; }
   :focus-visible{ outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 4px; }
 
-  .wrap{ width:100%; max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+  .wrap{ width:100%; max-width: 1400px; margin: 0 auto; padding: 0 48px; }
   section{ padding: 96px 0; }
   @media (max-width: 760px){ section{ padding: 64px 0; } .wrap{ padding: 0 22px; } }
 
@@ -178,7 +178,7 @@
   .demo-stage{
     margin: 0 auto;
     width: 100%;
-    max-width: 350px;
+    max-width: 390px;
     background: linear-gradient(180deg, rgba(14,21,39,0.78), rgba(8,13,26,0.92));
     border: 1px solid var(--line-strong);
     border-radius: 28px;
@@ -188,6 +188,13 @@
     align-items:center;
     gap: 16px;
     box-shadow: 0 28px 60px -20px rgba(0,0,0,0.65);
+  }
+  @media (min-width: 1024px){
+    .demo-stage{
+      justify-self: end;
+      margin: 0;
+      max-width: 390px;
+    }
   }
   .demo-stage-top{
     width: 100%;
@@ -257,17 +264,18 @@
   }
 
   /* ---------- section headers ---------- */
-  .section-head{ max-width: 640px; margin-bottom: 48px; }
+  .section-head{ max-width: 900px; margin-bottom: 48px; }
   .section-head.center{ margin-left:auto; margin-right:auto; text-align:center; }
-  .section-head h2{ font-size: clamp(26px, 3.6vw, 40px); line-height: 1.15; }
-  .section-head p{ color: var(--dim); font-size: 16px; margin-top: 12px; margin-bottom: 0; }
+  .section-head h2{ font-size: clamp(26px, 3.6vw, 40px); line-height: 1.15; text-wrap: balance; }
+  .section-head p{ color: var(--dim); font-size: 16px; margin-top: 12px; margin-bottom: 0; max-width: 680px; margin-left: auto; margin-right: auto; }
 
   /* ---------- how it works (1-9 steps left + existing phone outline right) ---------- */
+  #how{ padding-bottom: 120px; }
   .flow{
     display:grid;
-    grid-template-columns: minmax(290px, 390px) minmax(280px, 310px);
-    gap: 48px;
-    max-width: 790px;
+    grid-template-columns: 1fr 340px;
+    gap: 72px;
+    max-width: 1120px;
     margin: 0 auto;
     align-items: center;
     justify-content: center;
@@ -727,9 +735,9 @@
 
   <!-- ============ HOW IT WORKS (1-9 Steps Left + Existing Phone Outline Right with Real App UI) ============ -->
   <section id="how" class="wrap">
-    <div class="section-head">
+    <div class="section-head center">
       <p class="eyebrow">How a duel unfolds</p>
-      <h2>Every challenge is nine small steps,<br>all of them offline.</h2>
+      <h2>Every challenge is nine small steps, all of them offline.</h2>
       <p>This is the actual path a rivalry takes in the app — from opening the game, to a reply code landing back in your Hall of Fame.</p>
     </div>
 
