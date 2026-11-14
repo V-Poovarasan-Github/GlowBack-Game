@@ -3,29 +3,31 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GlowBack — an offline neon memory duel</title>
+<title>GLOWBACK — 100% Offline Neon Memory Duel</title>
 <meta name="description" content="GlowBack is a 100% offline neon sequence-memory game for Android. Beat your own best, then challenge a friend with a deterministic text code — no accounts, no servers, no ads." />
 <meta name="theme-color" content="#05080F" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --ink:#05080F;
     --ink-2:#080D1A;
     --panel:#0E1527;
     --panel-2:#121B33;
-    --screen:#0B1222;
+    --screen:#0A1020;
+    --card-bg:#111A2E;
     --line: rgba(148,163,184,0.14);
     --line-strong: rgba(148,163,184,0.26);
     --paper:#F4F7FB;
-    --dim:#8DA0BE;
-    --dim-2:#5E7094;
+    --dim:#94A3B8;
+    --dim-2:#64748B;
+    --cyan:#00E5FF;    --cyan-dim:rgba(0,229,255,0.14);
     --green:#10B981;   --green-glow:#6EE7B7;  --green-dim:#064E3B;
     --red:#EF4444;     --red-glow:#FCA5A5;    --red-dim:#7F1D1D;
     --amber:#F59E0B;   --amber-glow:#FDE68A;  --amber-dim:#78350F;
     --blue:#3B82F6;    --blue-glow:#93C5FD;   --blue-dim:#1E3A8A;
-    --violet:#8B5CF6;
+    --violet:#8B5CF6;  --pink:#EC4899;
     --font-display:'Space Grotesk', system-ui, sans-serif;
     --font-body:'Inter', system-ui, sans-serif;
     --font-mono:'JetBrains Mono', ui-monospace, monospace;
@@ -42,7 +44,7 @@
     background: var(--ink);
     background-image:
       radial-gradient(ellipse 900px 500px at 18% -8%, rgba(16,185,129,0.10), transparent 60%),
-      radial-gradient(ellipse 900px 600px at 86% 6%, rgba(59,130,246,0.09), transparent 60%),
+      radial-gradient(ellipse 900px 600px at 86% 6%, rgba(0,229,255,0.08), transparent 60%),
       radial-gradient(ellipse 1000px 700px at 50% 100%, rgba(245,158,11,0.05), transparent 60%);
     color: var(--paper);
     font-family: var(--font-body);
@@ -53,184 +55,569 @@
   a{ color: inherit; }
   img,svg{ display:block; max-width:100%; }
   button{ font-family: inherit; cursor:pointer; }
-  :focus-visible{ outline: 2px solid var(--blue-glow); outline-offset: 3px; border-radius: 4px; }
+  :focus-visible{ outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 4px; }
 
   .wrap{ width:100%; max-width: 1180px; margin: 0 auto; padding: 0 28px; }
-  section{ padding: 108px 0; }
-  @media (max-width: 760px){ section{ padding: 72px 0; } .wrap{ padding: 0 20px; } }
+  section{ padding: 100px 0; }
+  @media (max-width: 760px){ section{ padding: 68px 0; } .wrap{ padding: 0 20px; } }
 
-  h1,h2,h3{ font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; margin:0; }
-  .eyebrow{ font: 500 14px/1 var(--font-body); color: var(--dim); margin: 0 0 14px; }
+  h1,h2,h3{ font-family: var(--font-display); font-weight: 700; letter-spacing: -0.015em; margin:0; }
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:8px;
+    font: 600 12.5px/1 var(--font-body);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin: 0 0 14px;
+  }
   code, .code{ font-family: var(--font-mono); }
 
-  /* ---------- header ---------- */
+  /* ---------- header & exact app wordmark ---------- */
   header{
     position: sticky; top:0; z-index: 50;
-    background: rgba(5,8,15,0.78);
+    background: rgba(5,8,15,0.82);
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
     border-bottom: 1px solid var(--line);
   }
-  .nav{ display:flex; align-items:center; justify-content:space-between; gap:20px; padding: 16px 0; flex-wrap: wrap; }
-  .wordmark{ display:flex; align-items:center; gap:10px; font-family: var(--font-display); font-weight:700; font-size: 20px; text-decoration:none; }
-  .wordmark .dot{ width:10px; height:10px; border-radius: 3px; background: var(--green); box-shadow: 0 0 14px 2px var(--green); }
-  .wordmark .dot2{ background: var(--blue); box-shadow: 0 0 14px 2px var(--blue); }
+  .nav{ display:flex; align-items:center; justify-content:space-between; gap:20px; padding: 15px 0; flex-wrap: wrap; }
+  .wordmark{
+    display:inline-flex; align-items:center; gap:8px;
+    font-family: var(--font-body);
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #FFFFFF;
+    text-decoration:none;
+  }
+  .wordmark .brand-dots{
+    display:inline-flex; align-items:center; gap:6px; margin-right: 2px;
+  }
+  .wordmark .dot{
+    width:10px; height:10px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 10px rgba(16,185,129,0.85);
+  }
+  .wordmark .dot2{
+    background: var(--red);
+    box-shadow: 0 0 10px rgba(239,68,68,0.85);
+  }
   .navlinks{ display:flex; gap: 30px; list-style:none; margin:0; padding:0; }
-  .navlinks a{ text-decoration:none; color: var(--dim); font-size: 15px; font-weight: 500; transition: color .15s; }
+  .navlinks a{ text-decoration:none; color: var(--dim); font-size: 14.5px; font-weight: 500; transition: color .15s; }
   .navlinks a:hover{ color: var(--paper); }
   .navcta{ display:flex; gap:12px; align-items:center; }
-  @media (max-width: 720px){ .navlinks{ display:none; } }
+  @media (max-width: 760px){ .navlinks{ display:none; } }
 
   .btn{
     display:inline-flex; align-items:center; justify-content:center; gap:8px;
     padding: 11px 20px; border-radius: 10px; font-weight: 600; font-size: 14.5px;
     border: 1px solid transparent; text-decoration:none; white-space:nowrap;
-    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
   }
   .btn:active{ transform: translateY(1px); }
   .btn-primary{ background: var(--paper); color: var(--ink); }
-  .btn-primary:hover{ background: #fff; }
+  .btn-primary:hover{ background: #fff; box-shadow: 0 0 24px rgba(255,255,255,0.18); }
   .btn-ghost{ color: var(--paper); border-color: var(--line-strong); background: rgba(255,255,255,0.02); }
-  .btn-ghost:hover{ border-color: var(--dim); background: rgba(255,255,255,0.05); }
+  .btn-ghost:hover{ border-color: var(--dim); background: rgba(255,255,255,0.06); }
   .btn-sm{ padding: 8px 14px; font-size: 13px; border-radius: 8px; }
 
-  /* ---------- hero ---------- */
-  .hero{ padding-top: 86px; padding-bottom: 40px; text-align:center; }
-  .hero h1{ font-size: clamp(40px, 6.4vw, 72px); line-height: 1.04; max-width: 820px; margin: 0 auto; }
-  .hero p.lede{ max-width: 540px; margin: 22px auto 0; color: var(--dim); font-size: 18px; }
-  .hero .ctas{ display:flex; gap: 14px; justify-content:center; margin-top: 34px; flex-wrap: wrap; }
+  /* ---------- hero (desktop 2-column split: copy left, 2x2 pads right) ---------- */
+  .hero{
+    padding-top: 76px;
+    padding-bottom: 64px;
+  }
+  .hero-layout{
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 56px;
+    align-items: center;
+  }
+  .hero-copy{
+    text-align: left;
+  }
+  .hero h1{
+    font-size: clamp(40px, 5.6vw, 68px);
+    line-height: 1.05;
+    max-width: 640px;
+    margin: 0;
+  }
+  .hero p.lede{
+    max-width: 540px;
+    margin: 20px 0 0;
+    color: var(--dim);
+    font-size: 17.5px;
+  }
+  .hero .ctas{
+    display:flex;
+    gap: 14px;
+    justify-content:flex-start;
+    margin-top: 30px;
+    flex-wrap: wrap;
+  }
+  .pill-row{
+    display:flex;
+    gap:10px;
+    justify-content:flex-start;
+    margin-top: 26px;
+    flex-wrap:wrap;
+  }
+  .pill{
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--dim);
+    background: rgba(14,21,39,0.7);
+    border:1px solid var(--line);
+    padding: 6px 13px;
+    border-radius: 999px;
+  }
 
-  .pill-row{ display:flex; gap:10px; justify-content:center; margin-top: 30px; flex-wrap:wrap; }
-  .pill{ font-size: 13px; color: var(--dim-2); border:1px solid var(--line); padding: 6px 13px; border-radius: 999px; }
-
-  /* ---------- live demo grid ---------- */
-  .demo-stage{ margin: 56px auto 0; max-width: 360px; display:flex; flex-direction:column; align-items:center; gap:18px; }
-  .pad-grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; width: 280px; }
+  /* ---------- standalone 2x2 live demo stage (right side on laptop) ---------- */
+  .demo-stage{
+    margin: 0 auto;
+    width: 100%;
+    max-width: 370px;
+    background: linear-gradient(180deg, rgba(14,21,39,0.78), rgba(8,13,26,0.92));
+    border: 1px solid var(--line-strong);
+    border-radius: 28px;
+    padding: 24px 24px 20px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap: 16px;
+    box-shadow: 0 28px 60px -20px rgba(0,0,0,0.65);
+  }
+  .demo-stage-top{
+    width: 100%;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 0 2px;
+  }
+  .demo-stage-top .step-badge{
+    font-family: var(--font-mono);
+    color: var(--cyan);
+    background: rgba(0,229,255,0.1);
+    border: 1px solid rgba(0,229,255,0.3);
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+  }
+  .pad-grid{
+    display:grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 288px;
+  }
   .pad{
     position:relative; aspect-ratio: 1; border-radius: 22px;
     display:flex; align-items:center; justify-content:center;
-    transition: background .16s ease, box-shadow .16s ease, border-color .16s ease, transform .1s ease;
-    border: 1px solid transparent;
+    transition: background .15s ease, box-shadow .15s ease, border-color .15s ease, transform .1s ease;
+    border: 1.5px solid transparent;
+    cursor: pointer;
+    user-select: none;
   }
   .pad:active{ transform: scale(0.96); }
-  .pad svg{ width: 38%; height: 38%; opacity: 0.92; color: rgba(255,255,255,0.8); }
-  /* resting state: each pad keeps its own dim color tint, same as the real board */
-  .pad.c0{ background: var(--green-dim); border-color: rgba(16,185,129,0.3); }
-  .pad.c1{ background: var(--red-dim); border-color: rgba(239,68,68,0.3); }
-  .pad.c2{ background: var(--amber-dim); border-color: rgba(245,158,11,0.3); }
-  .pad.c3{ background: var(--blue-dim); border-color: rgba(59,130,246,0.3); }
-  .pad.lit{ border-color: transparent; }
-  .pad.lit.c0{ background: var(--green); box-shadow: 0 0 36px 6px var(--green-glow); }
-  .pad.lit.c1{ background: var(--red); box-shadow: 0 0 36px 6px var(--red-glow); }
-  .pad.lit.c2{ background: var(--amber); box-shadow: 0 0 36px 6px var(--amber-glow); }
-  .pad.lit.c3{ background: var(--blue); box-shadow: 0 0 36px 6px var(--blue-glow); }
-  .demo-caption{ font-size: 13.5px; color: var(--dim-2); min-height: 18px; }
+  .pad svg{ width: 36%; height: 36%; opacity: 0.92; color: rgba(255,255,255,0.88); }
+  .pad.c0{ background: var(--green-dim); border-color: rgba(16,185,129,0.38); }
+  .pad.c1{ background: var(--red-dim); border-color: rgba(239,68,68,0.38); }
+  .pad.c2{ background: var(--amber-dim); border-color: rgba(245,158,11,0.38); }
+  .pad.c3{ background: var(--blue-dim); border-color: rgba(59,130,246,0.38); }
+  .pad.lit{ border-color: #ffffff; transform: scale(1.02); }
+  .pad.lit.c0{ background: var(--green); box-shadow: 0 0 34px 6px rgba(16,185,129,0.55); }
+  .pad.lit.c1{ background: var(--red); box-shadow: 0 0 34px 6px rgba(239,68,68,0.55); }
+  .pad.lit.c2{ background: var(--amber); box-shadow: 0 0 34px 6px rgba(245,158,11,0.55); }
+  .pad.lit.c3{ background: var(--blue); box-shadow: 0 0 34px 6px rgba(59,130,246,0.55); }
+  .demo-caption{
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--dim);
+    min-height: 20px;
+    margin: 0;
+    text-align: center;
+  }
+
+  @media (max-width: 920px){
+    .hero-layout{
+      grid-template-columns: 1fr;
+      gap: 40px;
+    }
+    .hero-copy{ text-align: center; }
+    .hero h1, .hero p.lede{ margin-left: auto; margin-right: auto; }
+    .hero .ctas, .pill-row{ justify-content: center; }
+  }
 
   /* ---------- section headers ---------- */
-  .section-head{ max-width: 620px; margin-bottom: 56px; }
+  .section-head{ max-width: 640px; margin-bottom: 52px; }
   .section-head.center{ margin-left:auto; margin-right:auto; text-align:center; }
-  .section-head h2{ font-size: clamp(28px, 3.6vw, 40px); }
-  .section-head p{ color: var(--dim); font-size: 16.5px; margin-top: 14px; }
+  .section-head h2{ font-size: clamp(28px, 3.6vw, 40px); line-height: 1.15; }
+  .section-head p{ color: var(--dim); font-size: 16.5px; margin-top: 14px; margin-bottom: 0; }
 
-  /* ---------- how it works (genuine sequence) ---------- */
-  .flow{ display:grid; grid-template-columns: minmax(300px,380px) minmax(260px,300px); gap: 48px; max-width: 760px; margin: 0 auto; align-items: center; justify-content: center; }
-  @media (max-width: 920px){ .flow{ grid-template-columns: 1fr; max-width: 460px; gap: 28px; } }
+  /* ---------- how it works (1-9 steps left + existing phone outline right) ---------- */
+  .flow{
+    display:grid;
+    grid-template-columns: minmax(300px, 390px) minmax(290px, 320px);
+    gap: 52px;
+    max-width: 800px;
+    margin: 0 auto;
+    align-items: center;
+    justify-content: center;
+  }
+  @media (max-width: 920px){
+    .flow{ grid-template-columns: 1fr; max-width: 460px; gap: 28px; }
+  }
 
   .steps{ display:flex; flex-direction:column; border-left: 1px solid var(--line); }
   .step{
-    text-align:left; background:none; border:none; color: inherit; padding: 16px 0 16px 24px;
+    text-align:left; background:none; border:none; color: inherit; padding: 14px 0 14px 24px;
     position: relative; border-bottom: none;
   }
   .step::before{
-    content: attr(data-n); position:absolute; left:-13px; top: 16px;
+    content: attr(data-n); position:absolute; left:-13px; top: 14px;
     width: 26px; height:26px; border-radius:50%; background: var(--ink);
     border: 1px solid var(--line-strong); color: var(--dim);
     font: 600 12px/26px var(--font-display); text-align:center;
     transition: all .18s ease;
   }
-  .step h3{ font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--dim); transition: color .18s ease; }
-  .step p{ font-size: 14px; color: var(--dim-2); margin:0; max-height:0; overflow:hidden; transition: max-height .2s ease; }
-  .step.active{ }
+  .step h3{ font-size: 15.5px; font-weight: 600; margin-bottom: 3px; color: var(--dim); transition: color .18s ease; }
+  .step p{ font-size: 13.5px; color: var(--dim-2); margin:0; max-height:0; overflow:hidden; transition: max-height .2s ease; }
   .step.active::before{ background: var(--green); border-color: var(--green); color: var(--ink); box-shadow: 0 0 14px 1px var(--green-glow); }
   .step.active h3{ color: var(--paper); }
-  .step.active p{ max-height: 60px; margin-top:6px; }
+  .step.active p{ max-height: 64px; margin-top:5px; }
   @media (max-width: 920px){
-    .steps{ border-left:none; flex-direction:row; flex-wrap:wrap; gap:8px; }
-    .step{ padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; }
+    .steps{ border-left:none; flex-direction:row; flex-wrap:wrap; gap:8px; justify-content:center; }
+    .step{ padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; }
     .step::before{ display:none; }
     .step p{ display:none; }
-    .step.active{ border-color: var(--green); background: rgba(16,185,129,0.08); }
+    .step.active{ border-color: var(--green); background: rgba(16,185,129,0.12); }
   }
 
-  /* ---------- phone mock ---------- */
+  /* ---------- phone mock (keeping existing phone outline, real app UI inside) ---------- */
   .phone-frame{
-    width: 280px; margin: 0 auto; border-radius: 34px; padding: 10px;
+    width: 300px; margin: 0 auto; border-radius: 34px; padding: 10px;
     background: linear-gradient(160deg, #1b2440, #0a0f1c);
     border: 1px solid var(--line-strong);
-    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.6);
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.65);
   }
   .phone-screen{
     position:relative; width:100%; aspect-ratio: 9/18.5; border-radius: 24px; overflow:hidden;
-    background: var(--screen); border: 1px solid rgba(255,255,255,0.06);
+    background: #070B14; border: 1px solid rgba(255,255,255,0.07);
+    display: flex; flex-direction: column;
   }
-  .screen{ position:absolute; inset:0; display:none; flex-direction:column; padding: 20px 16px 16px; }
-  .screen.active{ display:flex; }
-  .sbar{ font-size: 11px; color: var(--dim-2); text-align:center; margin-bottom: 14px; letter-spacing: .02em; }
-  .scr-title{ font-family: var(--font-display); font-size: 15px; font-weight:600; margin-bottom: 4px; }
-  .scr-sub{ font-size: 11.5px; color: var(--dim); margin-bottom: 14px; }
-  .mini-grid{ display:grid; gap:7px; margin: 6px 0 14px; }
-  .mini-pad{ border-radius: 9px; aspect-ratio:1; }
-  .chip-row{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom: 10px; }
-  .chip{ font-size: 10.5px; padding: 5px 10px; border-radius:999px; border:1px solid var(--line-strong); color: var(--dim); }
-  .chip.on{ background: rgba(16,185,129,0.16); border-color: var(--green); color: #B4F3DA; }
-  .scr-btn{ margin-top:auto; text-align:center; font-size: 12.5px; font-weight:600; padding: 10px; border-radius: 10px; background: var(--paper); color: var(--ink); }
-  .scr-btn.outline{ background:none; border: 1px solid var(--line-strong); color: var(--paper); }
-  .bottom-nav{ display:flex; justify-content:space-around; margin: 12px -16px -16px; padding: 10px 0 12px; border-top: 1px solid var(--line); }
-  .nav-item{ font-size: 10.5px; color: var(--dim-2); }
-  .nav-item.on{ color: var(--green); font-weight: 600; }
-  .code-box{ font-family: var(--font-mono); font-size: 10.5px; background: var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:10px; line-height:1.9; word-break:break-all; margin-bottom:10px; }
-  .code-box b{ color: var(--green); }
-  .code-box .r{ color: var(--blue); }
-  .seg-label{ font-size: 9.5px; color: var(--dim-2); margin-bottom: 14px; }
-  .rival-row{ display:flex; justify-content:space-between; align-items:center; font-size:12px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; }
-  .rival-row .score{ font-family: var(--font-mono); color: var(--green); }
-  .result-badge{ align-self:center; font-size: 11px; font-weight:700; letter-spacing:.03em; padding: 5px 14px; border-radius: 999px; margin: 4px 0 10px; }
-  .result-badge.win{ background: rgba(16,185,129,0.18); color:#8CF0C4; border:1px solid var(--green); }
-  .result-badge.tie{ background: rgba(59,130,246,0.18); color:#AFD1FF; border:1px solid var(--blue); }
-  .big-score{ font-family: var(--font-display); font-size: 40px; text-align:center; margin: 4px 0 2px; }
-  .big-score span{ font-size: 16px; color: var(--dim); }
-  .countdown{ font-family: var(--font-display); font-size: 52px; text-align:center; color: var(--amber); margin: 20px 0; }
-  .grid-sizes{ display:grid; grid-template-columns: repeat(2,1fr); gap:10px; }
-  .gs-card{ border:1px solid var(--line-strong); border-radius:12px; padding:10px; text-align:center; }
-  .gs-card.sel{ border-color: var(--green); background: rgba(16,185,129,0.08); }
-  .gs-card .lbl{ font-size:11px; font-weight:600; margin-top:6px; }
-  .tiny-grid{ display:grid; gap:3px; margin: 0 auto; }
-  .tiny-pad{ aspect-ratio:1; border-radius:3px; }
 
-  /* ---------- feature bento ---------- */
-  .bento{ display:grid; grid-template-columns: repeat(6, 1fr); gap: 18px; }
-  .bento .card{ grid-column: span 2; background: var(--panel); border:1px solid var(--line); border-radius: 18px; padding: 26px; }
-  .bento .card.wide{ grid-column: span 3; }
-  .bento .card.tall{ grid-row: span 2; }
-  @media (max-width: 920px){ .bento{ grid-template-columns: repeat(2,1fr);} .bento .card, .bento .card.wide{ grid-column: span 2; } }
-  .card h3{ font-size: 17px; margin-bottom: 8px; }
-  .card p{ font-size: 14.5px; color: var(--dim); margin:0; }
-  .icon-tile{ width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
+  /* Real App Chrome inside Phone Screen */
+  .app-topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid rgba(148,163,184,0.08);
+    flex-shrink: 0;
+  }
+  .app-brand{
+    display:inline-flex; align-items:center; gap:5px;
+    font-weight: 900; font-size: 11.5px; letter-spacing: 0.08em; color: #FFFFFF;
+  }
+  .app-brand .d-g{ width:7px; height:7px; border-radius:50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .app-brand .d-r{ width:7px; height:7px; border-radius:50%; background: var(--red); box-shadow: 0 0 6px var(--red); margin-right: 2px; }
+  .app-top-icons{ display:flex; gap:6px; }
+  .app-icon-btn{
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #131C31; border: 1px solid rgba(148,163,184,0.2);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 10px; color: #CBD5E1;
+  }
+
+  .screen{
+    position:relative; flex:1; display:none; flex-direction:column;
+    padding: 10px 12px 10px;
+    overflow: hidden;
+  }
+  .screen.active{ display:flex; }
+
+  /* Real App Components inside Screen */
+  .app-mode-bar{
+    display:grid; grid-template-columns: repeat(4, 1fr);
+    background: #11192C; border: 1px solid rgba(148,163,184,0.16);
+    border-radius: 999px; padding: 2px; margin-bottom: 8px;
+  }
+  .app-mode-tab{
+    text-align:center; font-size: 9.5px; font-weight: 700; color: var(--dim);
+    padding: 4px 0; border-radius: 999px;
+  }
+  .app-mode-tab.on{
+    background: rgba(0,229,255,0.16);
+    border: 1px solid var(--cyan);
+    color: #FFFFFF;
+  }
+
+  .app-subbar{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 8px; gap: 6px;
+  }
+  .app-grid-pill{
+    display:inline-flex; align-items:center; gap:4px;
+    background: #11192C; border: 1px solid rgba(0,229,255,0.35);
+    color: #E2E8F0; font-size: 9.5px; font-weight: 600;
+    padding: 3px 8px; border-radius: 999px;
+  }
+  .app-diff-toggle{
+    display:inline-flex; background: #11192C; border: 1px solid rgba(148,163,184,0.2);
+    border-radius: 999px; padding: 1.5px;
+  }
+  .app-diff-opt{
+    font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 999px; color: var(--dim);
+  }
+  .app-diff-opt.easy-on{
+    background: rgba(16,185,129,0.2); border: 1px solid var(--green); color: #6EE7B7;
+  }
+  .app-diff-opt.hard-on{
+    background: rgba(239,68,68,0.22); border: 1px solid var(--red); color: #FCA5A5;
+  }
+
+  .app-score-row{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px;
+  }
+  .app-score-card{
+    background: #101829; border: 1px solid rgba(148,163,184,0.14);
+    border-radius: 10px; padding: 6px 8px; text-align:center;
+  }
+  .app-score-lbl{
+    font-size: 8px; font-weight: 700; letter-spacing: 0.06em; color: var(--dim); text-transform: uppercase;
+  }
+  .app-score-val{
+    font-family: var(--font-display); font-size: 16px; font-weight: 700; color: #FFFFFF; line-height: 1.2; margin-top: 1px;
+  }
+  .app-score-val.gold{ color: var(--amber); }
+
+  .app-status-line{
+    text-align:center; font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--cyan); margin: 4px 0 8px;
+  }
+  .app-status-line.amber{ color: var(--amber); }
+  .app-status-line.green{ color: var(--green-glow); }
+
+  .app-board-2x2{
+    display:grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+    width: 148px; margin: 2px auto 10px;
+  }
+  .app-pad{
+    aspect-ratio: 1; border-radius: 13px;
+    display:flex; align-items:center; justify-content:center;
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 16px; color: rgba(255,255,255,0.9);
+    transition: all .15s ease;
+  }
+  .app-pad.g{ background: var(--green-dim); border-color: rgba(16,185,129,0.45); }
+  .app-pad.r{ background: var(--red-dim); border-color: rgba(239,68,68,0.45); }
+  .app-pad.a{ background: var(--amber-dim); border-color: rgba(245,158,11,0.45); }
+  .app-pad.b{ background: var(--blue-dim); border-color: rgba(59,130,246,0.45); }
+  .app-pad.v{ background: #3B1D7A; border-color: rgba(139,92,246,0.45); }
+  .app-pad.lit-g{ background: var(--green); box-shadow: 0 0 16px var(--green); border-color:#fff; }
+  .app-pad.lit-r{ background: var(--red); box-shadow: 0 0 16px var(--red); border-color:#fff; }
+  .app-pad.lit-a{ background: var(--amber); box-shadow: 0 0 16px var(--amber); border-color:#fff; }
+  .app-pad.lit-b{ background: var(--blue); box-shadow: 0 0 16px var(--blue); border-color:#fff; }
+
+  .app-cta{
+    margin-top:auto; text-align:center; font-size: 11px; font-weight: 700;
+    padding: 8px 10px; border-radius: 10px;
+    background: var(--green); color: #04130D;
+    box-shadow: 0 0 16px rgba(16,185,129,0.3);
+  }
+  .app-cta.cyan{
+    background: var(--cyan); color: #04141A;
+    box-shadow: 0 0 16px rgba(0,229,255,0.28);
+  }
+  .app-cta.outline{
+    background: #11192C; border: 1px solid rgba(0,229,255,0.4); color: #E2E8F0; box-shadow:none;
+  }
+
+  .app-bottom-nav{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    padding: 7px 10px 9px; background: #0B1222;
+    border-top: 1px solid rgba(148,163,184,0.12);
+    flex-shrink: 0;
+  }
+  .app-bnav-item{
+    text-align:center; font-size: 9.5px; font-weight: 600; color: var(--dim);
+    padding: 4px 6px; border-radius: 8px;
+  }
+  .app-bnav-item.on{
+    background: rgba(0,229,255,0.12); color: var(--cyan); font-weight: 700;
+  }
+
+  /* Dialog / Card replicas for Steps 2..9 */
+  .app-modal-card{
+    background: #111A2E; border: 1px solid rgba(148,163,184,0.22);
+    border-radius: 14px; padding: 10px; margin: auto 0;
+    display:flex; flex-direction:column; gap: 7px;
+  }
+  .app-modal-head{
+    font-size: 11px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+    color: #FFFFFF; text-align: center;
+  }
+  .app-code-pill{
+    font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
+    background: #090E1A; border: 1px solid rgba(0,229,255,0.35);
+    color: var(--cyan); border-radius: 8px; padding: 7px 8px;
+    text-align: center; word-break: break-all; line-height: 1.45;
+  }
+  .grid-sizes{ display:grid; grid-template-columns: repeat(2,1fr); gap:8px; margin: auto 0; }
+  .gs-card{
+    background: #101829; border:1px solid var(--line-strong); border-radius:11px;
+    padding:8px 6px; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .gs-card.sel{ border-color: var(--cyan); background: rgba(0,229,255,0.09); box-shadow: 0 0 12px rgba(0,229,255,0.15); }
+  .gs-card .lbl{ font-size:10px; font-weight:700; margin-top:5px; color:#fff; }
+  .gs-card .sub{ font-size:8.5px; color:var(--dim); }
+  .tiny-grid{ display:grid; gap:2.5px; margin: 0 auto; }
+  .tiny-pad{ aspect-ratio:1; border-radius:2px; }
+
+  .hof-tabs{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    background: #101829; padding: 3px; border-radius: 999px;
+    border: 1px solid var(--line); margin-bottom: 8px;
+  }
+  .hof-tab{
+    text-align:center; font-size: 9.5px; font-weight: 700; padding: 4px 0; border-radius: 999px; color: var(--dim);
+  }
+  .hof-tab.on{ background: rgba(0,229,255,0.16); color: var(--cyan); border: 1px solid rgba(0,229,255,0.4); }
+
+  .rival-card-ui{
+    background: #111A2E; border: 1px solid rgba(0,229,255,0.28);
+    border-radius: 12px; padding: 9px; display:flex; flex-direction:column; gap: 6px;
+    margin-bottom: 7px;
+  }
+  .rival-head-row{ display:flex; justify-content:space-between; align-items:center; }
+  .rival-callsign{ font-size: 11.5px; font-weight: 800; color: #FFFFFF; letter-spacing: 0.03em; }
+  .rival-wlt{ font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; color: var(--green-glow); }
+  .rival-chip-scroll{ display:flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+  .rival-gchip{
+    font-size: 8.5px; font-weight: 700; padding: 2.5px 6px; border-radius: 999px;
+    background: #0A1020; border: 1px solid var(--line-strong); color: var(--dim); white-space: nowrap;
+  }
+  .rival-gchip.on{ border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,0.12); }
+
+  .step-progress-pill{
+    text-align:center; font-family: var(--font-mono); font-size: 9px; color: var(--dim);
+    margin-top: 6px;
+  }
+
+  /* ---------- feature bento (neatly aligned 3x2 grid) ---------- */
+  .bento{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    align-items: stretch;
+  }
+  .bento .card{
+    background: var(--panel);
+    border:1px solid var(--line);
+    border-radius: 18px;
+    padding: 26px;
+    display:flex;
+    flex-direction:column;
+    justify-content:flex-start;
+    height: 100%;
+    transition: border-color .18s ease, transform .18s ease;
+  }
+  .bento .card:hover{
+    border-color: var(--line-strong);
+    transform: translateY(-2px);
+  }
+  @media (max-width: 960px){
+    .bento{ grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 620px){
+    .bento{ grid-template-columns: 1fr; }
+  }
+  .card h3{ font-size: 17px; margin-bottom: 8px; color: var(--paper); }
+  .card p{ font-size: 14.5px; color: var(--dim); margin:0; line-height: 1.58; }
+  .icon-tile{
+    width:42px; height:42px; border-radius:11px;
+    display:flex; align-items:center; justify-content:center;
+    margin-bottom:16px; flex-shrink: 0;
+  }
   .icon-tile svg{ width:20px; height:20px; }
 
-  /* ---------- code spec ---------- */
-  .spec{ background: var(--panel); border:1px solid var(--line); border-radius: 20px; padding: 36px; }
-  .spec-code{ font-family: var(--font-mono); font-size: clamp(13px, 2.4vw, 19px); display:flex; flex-wrap:wrap; gap: 4px 0; justify-content:center; padding: 18px 0; }
-  .spec-code span{ padding: 4px 2px; border-radius: 4px; }
-  .spec-legend{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-top: 22px; }
-  .spec-legend .item{ font-size: 13px; color: var(--dim); border-top: 2px solid var(--line-strong); padding-top:8px; }
-  .spec-legend .item b{ display:block; color: var(--paper); font-size: 13px; margin-bottom:2px; }
+  /* ---------- code spec & checksum (neatly aligned 7-column anatomy) ---------- */
+  .spec{
+    background: var(--panel);
+    border:1px solid var(--line);
+    border-radius: 22px;
+    padding: 36px 28px;
+  }
+  .spec-code-banner{
+    background: #080D1A;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    padding: 16px 18px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: clamp(14px, 2.2vw, 20px);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .spec-code-banner .sep{ color: var(--dim-2); margin: 0 2px; }
+
+  .spec-anatomy{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+  .spec-col{
+    background: rgba(8,13,26,0.65);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+  }
+  .spec-token{
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 7px;
+    margin-bottom: 10px;
+    display: inline-block;
+    border: 1px solid transparent;
+  }
+  .spec-col b{
+    display:block;
+    color: var(--paper);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .spec-col span.desc{
+    font-size: 12.5px;
+    color: var(--dim);
+    line-height: 1.45;
+  }
+  @media (max-width: 1020px){
+    .spec-anatomy{ grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 640px){
+    .spec-anatomy{ grid-template-columns: repeat(2, 1fr); }
+    .spec{ padding: 24px 18px; }
+  }
 
   /* ---------- privacy band ---------- */
   .privacy{ background: var(--panel); border:1px solid var(--line); border-radius: 22px; padding: 48px; text-align:center; }
   .privacy-grid{ display:grid; grid-template-columns: repeat(3,1fr); gap: 28px; margin-top: 30px; text-align:left; }
   @media (max-width:760px){ .privacy-grid{ grid-template-columns:1fr; } .privacy{padding:30px;} }
-  .privacy-grid .row{ font-size: 14.5px; color: var(--dim); }
-  .privacy-grid .row b{ color: var(--paper); display:block; font-size:14.5px; margin-bottom:3px; }
+  .privacy-grid .row{ font-size: 14.5px; color: var(--dim); background: rgba(8,13,26,0.5); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .privacy-grid .row b{ color: var(--paper); display:block; font-size:15px; margin-bottom:5px; }
 
   /* ---------- cta / footer ---------- */
   .cta-band{ text-align:center; }
@@ -248,9 +635,11 @@
 
 <header>
   <div class="wrap nav">
-    <a class="wordmark" href="#top"><span class="dot"></span><span class="dot dot2"></span>GlowBack</a>
+    <a class="wordmark" href="#top">
+      <span class="brand-dots"><span class="dot"></span><span class="dot dot2"></span></span>GLOWBACK
+    </a>
     <ul class="navlinks">
-      <li><a href="#how">How it works</a></li>
+      <li><a href="#how" class="js-jump-how">How it works</a></li>
       <li><a href="#features">Features</a></li>
       <li><a href="#codes">Challenge codes</a></li>
       <li><a href="#privacy">Privacy</a></li>
@@ -264,33 +653,41 @@
 
 <main id="top">
 
-  <!-- ============ HERO ============ -->
+  <!-- ============ HERO (2-Column on Laptop: Copy Left, 2x2 Pads Right) ============ -->
   <section class="hero wrap">
-    <p class="eyebrow">A neon sequence-memory game for Android</p>
-    <h1>Watch the glow.<br>Send it back.</h1>
-    <p class="lede">Memorize an expanding pattern of light and sound, then challenge a friend to beat it — using nothing but a short text code. No accounts, no internet connection, no server in between.</p>
-    <div class="ctas">
-      <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
-      <a class="btn btn-ghost" href="#how">See how a duel works</a>
-    </div>
-    <div class="pill-row">
-      <span class="pill">Zero network permission</span>
-      <span class="pill">No accounts</span>
-      <span class="pill">Open source, MIT</span>
-    </div>
-
-    <div class="demo-stage">
-      <div class="pad-grid" id="heroGrid" aria-hidden="true">
-        <div class="pad c0" data-c="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 20 L2 20 Z"/></svg></div>
-        <div class="pad c1" data-c="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
-        <div class="pad c2" data-c="2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
-        <div class="pad c3" data-c="3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 12 L12 22 L2 12 Z"/></svg></div>
+    <div class="hero-layout">
+      <div class="hero-copy">
+        <p class="eyebrow">100% Offline · Zero Ads · Android</p>
+        <h1>Watch the glow.<br>Send it back.</h1>
+        <p class="lede">Memorize an expanding pattern of light and sound across 4 grid sizes, then challenge a friend to beat your exact sequence using a compact text code. No accounts, no internet connection, no server in between.</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
+          <a class="btn btn-ghost js-jump-how" href="#how">See how a duel works</a>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Zero network permission</span>
+          <span class="pill">No accounts or cloud</span>
+          <span class="pill">Open source, MIT</span>
+        </div>
       </div>
-      <p class="demo-caption" id="heroCaption">Watching the sequence…</p>
+
+      <div class="demo-stage" aria-label="Interactive 2 by 2 neon pad preview">
+        <div class="demo-stage-top">
+          <span>2×2 · Classic Board</span>
+          <span class="step-badge" id="heroStepBadge">STEP 1 / 9</span>
+        </div>
+        <div class="pad-grid" id="heroGrid">
+          <div class="pad c0" data-c="0" title="Green Pad (Triangle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3 L21 19 L3 19 Z"/></svg></div>
+          <div class="pad c1" data-c="1" title="Red Pad (Circle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8.5"/></svg></div>
+          <div class="pad c2" data-c="2" title="Amber Pad (Square)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/></svg></div>
+          <div class="pad c3" data-c="3" title="Blue Pad (Diamond)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2.5 L21.5 12 L12 21.5 L2.5 12 Z"/></svg></div>
+        </div>
+        <p class="demo-caption" id="heroCaption">Round 1 of 9 — watch the sequence…</p>
+      </div>
     </div>
   </section>
 
-  <!-- ============ HOW IT WORKS ============ -->
+  <!-- ============ HOW IT WORKS (1-9 Steps Left + Existing Phone Outline Right with Real App UI) ============ -->
   <section id="how" class="wrap">
     <div class="section-head">
       <p class="eyebrow">How a duel unfolds</p>
@@ -308,99 +705,253 @@
         <button class="step" data-step="6" data-n="6" role="tab" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
         <button class="step" data-step="7" data-n="7" role="tab" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
         <button class="step" data-step="8" data-n="8" role="tab" aria-selected="false"><h3>It's recorded</h3><p>The rival card updates — win, loss or tie — broken down per grid.</p></button>
-        <button class="step" data-step="9" data-n="9" role="tab" aria-selected="false"><h3>Hall of Fame</h3><p>Every rivalry, lifetime record and all, lives in one scoreboard.</p></button>
+        <button class="step" data-step="9" data-n="9" role="tab" aria-selected="false"><h3>Personal Records</h3><p>Track solo high scores across every grid, pace, and difficulty — plus 2P–4P survival.</p></button>
       </div>
 
       <div class="phone-frame">
         <div class="phone-screen" id="phoneScreen">
 
+          <!-- Persistent Real App Top Bar -->
+          <div class="app-topbar">
+            <div class="app-brand"><span class="d-g"></span><span class="d-r"></span>GLOWBACK</div>
+            <div class="app-top-icons">
+              <span class="app-icon-btn" title="Sound &amp; Haptics">🔊</span>
+              <span class="app-icon-btn" title="Board &amp; Pace Settings">⚙</span>
+            </div>
+          </div>
+
+          <!-- STEP 1: Open GlowBack (Real Home UI) -->
           <div class="screen active" data-screen="1">
-            <div class="sbar">GLOWBACK</div>
-            <div class="scr-title">Ready to play?</div>
-            <div class="scr-sub">Pick a mode to begin</div>
-            <div class="chip-row"><span class="chip on">Solo</span><span class="chip">2P</span><span class="chip">3P</span><span class="chip">4P</span></div>
-            <div class="mini-grid" style="grid-template-columns:repeat(3,1fr); max-width:140px;">
-              <div class="mini-pad" style="background:var(--green)"></div><div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div>
-              <div class="mini-pad" style="background:var(--blue)"></div><div class="mini-pad" style="background:var(--violet)"></div><div class="mini-pad" style="background:var(--green)"></div>
-              <div class="mini-pad" style="background:var(--red)"></div><div class="mini-pad" style="background:var(--amber)"></div><div class="mini-pad" style="background:var(--blue)"></div>
+            <div class="app-mode-bar">
+              <span class="app-mode-tab on">SOLO</span>
+              <span class="app-mode-tab">2P</span>
+              <span class="app-mode-tab">3P</span>
+              <span class="app-mode-tab">4P</span>
             </div>
-            <div class="scr-btn">Start</div>
-            <div class="bottom-nav"><span class="nav-item on">Home</span><span class="nav-item">Leaderboard</span></div>
+            <div class="app-subbar">
+              <span class="app-grid-pill">⊞ 2×2 · Classic</span>
+              <div class="app-diff-toggle">
+                <span class="app-diff-opt easy-on">Easy</span>
+                <span class="app-diff-opt">Hard</span>
+              </div>
+            </div>
+            <div class="app-score-row">
+              <div class="app-score-card">
+                <div class="app-score-lbl">⚡ Current Score</div>
+                <div class="app-score-val">0</div>
+              </div>
+              <div class="app-score-card">
+                <div class="app-score-lbl">🏆 Best (2×2)</div>
+                <div class="app-score-val gold">12</div>
+              </div>
+            </div>
+            <div class="app-status-line">Press Start to Play</div>
+            <div class="app-board-2x2">
+              <div class="app-pad g lit-g">△</div>
+              <div class="app-pad r">○</div>
+              <div class="app-pad a">□</div>
+              <div class="app-pad b">◇</div>
+            </div>
+            <div class="app-cta">▶ Start Game</div>
+            <div class="step-progress-pill">STEP 1 OF 9 · HOME SCREEN</div>
           </div>
 
+          <!-- STEP 2: Choose Easy or Hard -->
           <div class="screen" data-screen="2">
-            <div class="sbar">DIFFICULTY</div>
-            <div class="scr-title">Choose how it grows</div>
-            <div class="scr-sub">Changes how each round builds the sequence</div>
-            <div class="gs-card sel" style="margin-bottom:10px;"><div class="lbl">Easy — cumulative</div><div style="font-size:10px;color:var(--dim-2);margin-top:4px;">Round 4 replays rounds 1–3, then adds one new pad</div></div>
-            <div class="gs-card"><div class="lbl">Hard — fresh each round</div><div style="font-size:10px;color:var(--dim-2);margin-top:4px;">Every round is an entirely new sequence of the same length</div></div>
-          </div>
-
-          <div class="screen" data-screen="3">
-            <div class="sbar">BOARD SIZE</div>
-            <div class="scr-title">Pick your grid</div>
-            <div class="scr-sub">Bigger boards, more ways to go wrong</div>
-            <div class="grid-sizes">
-              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(2,1fr); width:40px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">2×2</div></div>
-              <div class="gs-card sel"><div class="tiny-grid" style="grid-template-columns:repeat(3,1fr); width:48px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div></div><div class="lbl">3×3</div></div>
-              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:56px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div></div><div class="lbl">4×4</div></div>
-              <div class="gs-card"><div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:46px;"><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div></div><div class="lbl">5×4</div></div>
+            <div class="app-mode-bar">
+              <span class="app-mode-tab on">SOLO</span>
+              <span class="app-mode-tab">2P</span>
+              <span class="app-mode-tab">3P</span>
+              <span class="app-mode-tab">4P</span>
             </div>
+            <div class="app-subbar">
+              <span class="app-grid-pill">⊞ 2×2 · Classic</span>
+              <div class="app-diff-toggle">
+                <span class="app-diff-opt">Easy</span>
+                <span class="app-diff-opt hard-on">Hard</span>
+              </div>
+            </div>
+            <div class="app-modal-card">
+              <div class="app-modal-head" style="color:var(--green-glow);">Easy — Cumulative</div>
+              <div style="font-size:9.5px;color:var(--dim);text-align:center;">Round 4 replays pads 1–3, then appends 1 new pad.</div>
+            </div>
+            <div class="app-modal-card" style="border-color:var(--red);">
+              <div class="app-modal-head" style="color:var(--red-glow);">Hard — Fresh Sequence</div>
+              <div style="font-size:9.5px;color:var(--dim);text-align:center;">Every round generates a brand-new sequence of length N.</div>
+            </div>
+            <div class="step-progress-pill">STEP 2 OF 9 · EASY VS HARD</div>
           </div>
 
+          <!-- STEP 3: Pick a Grid (2x2, 3x3, 4x4, and 5 rows x 4 cols) -->
+          <div class="screen" data-screen="3">
+            <div class="app-status-line">Select Board Size &amp; Pace</div>
+            <div class="grid-sizes">
+              <div class="gs-card">
+                <div class="tiny-grid" style="grid-template-columns:repeat(2,1fr); width:34px;">
+                  <div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div>
+                  <div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div>
+                </div>
+                <div class="lbl">2×2</div>
+                <div class="sub">4 Pads</div>
+              </div>
+              <div class="gs-card">
+                <div class="tiny-grid" style="grid-template-columns:repeat(3,1fr); width:40px;">
+                  <div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div>
+                  <div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div>
+                  <div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div>
+                </div>
+                <div class="lbl">3×3</div>
+                <div class="sub">9 Pads</div>
+              </div>
+              <div class="gs-card sel">
+                <div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:46px;">
+                  <div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div>
+                  <div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div>
+                  <div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div>
+                  <div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div>
+                </div>
+                <div class="lbl">4×4</div>
+                <div class="sub">16 Pads</div>
+              </div>
+              <div class="gs-card">
+                <div class="tiny-grid" style="grid-template-columns:repeat(4,1fr); width:38px;">
+                  <div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div>
+                  <div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div>
+                  <div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div><div class="tiny-pad" style="background:var(--red)"></div>
+                  <div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div><div class="tiny-pad" style="background:var(--green)"></div>
+                  <div class="tiny-pad" style="background:var(--red)"></div><div class="tiny-pad" style="background:var(--amber)"></div><div class="tiny-pad" style="background:var(--blue)"></div><div class="tiny-pad" style="background:var(--violet)"></div>
+                </div>
+                <div class="lbl">5×4</div>
+                <div class="sub">5 Rows · 20 Pads</div>
+              </div>
+            </div>
+            <div class="step-progress-pill">STEP 3 OF 9 · 4 GRID SIZES</div>
+          </div>
+
+          <!-- STEP 4: Share a Challenge -->
           <div class="screen" data-screen="4">
-            <div class="sbar">GAME OVER</div>
-            <div class="scr-title" style="text-align:center;">Game Over!</div>
-            <div class="big-score">6 <span>pads recalled</span></div>
-            <div class="code-box"><b>4x4-6-T3E</b>-ALEX-<span class="r">DG9A</span>-Q579D-B</div>
-            <div class="seg-label">grid · target · tries+difficulty · you → rival · chain · seed · checksum</div>
-            <div class="scr-btn">Share Challenge</div>
+            <div class="app-status-line amber">Game Over · Score 6</div>
+            <div class="app-modal-card">
+              <div class="app-modal-head">⚔️ Share Challenge</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">4×4 Board · Target 6 · Easy · 3 Tries</div>
+              <div class="app-code-pill">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
+              <div class="rival-chip-scroll" style="justify-content:center;">
+                <span class="rival-gchip">1 Try</span>
+                <span class="rival-gchip on">3 Tries</span>
+                <span class="rival-gchip">5 Tries</span>
+              </div>
+              <div class="app-cta cyan" style="margin-top:4px;">Share Challenge Card</div>
+            </div>
+            <div class="step-progress-pill">STEP 4 OF 9 · MINT T-CODE</div>
           </div>
 
+          <!-- STEP 5: Your Rival Plays It -->
           <div class="screen" data-screen="5">
-            <div class="sbar">PASTE CODE</div>
-            <div class="scr-title">Paste Code from ALEX</div>
-            <div class="code-box">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
-            <div class="scr-sub" style="margin-top:0;">Beat a score of <b style="color:var(--paper)">6</b> on the 4×4 board · 3 tries</div>
-            <div class="countdown">3</div>
-            <div class="scr-btn outline">Same board. Same seed. No peeking.</div>
+            <div class="app-status-line">⚔️ Challenge vs ALEX</div>
+            <div class="app-modal-card" style="border-color:rgba(245,158,11,0.4);">
+              <div class="app-modal-head" style="color:var(--amber-glow);">Target to Beat: 6</div>
+              <div class="app-code-pill" style="color:#E2E8F0;border-color:var(--line-strong);">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
+              <div style="font-family:var(--font-display);font-size:34px;font-weight:700;color:var(--amber);text-align:center;line-height:1;">3</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">Ready Gate · Identical 4×4 seed locked</div>
+            </div>
+            <div class="step-progress-pill">STEP 5 OF 9 · READY GATE</div>
           </div>
 
+          <!-- STEP 6: After the Win -->
           <div class="screen" data-screen="6">
-            <div class="sbar">GAME OVER</div>
-            <div class="result-badge win" style="margin:18px auto 14px;">YOU WON</div>
-            <div class="big-score">7 <span>vs their 6</span></div>
-            <div class="scr-sub" style="text-align:center;">1 try left, unused</div>
-            <div class="scr-btn" style="margin-top:18px;">Share Challenge</div>
-            <div class="scr-btn outline" style="margin-top:8px;">Play again</div>
+            <div class="app-status-line green">🎉 Challenge Won!</div>
+            <div class="app-modal-card" style="border-color:var(--green);">
+              <div class="app-modal-head" style="color:var(--green-glow);">You Beat ALEX!</div>
+              <div class="app-score-row" style="margin:2px 0;">
+                <div class="app-score-card">
+                  <div class="app-score-lbl">Your Score</div>
+                  <div class="app-score-val" style="color:var(--green-glow);">7</div>
+                </div>
+                <div class="app-score-card">
+                  <div class="app-score-lbl">ALEX Target</div>
+                  <div class="app-score-val">6</div>
+                </div>
+              </div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">1 of 3 tries remaining · Match finalized</div>
+              <div class="app-cta">Send Result to ALEX</div>
+            </div>
+            <div class="step-progress-pill">STEP 6 OF 9 · VICTORY</div>
           </div>
 
+          <!-- STEP 7: Send a Reply -->
           <div class="screen" data-screen="7">
-            <div class="sbar">SHARE REPLY</div>
-            <div class="scr-title">Ready to send back</div>
-            <div class="scr-sub">ALEX will see exactly how you did</div>
-            <div class="code-box"><span class="r">4x4-7-R3E-HERO-DG9A-Q579D-B</span></div>
-            <div class="seg-label">your score · reply · sender · same chain &amp; seed</div>
-            <div class="scr-btn">✓ Copied — send it anywhere</div>
+            <div class="app-status-line">Reply Code Minted</div>
+            <div class="app-modal-card" style="border-color:var(--cyan);">
+              <div class="app-modal-head">Send Reply to ALEX</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">Encodes your winning score (7) on chain DG9A</div>
+              <div class="app-code-pill">4x4-7-R3E-HERO-DG9A-Q579D-B</div>
+              <div class="app-cta cyan">✓ Reply Copied · Share Card</div>
+            </div>
+            <div class="step-progress-pill">STEP 7 OF 9 · REPLY R-CODE</div>
           </div>
 
+          <!-- STEP 8: It's Recorded (Rivalry Tab) -->
           <div class="screen" data-screen="8">
-            <div class="sbar">HALL OF FAME</div>
-            <div class="chip-row"><span class="chip on">⚔️ RIVALRY</span><span class="chip">🏆 RECORDS</span></div>
-            <div class="scr-title">ALEX</div>
-            <div class="chip-row"><span class="chip on">2×2 · 3W–1L</span><span class="chip">3×3 · 1W–0L</span><span class="chip">4×4 · 2W–1L</span></div>
-            <div class="rival-row"><span>4×4 · Hard</span><span class="score">7 — 6</span></div>
-            <div class="scr-sub" style="margin-top:0;">Updated just now · won</div>
-            <div class="scr-btn outline">Rematch · Revenge · Tie-break</div>
+            <div class="hof-tabs">
+              <span class="hof-tab on">⚔️ RIVALRY</span>
+              <span class="hof-tab">🏆 RECORDS</span>
+            </div>
+            <div class="rival-card-ui">
+              <div class="rival-head-row">
+                <span class="rival-callsign">ALEX</span>
+                <span class="rival-wlt">3W – 1L – 0T</span>
+              </div>
+              <div class="rival-chip-scroll">
+                <span class="rival-gchip">2×2: 1W-0L</span>
+                <span class="rival-gchip">3×3: 1W-0L</span>
+                <span class="rival-gchip on">4×4: 1W-1L</span>
+              </div>
+              <div style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;">
+                <span>Last: 4×4 · Easy</span>
+                <span style="color:var(--green-glow);font-weight:700;">WON 7 vs 6</span>
+              </div>
+              <div class="app-cta outline" style="padding:5px;font-size:9.5px;">⚔️ New Challenge vs ALEX</div>
+            </div>
+            <div class="step-progress-pill">STEP 8 OF 9 · RIVAL CARD UPDATED</div>
           </div>
 
+          <!-- STEP 9: Personal Records (Real RecordsTabContent UI: Mode Selector + Grid Chips + 4 Score Cards) -->
           <div class="screen" data-screen="9">
-            <div class="sbar">HALL OF FAME</div>
-            <div class="chip-row"><span class="chip">⚔️ RIVALRY</span><span class="chip on">🏆 RECORDS</span></div>
-            <div class="rival-row"><span>ALEX</span><span class="score">9W – 4L – 1T</span></div>
-            <div class="rival-row"><span>NEON_KING</span><span class="score">3W – 6L – 0T</span></div>
-            <div class="rival-row"><span>MAYA</span><span class="score">5W – 2L – 2T</span></div>
-            <div class="scr-sub" style="margin-top:4px;">Sorted by most recently played</div>
+            <div class="hof-tabs">
+              <span class="hof-tab">⚔️ RIVALRY</span>
+              <span class="hof-tab on">🏆 RECORDS</span>
+            </div>
+            <div class="app-mode-bar" style="margin-bottom:6px;">
+              <span class="app-mode-tab on">SOLO</span>
+              <span class="app-mode-tab">2P</span>
+              <span class="app-mode-tab">3P</span>
+              <span class="app-mode-tab">4P</span>
+            </div>
+            <div class="rival-chip-scroll" style="margin-bottom:7px;justify-content:space-between;">
+              <span class="rival-gchip on" style="flex:1;text-align:center;">2×2</span>
+              <span class="rival-gchip" style="flex:1;text-align:center;">3×3</span>
+              <span class="rival-gchip" style="flex:1;text-align:center;">4×4</span>
+              <span class="rival-gchip" style="flex:1;text-align:center;">5×4</span>
+            </div>
+            <div class="rival-card-ui" style="padding:6px 9px;border-color:rgba(16,185,129,0.4);margin-bottom:5px;">
+              <div class="rival-head-row"><span style="font-size:9.5px;font-weight:700;color:#E2E8F0;">Easy · Classic</span><span class="rival-wlt" style="color:#00E676;">14</span></div>
+            </div>
+            <div class="rival-card-ui" style="padding:6px 9px;border-color:rgba(56,189,248,0.4);margin-bottom:5px;">
+              <div class="rival-head-row"><span style="font-size:9.5px;font-weight:700;color:#E2E8F0;">Easy · Progressive</span><span class="rival-wlt" style="color:#38BDF8;">11</span></div>
+            </div>
+            <div class="rival-card-ui" style="padding:6px 9px;border-color:rgba(255,179,0,0.4);margin-bottom:5px;">
+              <div class="rival-head-row"><span style="font-size:9.5px;font-weight:700;color:#E2E8F0;">Hard · Classic</span><span class="rival-wlt" style="color:#FFB300;">9</span></div>
+            </div>
+            <div class="rival-card-ui" style="padding:6px 9px;border-color:rgba(255,82,82,0.4);margin-bottom:2px;">
+              <div class="rival-head-row"><span style="font-size:9.5px;font-weight:700;color:#E2E8F0;">Hard · Progressive</span><span class="rival-wlt" style="color:#FF5252;">7</span></div>
+            </div>
+            <div class="step-progress-pill">STEP 9 OF 9 · PERSONAL RECORDS</div>
+          </div>
+
+          <!-- Persistent Real App Bottom Navigation -->
+          <div class="app-bottom-nav" id="phoneBottomNav">
+            <span class="app-bnav-item on" id="bnavHome">🏠 Home</span>
+            <span class="app-bnav-item" id="bnavHof">🏆 Leaderboard</span>
           </div>
 
         </div>
@@ -408,71 +959,94 @@
     </div>
   </section>
 
-  <!-- ============ FEATURES ============ -->
+  <!-- ============ FEATURES (Neatly Aligned 3x2 Symmetric Grid) ============ -->
   <section id="features" class="wrap">
     <div class="section-head center">
       <p class="eyebrow">What's actually in the box</p>
       <h2>Built to be memorized, not metered</h2>
+      <p>Every system in GlowBack — from real-time audio synthesis to deterministic seed codes — runs locally with zero external dependencies.</p>
     </div>
     <div class="bento">
-      <div class="card wide">
+      <div class="card">
         <div class="icon-tile" style="background:rgba(16,185,129,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3>Four grids, two difficulties, two paces</h3>
-        <p>2×2 through 5×4, Easy's cumulative recall or Hard's fresh sequence every round, at a steady Classic tempo or an accelerating Progressive one. Sixteen ways to play the same core loop.</p>
+        <p>Play 2×2, 3×3, 4×4, or 5×4 (5 rows × 4 columns). Choose Easy's cumulative recall or Hard's fresh sequence every round, at Classic or accelerating Progressive speed.</p>
       </div>
       <div class="card">
-        <div class="icon-tile" style="background:rgba(59,130,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+        <div class="icon-tile" style="background:rgba(0,229,255,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#00E5FF" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
         <h3>Real synthesized tone per pad</h3>
-        <p>Each pad plays its own sine-wave frequency, generated on the device in real time — not a sample file.</p>
+        <p>Each pad synthesizes its own pure PCM musical frequency with psychoacoustic harmonics on-device in real time via Android AudioTrack — zero static audio files.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(245,158,11,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
         <h3>Haptics that mean something</h3>
-        <p>Distinct vibration waveforms for a tap, a streak, a loss, and a win — felt, not just seen.</p>
+        <p>Distinct tactile vibration waveforms mapped to pad taps, round clears, errors, and victory milestones — with one-tap cycling between Sound, Vibrate, and Mute.</p>
       </div>
-      <div class="card tall">
+      <div class="card">
         <div class="icon-tile" style="background:rgba(139,92,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" stroke-width="2"><path d="M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m5-1.13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></div>
-        <h3>A rivalry, not a leaderboard</h3>
-        <p>No global ranking, no server to climb. Each rival card is its own private head-to-head: lifetime wins, losses, ties, and a per-grid breakdown you build up one duel at a time. Tie-breakers, revenge rematches, and a resume for the match you had to step away from are all built in.</p>
+        <h3>Head-to-head rivalry cards</h3>
+        <p>Each friend gets a dedicated card tracking lifetime Wins, Losses, Ties, and scrollable per-grid breakdowns — complete with Revenge, Tie-Breaker, and try-preserving Resume.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(239,68,68,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
         <h3>Reminders you control</h3>
-        <p>Opt-in daily nudges about unplayed challenges, scheduled locally — never on by default.</p>
+        <p>Opt-in local daily nudges via Android WorkManager highlight unplayed rival challenges or personal streaks without ever touching a network server.</p>
       </div>
       <div class="card">
-        <div class="icon-tile" style="background:rgba(16,185,129,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
-        <h3>Nothing to log into</h3>
-        <p>No account, no email, no password — install it and you're already playing.</p>
+        <div class="icon-tile" style="background:rgba(59,130,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Pass-and-play &amp; zero login</h3>
+        <p>Install and play immediately in Solo or 2P/3P/4P local elimination on a single phone — no accounts, no sign-in walls, and no internet permission.</p>
       </div>
     </div>
   </section>
 
-  <!-- ============ CODE SPEC ============ -->
+  <!-- ============ CODE SPEC & CHECKSUM (Neatly Aligned 7-Segment Anatomy) ============ -->
   <section id="codes" class="wrap">
     <div class="section-head center">
       <p class="eyebrow">The part that replaces a server</p>
       <h2>A duel fits in one line of text</h2>
-      <p>Every challenge and reply is a short deterministic string. The same code always rebuilds the same sequence on the other device — that's the entire multiplayer layer.</p>
+      <p>Every challenge and reply is a compact 7-segment deterministic string. The same code always rebuilds the exact pad sequence on your rival's device and verifies integrity locally in 0ms.</p>
     </div>
     <div class="spec">
-      <div class="spec-code">
-        <span style="background:rgba(16,185,129,0.18);color:#8CF0C4;">4x4</span><span>-</span>
-        <span style="background:rgba(59,130,246,0.18);color:#AFD1FF;">6</span><span>-</span>
-        <span style="background:rgba(245,158,11,0.18);color:#FFDB9E;">T3E</span><span>-</span>
-        <span style="background:rgba(139,92,246,0.18);color:#D7C4FB;">ALEX</span><span>-</span>
-        <span style="background:rgba(236,72,153,0.18);color:#FBC4E2;">DG9A</span><span>-</span>
-        <span style="background:rgba(239,68,68,0.18);color:#FCA5A5;">Q579D</span><span>-</span>
-        <span style="color:var(--dim);">B</span>
+      <div class="spec-code-banner" aria-label="Sample challenge code 4x4-6-T3E-ALEX-DG9A-Q579D-B">
+        <span style="color:#6EE7B7;">4x4</span><span class="sep">-</span><span style="color:#93C5FD;">6</span><span class="sep">-</span><span style="color:#FDE68A;">T3E</span><span class="sep">-</span><span style="color:#DDD6FE;">ALEX</span><span class="sep">-</span><span style="color:#FBCFE8;">DG9A</span><span class="sep">-</span><span style="color:#FCA5A5;">Q579D</span><span class="sep">-</span><span style="color:#67E8F9;">B</span>
       </div>
-      <div class="spec-legend">
-        <div class="item"><b>Grid</b>Board size — here, 4×4</div>
-        <div class="item"><b>Target</b>Score to beat</div>
-        <div class="item"><b>Tries · difficulty</b>3 attempts, Easy mode</div>
-        <div class="item"><b>Sender</b>Who issued the challenge</div>
-        <div class="item"><b>Chain</b>Links replies and rematches together</div>
-        <div class="item"><b>Seed</b>Recreates the exact sequence</div>
-        <div class="item"><b>Checksum</b>Catches a mistyped or corrupted code</div>
+      <div class="spec-anatomy">
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(16,185,129,0.16);color:#6EE7B7;border-color:rgba(16,185,129,0.38);">4x4</span>
+          <b>1. Grid</b>
+          <span class="desc">Board layout (2×2, 3×3, 4×4, or 5×4).</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(59,130,246,0.16);color:#93C5FD;border-color:rgba(59,130,246,0.38);">6</span>
+          <b>2. Target</b>
+          <span class="desc">Target score to beat (or reply score).</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(245,158,11,0.16);color:#FDE68A;border-color:rgba(245,158,11,0.38);">T3E</span>
+          <b>3. Tries · Diff</b>
+          <span class="desc">T-Code (or R-Code), 3 tries, Easy mode.</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(139,92,246,0.16);color:#DDD6FE;border-color:rgba(139,92,246,0.38);">ALEX</span>
+          <b>4. Sender</b>
+          <span class="desc">Callsign of the player who minted the code.</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(236,72,153,0.16);color:#FBCFE8;border-color:rgba(236,72,153,0.38);">DG9A</span>
+          <b>5. Chain ID</b>
+          <span class="desc">Links outbound challenges to incoming replies.</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(239,68,68,0.16);color:#FCA5A5;border-color:rgba(239,68,68,0.38);">Q579D</span>
+          <b>6. Seed</b>
+          <span class="desc">Deterministic PRNG seed for the pad sequence.</span>
+        </div>
+        <div class="spec-col">
+          <span class="spec-token" style="background:rgba(0,229,255,0.16);color:#67E8F9;border-color:rgba(0,229,255,0.42);">B</span>
+          <b>7. Checksum</b>
+          <span class="desc">Tamper-proof character blocking manual edits.</span>
+        </div>
       </div>
     </div>
   </section>
@@ -494,7 +1068,7 @@
   <section class="wrap cta-band">
     <h2>Memorize something. Send it back.</h2>
     <p>Free, open source, and yours to keep — no account required to start.</p>
-    <div class="ctas">
+    <div class="ctas" style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
       <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
       <a class="btn btn-ghost" href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">Browse the source</a>
     </div>
@@ -504,7 +1078,9 @@
 
 <footer>
   <div class="wrap foot-row">
-    <a class="wordmark" href="#top" style="font-size:16px;"><span class="dot"></span><span class="dot dot2"></span>GlowBack</a>
+    <a class="wordmark" href="#top" style="font-size:16px;">
+      <span class="brand-dots"><span class="dot"></span><span class="dot dot2"></span></span>GLOWBACK
+    </a>
     <ul class="foot-links">
       <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">GitHub</a></li>
       <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy policy</a></li>
@@ -516,13 +1092,13 @@
 
 <script>
 (function(){
-  // ---- hero demo: plays on its own, forever, like Easy/cumulative mode ----
-  // round 1 is 2 pads, each round appends one more pad to the previous sequence.
+  // ---- 1. Standalone 2x2 Hero Pads: auto-runs steps 1 to 9 continuously ----
   var pads = Array.prototype.slice.call(document.querySelectorAll('#heroGrid .pad'));
   var caption = document.getElementById('heroCaption');
+  var stepBadge = document.getElementById('heroStepBadge');
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var full = [0,2,1,3,0,2,3,1];
-  var round = 2;
+  var full = [0, 2, 1, 3, 0, 3, 2, 1, 0];
+  var currentStep = 1; // 1 to 9
 
   function lightPad(i, on){
     var p = pads[i];
@@ -532,47 +1108,62 @@
 
   function flashClick(idx){
     lightPad(idx, true);
-    setTimeout(function(){ lightPad(idx, false); }, 170);
+    setTimeout(function(){ lightPad(idx, false); }, 180);
   }
-  pads.forEach(function(p, idx){ p.addEventListener('click', function(){ flashClick(idx); }); });
+  pads.forEach(function(p, idx){
+    p.addEventListener('click', function(){ flashClick(idx); });
+  });
 
-  function playRound(){
-    var seq = full.slice(0, round);
-    caption.textContent = 'Round ' + (round - 1) + ' — watch carefully…';
+  function playHeroRound(){
+    var seq = full.slice(0, currentStep);
+    if(stepBadge) stepBadge.textContent = 'STEP ' + currentStep + ' / 9';
+    if(caption) caption.textContent = 'Round ' + currentStep + ' of 9 — watch carefully…';
     var i = 0;
-    var step = 460;
+    var interval = 420;
     function tick(){
       if(i > 0) lightPad(seq[i-1], false);
       if(i >= seq.length){
-        round = round >= full.length ? 2 : round + 1;
-        setTimeout(playRound, 900);
+        currentStep = currentStep >= 9 ? 1 : currentStep + 1;
+        setTimeout(playHeroRound, 850);
         return;
       }
       lightPad(seq[i], true);
-      setTimeout(function(){ lightPad(seq[i], false); setTimeout(tick, 90); }, step - 90);
+      setTimeout(function(){
+        lightPad(seq[i], false);
+        setTimeout(tick, 85);
+      }, interval - 85);
       i++;
     }
     tick();
   }
 
   if(!reduced){
-    playRound();
+    playHeroRound();
   } else {
-    caption.textContent = 'A growing memorize-and-repeat sequence plays here';
+    if(caption) caption.textContent = 'Tap any neon pad to test the board';
   }
 
-  // ---- step walkthrough ----
+  // ---- 2. How It Works (Steps 1 to 9 inside the Phone App UI Replica) ----
   var stepBtns = Array.prototype.slice.call(document.querySelectorAll('.step'));
   var screens = Array.prototype.slice.call(document.querySelectorAll('.screen'));
+  var bnavHome = document.getElementById('bnavHome');
+  var bnavHof = document.getElementById('bnavHof');
   var autoTimer = null;
 
   function showStep(n){
+    var stepNum = String(n);
     stepBtns.forEach(function(b){
-      var active = b.dataset.step === n;
+      var active = b.dataset.step === stepNum;
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
-    screens.forEach(function(s){ s.classList.toggle('active', s.dataset.screen === n); });
+    screens.forEach(function(s){
+      s.classList.toggle('active', s.dataset.screen === stepNum);
+    });
+    // Sync bottom nav active state (Steps 8 & 9 are on Leaderboard / Hall of Fame)
+    var isHof = (stepNum === '8' || stepNum === '9');
+    if(bnavHome) bnavHome.classList.toggle('on', !isHof);
+    if(bnavHof) bnavHof.classList.toggle('on', isHof);
   }
 
   function startAuto(){
@@ -583,12 +1174,21 @@
       var idx = stepBtns.indexOf(current);
       var next = stepBtns[(idx + 1) % stepBtns.length];
       showStep(next.dataset.step);
-    }, 4200);
+    }, 3400);
   }
 
   stepBtns.forEach(function(b){
     b.addEventListener('click', function(){
       showStep(b.dataset.step);
+      startAuto();
+    });
+  });
+
+  // When "How it works" or "See how a duel works" is clicked, start from Step 1 and auto-run 1..9
+  var jumpLinks = Array.prototype.slice.call(document.querySelectorAll('.js-jump-how'));
+  jumpLinks.forEach(function(link){
+    link.addEventListener('click', function(){
+      showStep('1');
       startAuto();
     });
   });
