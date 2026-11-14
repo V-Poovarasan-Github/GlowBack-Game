@@ -110,4 +110,4 @@ gradle :app:testDebugUnitTest
 ## 📜 Privacy & License
 
 - **Privacy Policy:** See [PRIVACY.md](PRIVACY.md). GlowBack collects zero personal data, includes zero analytics trackers, and requires no network permissions.
-- **License:** Open source and available under the [MIT License](LICENSE).
+- **License:** Copyright (c) 2026 V Poovarasan. All rights reserved. This source code is provided for viewing purposes only; no permission is granted to use, copy, modify, or distribute it, in whole or in part, for any purpose.
