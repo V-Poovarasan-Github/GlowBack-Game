@@ -1422,6 +1422,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("rivalry_paste_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("two_step_battle_card").assertDoesNotExist()
         composeTestRule.onNodeWithTag("pending_challenge_pill").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("awaiting_card_M77").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("paste_reply_awaiting_M77").assertIsDisplayed()
         composeTestRule.onNodeWithTag("copy_awaiting_M77").assertIsDisplayed()
 
@@ -1935,6 +1937,8 @@ class ExampleRobolectricTest {
         // Item 8 & 9: Tap "Get Revenge" on VIKRAM (lastStatus = "LOST", lastTarget = 8) -> verify in-game Revenge banner
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_VIKRAM").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_VIKRAM").performClick()
         composeTestRule.waitForIdle()
         // PASS 5.22: Tapping Get Revenge opens RivalMatchSetupDialog -> tap Continue Last Mode
@@ -1994,9 +1998,11 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
-        // Verify Bin icon on RivalCard opens Clear Rivalry confirmation dialog (and 3-dot menu is gone)
-        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("delete_rival_ALEX").assertIsDisplayed().performClick()
+        // Verify 3-dot kebab menu on RivalCard replaces old bin icon and opens Clear Rivalry confirmation dialog
+        composeTestRule.onNodeWithTag("delete_rival_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").assertIsDisplayed().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("confirm_clear_rivalry_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("confirm_clear_rivalry_cancel").performClick()
@@ -2074,6 +2080,8 @@ class ExampleRobolectricTest {
         }
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("rival_status_text_ALEX")
@@ -2214,6 +2222,8 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("rival_grid_chip_ALEX_2x2")
             .assertIsDisplayed()
@@ -2302,10 +2312,12 @@ class ExampleRobolectricTest {
         // Navigate to Rivalry tab -> verify "Send Reply" button is visible on ALEX's RivalCard
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply", substring = true)
+            .assertTextContains("Copy Reply Code", substring = true)
             .performClick()
         composeTestRule.waitForIdle()
 
@@ -2686,6 +2698,8 @@ class ExampleRobolectricTest {
         assertEquals("Rule 4: Exiting on Ready gate must preserve all 3 tries", 3, alexAfterReadyExit!!.inProgressTriesLeft)
 
         // 3. Resume ALEX's challenge from Rivalry tab ("Resume (3 left)")
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
@@ -2788,6 +2802,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_home").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_WIN_RIVAL").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_WIN_RIVAL").performClick()
         composeTestRule.waitForIdle()
@@ -2952,6 +2968,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_LOCK21").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_LOCK21").performClick()
         composeTestRule.waitForIdle()
 
@@ -3020,6 +3038,8 @@ class ExampleRobolectricTest {
 
         // Navigate to Rivalry tab
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO_DUEL").performClick()
         composeTestRule.waitForIdle()
 
         // Verify the dynamic action button on HERO_DUEL's card says "⚡ Get Revenge"
@@ -3177,6 +3197,8 @@ class ExampleRobolectricTest {
         ChallengeStorage.saveRival(context, rival26)
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_RIVAL26").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_RIVAL26").performClick()
         composeTestRule.waitForIdle()
@@ -3785,6 +3807,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         // Proof 4: Open RivalMatchSetupDialog for TITAN -> no qualifying score exists, so recommendation section is hidden
+        composeTestRule.onNodeWithTag("rival_card_TITAN").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_TITAN").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
@@ -3793,6 +3817,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         // Proof 1: Open RivalMatchSetupDialog for VORTEX -> recommendation section is shown with ONLY 3x3 Easy chip
+        composeTestRule.onNodeWithTag("rival_card_VORTEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_VORTEX").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
@@ -3952,6 +3978,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("rival_card_TITAN").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_TITAN").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
@@ -4191,6 +4219,8 @@ class ExampleRobolectricTest {
         )
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_BLAZE").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_BLAZE").performScrollTo().performClick()
         composeTestRule.waitForIdle()
@@ -5089,6 +5119,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed()
@@ -5598,18 +5630,20 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
 
         // Default selection is 4x4 -> reply row shows unsent button without raw code
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
 
         // Tap 3x3 chip -> reply row switches to 3x3 (also unsent)
         composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
 
         // Tap 2x2 chip (no stored reply) -> reply row hides
         composeTestRule.onNodeWithTag("rival_grid_chip_HERO_2x2").performClick()
@@ -5715,16 +5749,18 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
 
         // Verify 4x4 chip is at the left edge (smaller X than 3x3 and 2x2)
         val bounds4x4 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_4x4").fetchSemanticsNode().boundsInRoot
         val bounds3x3 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").fetchSemanticsNode().boundsInRoot
         assertTrue("Last-played grid (4x4) must be leftmost chip (left=${bounds4x4.left} < ${bounds3x3.left})", bounds4x4.left < bounds3x3.left)
 
-        // Verify 4x4 is selected by default so Send Reply to HERO button is shown
+        // Verify 4x4 is selected by default so Copy Reply Code button is shown
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
     }
 
     @Test
@@ -5807,6 +5843,8 @@ class ExampleRobolectricTest {
         val code4x4 = r4.lastReplies["4x4"]!!.code
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
         composeTestRule.waitForIdle()
 
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -5894,6 +5932,8 @@ class ExampleRobolectricTest {
         assertEquals("Same seed must be preserved on open challenge", seed, openRecord.inProgressSeed)
 
         // Verify rival card shows the Resume Challenge entry and tapping it resumes same seed with Ready gate re-armed
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO")
             .assertIsDisplayed()
             .performClick()
@@ -6056,6 +6096,8 @@ class ExampleRobolectricTest {
         }
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
 
         val rowBounds = composeTestRule.onNodeWithTag("rival_grid_chips_row_ALEX").fetchSemanticsNode().boundsInRoot
         val rowHeightPx = rowBounds.height
@@ -6178,6 +6220,8 @@ class ExampleRobolectricTest {
 
         // Navigate to Rivalry and resume Try 2 of 3
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO").performClick()
         composeTestRule.waitForIdle()
@@ -6334,11 +6378,13 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
 
-        // Unsent button is displayed with "Send Reply to HERO"
+        // Unsent button is displayed with "Copy Reply Code"
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
         composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
 
         // Tap the unsent button -> transitions immediately to sent row
@@ -6387,6 +6433,8 @@ class ExampleRobolectricTest {
         ChallengeStorage.saveRival(context, seededRival)
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
         composeTestRule.waitForIdle()
 
         // Sent row is displayed with "2h ago" and "copy again"
@@ -6437,11 +6485,13 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_ALEX2").performClick()
+        composeTestRule.waitForIdle()
 
-        // Unsent button has label "Send Reply to ALEX2"
+        // Unsent button has label "Copy Reply Code"
         val buttonNode = composeTestRule.onNodeWithTag("rival_send_reply_button_ALEX2")
         buttonNode.assertIsDisplayed()
-        buttonNode.assertTextContains("Send Reply to ALEX2")
+        buttonNode.assertTextContains("Copy Reply Code")
 
         // Assert that the raw code hash and code prefix are NOT present anywhere on the rival card or screen
         composeTestRule.onAllNodes(hasText("8X2AB", substring = true)).assertCountEquals(0)
@@ -6488,11 +6538,13 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
 
         // 1. Default selection is 4x4 -> Unsent button is displayed, sent row does not exist
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
         composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
 
         // 2. Switch to 3x3 chip -> Sent row is displayed, unsent button does not exist
@@ -6510,7 +6562,7 @@ class ExampleRobolectricTest {
 
         composeTestRule.onNodeWithTag("rival_send_reply_button_HERO")
             .assertIsDisplayed()
-            .assertTextContains("Send Reply to HERO")
+            .assertTextContains("Copy Reply Code")
         composeTestRule.onNodeWithTag("rival_reply_sent_row_HERO").assertDoesNotExist()
     }
 
@@ -6650,6 +6702,8 @@ class ExampleRobolectricTest {
         assertTrue("rival_card_name_HERO width must be >= 48dp", rivalNameNode.boundsInRoot.width >= min48Px)
 
         // 3.1 & 3.2: Per-rival grid-stat chips expose Selected / Not selected and >= 48dp height
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
         val chip4x4 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_4x4").fetchSemanticsNode()
         val chip3x3 = composeTestRule.onNodeWithTag("rival_grid_chip_HERO_3x3").fetchSemanticsNode()
         assertEquals(
@@ -6713,6 +6767,587 @@ class ExampleRobolectricTest {
         assertEquals(
             androidx.compose.ui.semantics.LiveRegionMode.Polite,
             scoreNode.config[androidx.compose.ui.semantics.SemanticsProperties.LiveRegion]
+        )
+    }
+
+    // =========================================================================
+    // TASK v1.1-RIVALRY-UX — 4 Comprehensive Robolectric Tests
+    // =========================================================================
+
+    @Test
+    fun v1_1_topBarSearch_filtersBothSectionsAndBackExitsSearchFirst() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Change C: When broadcastAwaiting is empty and rivals exist, AWAITING CHALLENGES header is hidden
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ROYCE07_",
+            userScore = 12,
+            targetScore = 11,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "RY1",
+            maxTries = 3
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "PRAVEEN",
+            userScore = 6,
+            targetScore = 9,
+            gridSize = "3x3",
+            difficulty = GameDifficulty.EASY,
+            chainId = "PR1",
+            maxTries = 3
+        )
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rivals_section_header")
+            .assertIsDisplayed()
+            .assertTextContains("RIVAL BATTLES (2)")
+
+        // 2. Seed a broadcast AwaitingChallenge ("Unknown challenger" on 4x4 Easy Target 6)
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "AW1",
+                code = "4x4-6-T3E-HERO-AW1-12345-A",
+                gridSizeTag = "4x4",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+        // Navigate Home and back to refresh
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("awaiting_section_header")
+            .assertIsDisplayed()
+            .assertTextContains("AWAITING CHALLENGES (1)")
+
+        // 3. Tap Search icon -> swaps title to search input with distinct Clear and Close descriptions
+        composeTestRule.onNodeWithTag("leaderboard_search_button")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("leaderboard_screen_title").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("leaderboard_search_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("leaderboard_search_close_button").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Close search").assertIsDisplayed()
+        // Suggestion 3: While search field is active and has focus, [Share to Everyone | Paste Code] row is hidden
+        composeTestRule.onNodeWithTag("rivalry_action_bar").assertDoesNotExist()
+
+        // 4. Filter by "roy" -> matches ROYCE07_ (1 of 2), Awaiting shows (0 of 1) + per-section empty filter
+        composeTestRule.onNodeWithTag("leaderboard_search_input").performTextInput("roy")
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithContentDescription("Clear search").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (0 of 1)")
+        composeTestRule.onNodeWithTag("awaiting_section_empty_filter").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rivals_section_header").assertTextContains("RIVAL BATTLES (1 of 2)")
+        composeTestRule.onNodeWithTag("rival_card_ROYCE07_").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_card_PRAVEEN").assertDoesNotExist()
+
+        // 5. Tap inner "Clear search" -> query empties, both sections return to full counts, search stays open
+        composeTestRule.onNodeWithTag("leaderboard_search_clear_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("leaderboard_search_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (1)")
+        composeTestRule.onNodeWithTag("rivals_section_header").assertTextContains("RIVAL BATTLES (2)")
+
+        // 6. Filter by "unknown" -> matches AwaitingChallenge (1 of 1), Rivals shows (0 of 2) + per-section empty filter
+        composeTestRule.onNodeWithTag("leaderboard_search_input").performTextInput("unknown")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (1 of 1)")
+        composeTestRule.onNodeWithTag("awaiting_card_AW1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rivals_section_header").assertTextContains("RIVAL BATTLES (0 of 2)")
+        composeTestRule.onNodeWithTag("rivals_section_empty_filter").assertIsDisplayed()
+
+        // 7. Filter by >10 chars ("zzzzzzzzzzzzzz") -> truncated to 10 chars ("zzzzzzzzzz"), global empty state appears with Clear Search button
+        composeTestRule.onNodeWithTag("leaderboard_search_clear_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("leaderboard_search_input").performTextInput("zzzzzzzzzzzzzz")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("No rivals or challenges match \"zzzzzzzzzz\"").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rivalry_search_empty_state").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rivalry_search_empty_clear_button").assertIsDisplayed()
+
+        // 8. Top-left back arrow is removed; system back exits search first (stays on HallOfFameScreen and restores action bar), second back press navigates back to Home
+        composeTestRule.onNodeWithTag("leaderboard_back_button").assertDoesNotExist()
+        composeTestRule.activityRule.scenario.onActivity {
+            it.onBackPressedDispatcher.onBackPressed()
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("hall_of_fame_screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("leaderboard_search_input").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("leaderboard_screen_title").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rivalry_action_bar").assertIsDisplayed()
+
+        composeTestRule.activityRule.scenario.onActivity {
+            it.onBackPressedDispatcher.onBackPressed()
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun v1_1_cardsDefaultCollapsed_expandCollapseSemanticsAndTouchTargets() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val now = System.currentTimeMillis()
+        // ROYCE07_: WON status, reply already sent
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ROYCE07_",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 11,
+                lastUserScore = 12,
+                lastStatus = "WON",
+                isReplySent = true,
+                gridStats = mapOf("2x2" to GridStat(wins = 1, losses = 0, lastPlayedAt = now)),
+                lastReplies = mapOf("2x2" to StoredReply(code = "2x2-12-R3E-HERO-RY1-11111-A", mintedAt = now, copiedAt = now))
+            )
+        )
+        // PRAVEEN: LOST status, unsent reply ("● reply ready") + pending outbound ("● waiting")
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "PRAVEEN",
+                wins = 0,
+                losses = 1,
+                ties = 0,
+                matches = 1,
+                lastGrid = "3x3",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 9,
+                lastUserScore = 6,
+                lastStatus = "LOST",
+                isReplySent = false,
+                gridStats = mapOf("3x3" to GridStat(wins = 0, losses = 1, lastPlayedAt = now)),
+                lastReplies = mapOf("3x3" to StoredReply(code = "3x3-6-R3E-HERO-PR1-22222-B", mintedAt = now, copiedAt = null)),
+                pendingOutbounds = listOf(
+                    PendingOutboundChallenge(
+                        gridTag = "3x3",
+                        difficulty = GameDifficulty.EASY,
+                        target = 10,
+                        tries = 3,
+                        code = "3x3-10-T3E-HERO-PR2-33333-C",
+                        mintedAt = now,
+                        rivalName = "PRAVEEN",
+                        seed = 33333,
+                        chainId = "PR2"
+                    )
+                )
+            )
+        )
+        // Broadcast AwaitingChallenge
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "AW2",
+                code = "4x4-6-T3E-HERO-AW2-44444-D",
+                gridSizeTag = "4x4",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        // 1. One-time tooltip ("Tap card to expand/collapse") appears after the first card and stays unseen until X is clicked
+        composeTestRule.onNodeWithTag("card_expand_tooltip")
+            .assertIsDisplayed()
+            .assertTextContains("Tap card to expand/collapse", substring = true)
+        assertFalse(
+            "One-time expand/collapse tooltip must remain unseen in SharedPreferences until X is clicked",
+            ChallengeStorage.hasSeenCardExpandTooltip(context)
+        )
+
+        // 2. Both AwaitingCard and RivalCards default to Collapsed stateDescription, show "▾" chevron, and do not merge descendants
+        val awaitingNode = composeTestRule.onNodeWithTag("awaiting_card_AW2").fetchSemanticsNode()
+        assertEquals("Collapsed", awaitingNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription])
+        assertFalse(awaitingNode.config.isMergingSemanticsOfDescendants)
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertTextContains("▾")
+        composeTestRule.onNodeWithTag("paste_reply_awaiting_AW2").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("copy_awaiting_AW2").assertDoesNotExist()
+
+        val royceNode = composeTestRule.onNodeWithTag("rival_card_ROYCE07_").fetchSemanticsNode()
+        assertEquals("Collapsed", royceNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription])
+        assertFalse(royceNode.config.isMergingSemanticsOfDescendants)
+        composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertTextContains("▾")
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ROYCE07_").assertDoesNotExist()
+
+        // Suggestion 1: Grammar pluralization check ("1 Win  •  0 Losses  •  0 Ties", "0 Wins  •  1 Loss  •  0 Ties", and "(1 match)")
+        composeTestRule.onNodeWithText("1 Win  •  0 Losses  •  0 Ties", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("0 Wins  •  1 Loss  •  0 Ties", substring = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("(1 match)", substring = true)).assertCountEquals(2)
+
+        // 3. Verify collapsed result badges (W / L) inline on W-L-T row and state signals ("● reply ready" / "● waiting") inline on Name row
+        composeTestRule.onNodeWithTag("rival_result_badge_ROYCE07_")
+            .assertIsDisplayed()
+            .assertTextContains("W")
+        composeTestRule.onNodeWithTag("rival_result_badge_PRAVEEN")
+            .assertIsDisplayed()
+            .assertTextContains("L")
+        val praveenNameBounds = composeTestRule.onNodeWithTag("rival_card_name_PRAVEEN").fetchSemanticsNode().boundsInRoot
+        val praveenReplyReadyBounds = composeTestRule.onNodeWithTag("rival_signal_reply_ready_PRAVEEN")
+            .assertIsDisplayed()
+            .assertTextContains("reply ready")
+            .fetchSemanticsNode().boundsInRoot
+        val praveenWaitingBounds = composeTestRule.onNodeWithTag("rival_signal_waiting_PRAVEEN")
+            .assertIsDisplayed()
+            .assertTextContains("waiting")
+            .fetchSemanticsNode().boundsInRoot
+        assertEquals("Status signal 'reply ready' must be on the same row as Rival Name", praveenNameBounds.center.y, praveenReplyReadyBounds.center.y, 6f * density)
+        assertEquals("Status signal 'waiting' must be on the same row as Rival Name", praveenNameBounds.center.y, praveenWaitingBounds.center.y, 6f * density)
+
+        // Verify context-aware 3-dot menu: PRAVEEN has pendingOutbounds ("waiting") -> "Paste Reply"; ROYCE07_ does not -> "Paste Code"
+        composeTestRule.onNodeWithTag("rival_menu_button_PRAVEEN").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_paste_PRAVEEN").assertIsDisplayed().assertTextContains("Paste Reply")
+        composeTestRule.onNodeWithTag("rival_menu_button_PRAVEEN").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_menu_button_ROYCE07_").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_paste_ROYCE07_").assertIsDisplayed().assertTextContains("Paste Code")
+        composeTestRule.onNodeWithTag("rival_menu_button_ROYCE07_").performClick()
+        composeTestRule.waitForIdle()
+
+        // 4. Verify kebab buttons have Role.Button and >= 48dp touch targets
+        for (menuTag in listOf("awaiting_menu_button_AW2", "rival_menu_button_ROYCE07_", "rival_menu_button_PRAVEEN")) {
+            val menuNode = composeTestRule.onNodeWithTag(menuTag).fetchSemanticsNode()
+            assertEquals(androidx.compose.ui.semantics.Role.Button, menuNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
+            assertTrue("$menuTag width >= 48dp", menuNode.boundsInRoot.width >= min48Px)
+            assertTrue("$menuTag height >= 48dp", menuNode.boundsInRoot.height >= min48Px)
+        }
+
+        // 5. Tap AwaitingCard -> expands, chevron becomes "▴", tooltip stays visible until X is clicked, Paste Reply Code & Copy Code Again are in ONE side-by-side Row
+        composeTestRule.onNodeWithTag("awaiting_card_AW2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("card_expand_tooltip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("card_expand_tooltip_dismiss").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("card_expand_tooltip").assertDoesNotExist()
+        assertTrue(
+            "One-time expand/collapse tooltip must mark itself seen after X button is clicked",
+            ChallengeStorage.hasSeenCardExpandTooltip(context)
+        )
+        composeTestRule.onNodeWithText("One-time info: Tap any card to expand or collapse. Good game!", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertTextContains("▴")
+        assertEquals(
+            "Expanded",
+            composeTestRule.onNodeWithTag("awaiting_card_AW2").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        val topShareBounds = composeTestRule.onNodeWithTag("rivalry_share_button").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val topPasteBounds = composeTestRule.onNodeWithTag("rivalry_paste_button").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val pasteBounds = composeTestRule.onNodeWithTag("paste_reply_awaiting_AW2").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val copyBounds = composeTestRule.onNodeWithTag("copy_awaiting_AW2").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals("Awaiting buttons must be side-by-side on the same row", pasteBounds.top, copyBounds.top, 2.0f)
+        assertTrue("Copy button must be to the right of Paste button", copyBounds.left > pasteBounds.left)
+        assertEquals("Top Share button height must match AwaitingCard Paste button height", pasteBounds.height, topShareBounds.height, 2.0f)
+        assertEquals("Top Paste button height must match AwaitingCard Copy button height", copyBounds.height, topPasteBounds.height, 2.0f)
+
+        // 6. Tap RivalCard ROYCE07_ -> expands, chevron becomes "▴", stateDescription = "Expanded", inner controls appear with matching height and compact Reply Copied row
+        composeTestRule.onNodeWithTag("rival_card_ROYCE07_").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertTextContains("▴")
+        assertEquals(
+            "Expanded",
+            composeTestRule.onNodeWithTag("rival_card_ROYCE07_").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        val replySentBounds = composeTestRule.onNodeWithTag("rival_reply_sent_row_ROYCE07_").performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val replySentVisualBounds = composeTestRule.onNodeWithTag("rival_reply_sent_visual_ROYCE07_", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val rivalDynBounds = composeTestRule.onNodeWithTag("rival_dynamic_button_ROYCE07_").performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val rivalDynVisualBounds = composeTestRule.onNodeWithTag("rival_dynamic_visual_ROYCE07_", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val rivalPasteBounds = composeTestRule.onNodeWithTag("rival_paste_button_ROYCE07_").performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Reply copied row touch target must be >= 48dp", replySentBounds.height >= min48Px)
+        assertTrue("Reply copied visual row must be compact (~20dp) and smaller than 38dp action button", replySentVisualBounds.height < rivalDynVisualBounds.height)
+        assertEquals("RivalCard dynamic button height must match AwaitingCard button height", pasteBounds.height, rivalDynBounds.height, 2.0f)
+        assertEquals("RivalCard paste button height must match AwaitingCard button height", copyBounds.height, rivalPasteBounds.height, 2.0f)
+    }
+
+    @Test
+    fun v1_1_kebabMenus_confirmAndUndoSnackbarRestoresData() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val now = System.currentTimeMillis()
+        // Seed rival ALEX + an in-progress ChallengeItem + a named AwaitingChallenge (Change A)
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 2,
+                losses = 1,
+                ties = 0,
+                matches = 3,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 7,
+                lastUserScore = 8,
+                lastStatus = "WON"
+            )
+        )
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = "2x2-9-T3E-ALEX-ALX-55555-A",
+                rivalName = "ALEX",
+                gridSizeTag = "2x2",
+                targetScore = 9,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 5,
+                seed = 55555,
+                difficulty = GameDifficulty.EASY,
+                chainId = "ALX"
+            )
+        )
+        // Named AwaitingChallenge for ALEX (initially hidden from broadcastAwaiting because ALEX is an active rival)
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "NAMED1",
+                code = "3x3-8-T3E-HERO-NAMED1-66666-B",
+                gridSizeTag = "3x3",
+                targetScore = 8,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                createdAt = now,
+                rivalName = "ALEX"
+            )
+        )
+        // Broadcast AwaitingChallenge
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "BCAST1",
+                code = "4x4-6-T3E-HERO-BCAST1-77777-C",
+                gridSizeTag = "4x4",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                createdAt = now - 1000L,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Initially only BCAST1 is in AWAITING CHALLENGES (1); NAMED1 is tied to ALEX
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (1)")
+        composeTestRule.onNodeWithTag("awaiting_card_BCAST1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_card_NAMED1").assertDoesNotExist()
+
+        // 1. Delete rival ALEX via kebab menu -> verify "Expand/Collapse" option is removed (Item 3),
+        //    Change A reassigns NAMED1 to rivalName = null ("Unknown challenger"),
+        //    and displays Snackbar with Undo (SnackbarDuration.Long)
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_toggle_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_menu_paste_ALEX").assertIsDisplayed().assertTextContains("Paste Code")
+        composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_confirm").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify ALEX is deleted and NAMED1 fell back to broadcast (rivalName == null) and is now visible in AWAITING CHALLENGES (2)
+        assertNull(ChallengeStorage.findRivalByName(context, "ALEX"))
+        val reassignedNamed1 = ChallengeStorage.loadAwaitingChallenges(context).firstOrNull { it.chainId == "NAMED1" }
+        assertNotNull("Change A: Named AwaitingChallenge must remain in storage when rival is deleted", reassignedNamed1)
+        assertNull("Change A: Named AwaitingChallenge rivalName must be reassigned to null", reassignedNamed1!!.rivalName)
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (2)")
+        composeTestRule.onNodeWithTag("awaiting_card_NAMED1").assertIsDisplayed()
+
+        // Tap "Undo" on the Snackbar -> restores ALEX, ALEX's ChallengeItem, and NAMED1's rivalName = "ALEX"
+        composeTestRule.onNodeWithText("Undo").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        val restoredAlex = ChallengeStorage.findRivalByName(context, "ALEX")
+        assertNotNull("Undo must restore RivalRecord ALEX", restoredAlex)
+        assertEquals(2, restoredAlex!!.wins)
+        assertTrue(
+            "Undo must restore ALEX's ChallengeItem",
+            ChallengeStorage.loadChallenges(context).any { it.chainId == "ALX" && it.rivalName == "ALEX" }
+        )
+        val restoredNamed1 = ChallengeStorage.loadAwaitingChallenges(context).firstOrNull { it.chainId == "NAMED1" }
+        assertNotNull(restoredNamed1)
+        assertEquals("Change A: Undo must restore rivalName = ALEX on NAMED1", "ALEX", restoredNamed1!!.rivalName)
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (1)")
+        composeTestRule.onNodeWithTag("rival_card_ALEX").assertIsDisplayed()
+
+        // 2. Cancel broadcast awaiting challenge BCAST1 via kebab menu -> verify "Expand/Collapse" option is removed (Item 3),
+        //    confirm -> Undo restores BCAST1
+        composeTestRule.onNodeWithTag("awaiting_menu_button_BCAST1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_menu_toggle_BCAST1").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("awaiting_menu_copy_BCAST1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_menu_paste_BCAST1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_menu_cancel_BCAST1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_confirm").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).none { it.chainId == "BCAST1" })
+        // Change C: Since BCAST1 was the only broadcast awaiting challenge, AWAITING CHALLENGES header hides!
+        composeTestRule.onNodeWithTag("awaiting_section_header").assertDoesNotExist()
+
+        // Tap "Undo" on the Snackbar -> BCAST1 is restored!
+        composeTestRule.onNodeWithText("Undo").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(
+            "Undo must restore cancelled AwaitingChallenge BCAST1",
+            ChallengeStorage.loadAwaitingChallenges(context).any { it.chainId == "BCAST1" }
+        )
+        composeTestRule.onNodeWithTag("awaiting_section_header")
+            .assertIsDisplayed()
+            .assertTextContains("AWAITING CHALLENGES (1)")
+    }
+
+    @Test
+    fun v1_1_targetedShareCard_rendersRivalHeaderAndTauntWithoutAlteringCode() {
+        val originalCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 12,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 42424,
+            senderName = "HERO",
+            chainId = "R99",
+            isRevenge = false
+        )
+
+        // 1. Generic outbound card (rivalName = null) vs Targeted outbound card (rivalName = "ROYCE07_")
+        val genericBitmap = com.example.challenge.ChallengeShareHelper.createChallengeBitmap(
+            code = originalCode,
+            gridSizeTag = "2x2",
+            score = 12,
+            attempts = 1,
+            tries = 3,
+            paceName = "Classic",
+            difficulty = GameDifficulty.EASY,
+            isReply = false,
+            rivalName = null,
+            isRevengeTaunt = false
+        )
+        val targetedStandardBitmap = com.example.challenge.ChallengeShareHelper.createChallengeBitmap(
+            code = originalCode,
+            gridSizeTag = "2x2",
+            score = 12,
+            attempts = 1,
+            tries = 3,
+            paceName = "Classic",
+            difficulty = GameDifficulty.EASY,
+            isReply = false,
+            rivalName = "ROYCE07_",
+            isRevengeTaunt = false
+        )
+        val targetedRevengeBitmap = com.example.challenge.ChallengeShareHelper.createChallengeBitmap(
+            code = originalCode,
+            gridSizeTag = "2x2",
+            score = 12,
+            attempts = 1,
+            tries = 3,
+            paceName = "Classic",
+            difficulty = GameDifficulty.EASY,
+            isReply = false,
+            rivalName = "ROYCE07_",
+            isRevengeTaunt = true
+        )
+
+        assertEquals(1080, genericBitmap.width)
+        assertEquals(1080, targetedStandardBitmap.width)
+        assertEquals(1080, targetedRevengeBitmap.width)
+        assertFalse(
+            "Targeted share card must render distinct header badge and taunt pixels vs generic card",
+            genericBitmap.sameAs(targetedStandardBitmap)
+        )
+        assertFalse(
+            "Revenge taunt share card must render distinct taunt pixels vs standard targeted card",
+            targetedStandardBitmap.sameAs(targetedRevengeBitmap)
+        )
+
+        // 2. Verify Share Caption Variants + Change B round-trip extraction assertion
+        val genericCaption = com.example.challenge.ChallengeShareHelper.buildOutboundShareCaption(
+            code = originalCode,
+            score = 12,
+            rivalName = null,
+            isRevengeTaunt = false
+        )
+        assertEquals("Generic outbound share caption must be the raw code only", originalCode, genericCaption)
+
+        val standardTauntCaption = com.example.challenge.ChallengeShareHelper.buildOutboundShareCaption(
+            code = originalCode,
+            score = 12,
+            rivalName = "ROYCE07_",
+            isRevengeTaunt = false
+        )
+        assertEquals("Beat my 12, ROYCE07_.\n$originalCode", standardTauntCaption)
+        assertEquals(
+            "Change B: ChallengeSeed.extractCodeFromText must round-trip the exact 7-segment code from standard taunt caption",
+            originalCode,
+            ChallengeSeed.extractCodeFromText(standardTauntCaption)
+        )
+
+        val revengeTauntCaption = com.example.challenge.ChallengeShareHelper.buildOutboundShareCaption(
+            code = originalCode,
+            score = 12,
+            rivalName = "ROYCE07_",
+            isRevengeTaunt = true
+        )
+        assertEquals("Rematch, ROYCE07_? I'm taking that W back.\n$originalCode", revengeTauntCaption)
+        assertEquals(
+            "Change B: ChallengeSeed.extractCodeFromText must round-trip the exact 7-segment code from revenge taunt caption",
+            originalCode,
+            ChallengeSeed.extractCodeFromText(revengeTauntCaption)
         )
     }
 }
