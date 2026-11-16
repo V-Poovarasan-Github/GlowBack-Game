@@ -6,6 +6,21 @@
 <title>GLOWBACK — 100% Offline Neon Memory Duel</title>
 <meta name="description" content="GlowBack is a 100% offline neon sequence-memory game for Android. Beat your own best, then challenge a friend with a deterministic text code — no accounts, no servers, no ads." />
 <meta name="theme-color" content="#05080F" />
+<link rel="canonical" href="https://v-poovarasan-github.github.io/GlowBack-Game/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="GlowBack" />
+<meta property="og:title" content="GLOWBACK — 100% Offline Neon Memory Duel" />
+<meta property="og:description" content="A neon sequence-memory game for Android. Beat your own best, then challenge a friend with a compact text code — no accounts, no servers, no ads." />
+<meta property="og:url" content="https://v-poovarasan-github.github.io/GlowBack-Game/" />
+<meta property="og:image" content="https://v-poovarasan-github.github.io/GlowBack-Game/og-image.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="GlowBack — neon memory duel. Four glowing pads on a dark board." />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="GLOWBACK — 100% Offline Neon Memory Duel" />
+<meta name="twitter:description" content="A neon sequence-memory game for Android. Beat your own best, then challenge a friend with a compact text code — no accounts, no servers, no ads." />
+<meta name="twitter:image" content="https://v-poovarasan-github.github.io/GlowBack-Game/og-image.png" />
+<link rel="icon" sizes="any" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2305080F'/><circle cx='22' cy='32' r='10' fill='%2310B981'/><circle cx='42' cy='32' r='10' fill='%23EF4444'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -675,6 +690,12 @@
   .foot-links a{ color: var(--dim); text-decoration:none; font-size: 14px; }
   .foot-links a:hover{ color: var(--paper); }
   .foot-note{ color: var(--dim-2); font-size: 13px; margin-top: 18px; }
+
+  /* ---------- reduced motion ---------- */
+  @media (prefers-reduced-motion: reduce){
+    html{ scroll-behavior: auto; }
+    *, *::before, *::after{ transition: none !important; animation: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -692,7 +713,7 @@
     </ul>
     <div class="navcta">
       <a class="btn btn-ghost btn-sm" href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">Source</a>
-      <a class="btn btn-primary btn-sm" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download APK</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/latest" target="_blank" rel="noopener">Download APK</a>
     </div>
   </div>
 </header>
@@ -707,7 +728,7 @@
         <h1>Watch the glow.<br>Send it back.</h1>
         <p class="lede">Memorize an expanding pattern of light and sound across 4 grid sizes, then challenge a friend to beat your exact sequence using a compact text code. No accounts, no internet connection, no server in between.</p>
         <div class="ctas">
-          <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
+          <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/latest" target="_blank" rel="noopener">Download the APK</a>
           <a class="btn btn-ghost js-jump-how" href="#how">See how a duel works</a>
         </div>
         <div class="pill-row">
@@ -1091,7 +1112,7 @@
         <div class="spec-col">
           <span class="spec-token" style="background:rgba(0,229,255,0.16);color:#67E8F9;border-color:rgba(0,229,255,0.42);">B</span>
           <b>7. Checksum</b>
-          <span class="desc">Tamper-proof character blocking manual edits.</span>
+          <span class="desc">Tamper-evident character that rejects hand-edited codes.</span>
         </div>
       </div>
     </div>
@@ -1113,9 +1134,9 @@
   <!-- ============ CTA ============ -->
   <section class="wrap cta-band">
     <h2>Memorize something. Send it back.</h2>
-    <p>Free, open source, and yours to keep — no account required to start.</p>
+    <p>Free to play and yours to keep — no account required to start.</p>
     <div class="ctas" style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
-      <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/tag/v1.0.0" target="_blank" rel="noopener">Download the APK</a>
+      <a class="btn btn-primary" href="https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/latest" target="_blank" rel="noopener">Download the APK</a>
       <a class="btn btn-ghost" href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">Browse the source</a>
     </div>
   </section>
@@ -1138,7 +1159,11 @@
 
 <script>
 (function(){
-  // ---- 1. Standalone 2x2 Hero Pads: always auto-runs continuously on load ----
+  // Respect the OS "reduce motion" setting: no auto-play, click-driven only.
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var hasObserver = 'IntersectionObserver' in window;
+
+  // ---- 1. Standalone 2x2 Hero Pads: auto-runs while visible (unless reduced motion) ----
   var pads = Array.prototype.slice.call(document.querySelectorAll('#heroGrid .pad'));
   var caption = document.getElementById('heroCaption');
   var stepBadge = document.getElementById('heroStepBadge');
@@ -1159,7 +1184,15 @@
     p.addEventListener('click', function(){ flashClick(idx); });
   });
 
+  var heroVisible = true;
+  var heroActive = false;
+
   function playHeroRound(){
+    if(reduceMotion || !heroVisible){
+      heroActive = false;
+      return;
+    }
+    heroActive = true;
     var seq = full.slice(0, currentStep);
     if(stepBadge) stepBadge.textContent = 'STEP ' + currentStep + ' / 9';
     if(caption) caption.textContent = 'Round ' + currentStep + ' of 9 — watch carefully…';
@@ -1182,9 +1215,19 @@
     tick();
   }
 
-  playHeroRound();
+  var heroStage = document.querySelector('.demo-stage');
+  if(reduceMotion){
+    if(caption) caption.textContent = 'Auto-play is off (reduced motion) — tap any pad to light it.';
+  } else if(hasObserver && heroStage){
+    new IntersectionObserver(function(entries){
+      heroVisible = entries[0].isIntersecting;
+      if(heroVisible && !heroActive) playHeroRound();
+    }, { threshold: 0.15 }).observe(heroStage);
+  } else {
+    playHeroRound();
+  }
 
-  // ---- 2. How It Works (Steps 1 to 9 inside the Phone App UI Replica): always auto-runs ----
+  // ---- 2. How It Works (Steps 1 to 9 inside the Phone App UI Replica): auto-runs while visible ----
   var stepBtns = Array.prototype.slice.call(document.querySelectorAll('.step'));
   var screens = Array.prototype.slice.call(document.querySelectorAll('.screen'));
   var bnavHome = document.getElementById('bnavHome');
@@ -1207,9 +1250,19 @@
     if(bnavHof) bnavHof.classList.toggle('on', isHof);
   }
 
+  var flowVisible = true;
+  var flowEl = document.querySelector('.flow');
+  if(!reduceMotion && hasObserver && flowEl){
+    new IntersectionObserver(function(entries){
+      flowVisible = entries[0].isIntersecting;
+    }, { threshold: 0.1 }).observe(flowEl);
+  }
+
   function startAuto(){
+    if(reduceMotion) return;
     clearInterval(autoTimer);
     autoTimer = setInterval(function(){
+      if(!flowVisible) return;
       var current = document.querySelector('.step.active');
       var idx = stepBtns.indexOf(current);
       var next = stepBtns[(idx + 1) % stepBtns.length];
