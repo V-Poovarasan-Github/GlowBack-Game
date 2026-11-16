@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — GlowBack</title>
+<meta name="description" content="GlowBack's privacy policy: zero data collection, on-device storage only, no analytics, no ads, no internet permission." />
+<meta name="theme-color" content="#05080F" />
+<link rel="canonical" href="https://v-poovarasan-github.github.io/GlowBack-Game/privacy.html" />
+<link rel="icon" sizes="any" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2305080F'/><circle cx='22' cy='32' r='10' fill='%2310B981'/><circle cx='42' cy='32' r='10' fill='%23EF4444'/></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#05080F;
+    --panel:#0E1527;
+    --line: rgba(148,163,184,0.14);
+    --line-strong: rgba(148,163,184,0.26);
+    --paper:#F4F7FB;
+    --dim:#94A3B8;
+    --dim-2:#64748B;
+    --cyan:#00E5FF;
+    --green:#10B981;
+    --red:#EF4444;
+    --font-display:'Space Grotesk', system-ui, sans-serif;
+    --font-body:'Inter', system-ui, sans-serif;
+  }
+  *{ box-sizing: border-box; }
+  html{ background: var(--ink); }
+  body{
+    margin:0;
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 900px 500px at 18% -8%, rgba(16,185,129,0.08), transparent 60%),
+      radial-gradient(ellipse 900px 600px at 86% 6%, rgba(0,229,255,0.06), transparent 60%);
+    color: var(--paper);
+    font-family: var(--font-body);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a{ color: var(--cyan); }
+  :focus-visible{ outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 4px; }
+  .wrap{ width:100%; max-width: 840px; margin: 0 auto; padding: 0 24px; }
+
+  header{
+    position: sticky; top:0; z-index: 50;
+    background: rgba(5,8,15,0.84);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding: 15px 0; }
+  .wordmark{
+    display:inline-flex; align-items:center; gap:8px;
+    font-weight: 900; font-size: 17px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: #FFFFFF; text-decoration:none;
+  }
+  .wordmark .dot{ width:10px; height:10px; border-radius:50%; background: var(--green); box-shadow: 0 0 10px rgba(16,185,129,0.85); }
+  .wordmark .dot2{ background: var(--red); box-shadow: 0 0 10px rgba(239,68,68,0.85); }
+  .backlink{ color: var(--dim); text-decoration:none; font-size: 14px; font-weight: 500; }
+  .backlink:hover{ color: var(--paper); }
+
+  main{ padding: 56px 0 72px; }
+  h1{ font-family: var(--font-display); font-size: clamp(30px, 5vw, 42px); letter-spacing: -0.015em; margin: 0 0 6px; }
+  .updated{ color: var(--dim-2); font-size: 14px; margin: 0 0 10px; }
+  .intro{ color: var(--dim); font-size: 16px; margin: 0 0 36px; }
+
+  section.policy{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px 26px;
+    margin-bottom: 18px;
+  }
+  section.policy h2{
+    font-family: var(--font-display);
+    font-size: 19px; margin: 0 0 10px; letter-spacing: -0.01em;
+  }
+  section.policy p{ color: var(--dim); font-size: 15px; margin: 0 0 10px; }
+  section.policy p:last-child, section.policy ul:last-child{ margin-bottom: 0; }
+  section.policy ul{ margin: 0 0 10px; padding-left: 20px; color: var(--dim); font-size: 15px; }
+  section.policy li{ margin-bottom: 7px; }
+  section.policy li:last-child{ margin-bottom: 0; }
+  section.policy b{ color: var(--paper); }
+  .headline{
+    color: var(--paper); font-weight: 600; font-size: 15.5px;
+    border-left: 3px solid var(--green);
+    padding-left: 14px;
+  }
+  code{
+    font-family: ui-monospace, monospace; font-size: 0.9em;
+    background: rgba(8,13,26,0.8); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px; color: var(--paper);
+  }
+
+  footer{ border-top: 1px solid var(--line); padding: 28px 0 40px; }
+  .foot-note{ color: var(--dim-2); font-size: 13px; }
+  .foot-note a{ color: var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="wordmark" href="./">
+      <span class="dot"></span><span class="dot dot2"></span>GLOWBACK
+    </a>
+    <a class="backlink" href="./">&larr; Back to site</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Privacy Policy for Glowback</h1>
+  <p class="updated">Last updated: November 10, 2026</p>
+  <p class="intro">Welcome to <b>Glowback</b> ("the App"). We are committed to protecting your privacy. This Privacy Policy explains our practices regarding user data and information handling.</p>
+
+  <section class="policy">
+    <h2>1. Zero Data Collection</h2>
+    <p class="headline">Glowback does not collect, share, or transmit any personal data. All gameplay, records, and codes remain 100% offline on your device. There are no accounts, no analytics, and no internet connection required.</p>
+    <ul>
+      <li><b>No personal information:</b> We do not collect names, email addresses, phone numbers, device IDs, IP addresses, or any other personally identifiable information.</li>
+      <li><b>No user accounts:</b> The App operates entirely without registration, logins, or user profiles.</li>
+      <li><b>No internet or server transmission:</b> The App does not connect to external servers, cloud databases, or remote APIs.</li>
+    </ul>
+  </section>
+
+  <section class="policy">
+    <h2>2. On-Device Storage Only &amp; Backup Exclusion</h2>
+    <p>All data created within the App — including game scores, leaderboard records, sound/haptic preferences, and challenge codes — is stored strictly locally on your device via standard Android application storage (<code>SharedPreferences</code>) and local cache files.</p>
+    <ul>
+      <li><b>No cloud backup or device transfer:</b> Android Auto Backup (<code>full-backup-content</code> and <code>cloud-backup</code>) and device-to-device transfer (<code>device-transfer</code>) are explicitly excluded in <code>backup_rules.xml</code> and <code>data_extraction_rules.xml</code> for both <code>sharedpref</code> and <code>file</code> domains. Glowback does not upload your game data to cloud backups or transfer it during device migrations; no data ever leaves your device.</li>
+      <li>You can permanently delete all stored game data at any time by clearing the App's storage via your Android device settings (<b>Settings &gt; Apps &gt; Glowback &gt; Storage &gt; Clear Data</b>) or by uninstalling the application.</li>
+    </ul>
+  </section>
+
+  <section class="policy">
+    <h2>3. Third-Party Services &amp; Analytics</h2>
+    <p>Glowback does not incorporate:</p>
+    <ul>
+      <li>Advertising SDKs or ad networks</li>
+      <li>Analytics, telemetry, or crash-reporting trackers (e.g., Google Analytics, Firebase Analytics)</li>
+      <li>Social network plugins or external trackers</li>
+    </ul>
+    <p>No third party receives any data from your use of the App.</p>
+  </section>
+
+  <section class="policy">
+    <h2>4. Device Permissions</h2>
+    <p>Glowback only uses device capabilities essential for local gameplay:</p>
+    <ul>
+      <li><b>Vibration / haptic feedback (<code>VIBRATE</code>):</b> Used exclusively to provide sensory feedback when tapping pads or clearing rounds.</li>
+      <li><b>Notifications (<code>POST_NOTIFICATIONS</code>, optional):</b> If enabled, local notifications are scheduled and delivered entirely on-device (via Android WorkManager) to notify you of offline challenge reminders. No notification data is sent or received over the network.</li>
+      <li><b>Boot completed (<code>RECEIVE_BOOT_COMPLETED</code>):</b> Used exclusively by Android Jetpack WorkManager (<code>RescheduleReceiver</code>) to keep your opt-in local notification schedule active after a device reboot.</li>
+    </ul>
+  </section>
+
+  <section class="policy">
+    <h2>5. Children's Privacy</h2>
+    <p>Glowback is safe for users of all ages, including children. Because the App does not collect, store, or transmit any personal information, it complies with the Children's Online Privacy Protection Act (COPPA), the General Data Protection Regulation (GDPR), and Google Play Families Policy requirements.</p>
+  </section>
+
+  <section class="policy">
+    <h2>6. Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time to reflect operational or legal requirements. Any updates will be posted in the GitHub repository and on this page.</p>
+  </section>
+
+  <section class="policy">
+    <h2>7. Contact Us</h2>
+    <p>If you have questions or suggestions about this Privacy Policy, please open an issue on the GitHub repository:</p>
+    <p><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game/issues" target="_blank" rel="noopener">github.com/V-Poovarasan-Github/GlowBack-Game/issues</a></p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-note">
+    Copyright (c) 2026 V Poovarasan. All rights reserved. · <a href="./">GlowBack home</a> · <a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>

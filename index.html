@@ -21,6 +21,21 @@
 <meta name="twitter:description" content="A neon sequence-memory game for Android. Beat your own best, then challenge a friend with a compact text code — no accounts, no servers, no ads." />
 <meta name="twitter:image" content="https://v-poovarasan-github.github.io/GlowBack-Game/og-image.png" />
 <link rel="icon" sizes="any" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2305080F'/><circle cx='22' cy='32' r='10' fill='%2310B981'/><circle cx='42' cy='32' r='10' fill='%23EF4444'/></svg>" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "MobileApplication",
+  "name": "GlowBack",
+  "operatingSystem": "Android",
+  "applicationCategory": "GameApplication",
+  "url": "https://v-poovarasan-github.github.io/GlowBack-Game/",
+  "image": "https://v-poovarasan-github.github.io/GlowBack-Game/og-image.png",
+  "description": "A 100% offline neon sequence-memory game for Android. Beat your own best, then challenge a friend with a compact deterministic text code — no accounts, no servers, no ads.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "V Poovarasan" },
+  "downloadUrl": "https://github.com/V-Poovarasan-Github/GlowBack-Game/releases/latest"
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -241,6 +256,7 @@
   }
   .pad{
     position:relative; aspect-ratio: 1; border-radius: 20px;
+    padding:0; background:none; appearance:none; -webkit-appearance:none;
     display:flex; align-items:center; justify-content:center;
     transition: background .15s ease, box-shadow .15s ease, border-color .15s ease, transform .1s ease;
     border: 1.5px solid transparent;
@@ -744,10 +760,10 @@
           <span class="step-badge" id="heroStepBadge">STEP 1 / 9</span>
         </div>
         <div class="pad-grid" id="heroGrid">
-          <div class="pad c0" data-c="0" title="Green Pad (Triangle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3 L21 19 L3 19 Z"/></svg></div>
-          <div class="pad c1" data-c="1" title="Red Pad (Circle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8.5"/></svg></div>
-          <div class="pad c2" data-c="2" title="Amber Pad (Square)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/></svg></div>
-          <div class="pad c3" data-c="3" title="Blue Pad (Diamond)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2.5 L21.5 12 L12 21.5 L2.5 12 Z"/></svg></div>
+          <button type="button" class="pad c0" data-c="0" aria-label="Green pad (triangle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3 L21 19 L3 19 Z"/></svg></button>
+          <button type="button" class="pad c1" data-c="1" aria-label="Red pad (circle)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8.5"/></svg></button>
+          <button type="button" class="pad c2" data-c="2" aria-label="Amber pad (square)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/></svg></button>
+          <button type="button" class="pad c3" data-c="3" aria-label="Blue pad (diamond)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2.5 L21.5 12 L12 21.5 L2.5 12 Z"/></svg></button>
         </div>
         <p class="demo-caption" id="heroCaption">Round 1 of 9 — watch carefully…</p>
       </div>
@@ -764,15 +780,15 @@
 
     <div class="flow">
       <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
-        <button class="step active" data-step="1" data-n="1" role="tab" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Leaderboard tab.</p></button>
-        <button class="step" data-step="2" data-n="2" role="tab" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy appends one pad per round. Hard reshuffles the whole sequence.</p></button>
-        <button class="step" data-step="3" data-n="3" role="tab" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
-        <button class="step" data-step="4" data-n="4" role="tab" aria-selected="false"><h3>Share a challenge</h3><p>Game Over mints a deterministic code naming your score and seed.</p></button>
-        <button class="step" data-step="5" data-n="5" role="tab" aria-selected="false"><h3>Your rival plays it</h3><p>They paste the code and play the identical sequence, blind to your run.</p></button>
-        <button class="step" data-step="6" data-n="6" role="tab" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
-        <button class="step" data-step="7" data-n="7" role="tab" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
-        <button class="step" data-step="8" data-n="8" role="tab" aria-selected="false"><h3>It's recorded</h3><p>The rival card updates — win, loss or tie — broken down per grid.</p></button>
-        <button class="step" data-step="9" data-n="9" role="tab" aria-selected="false"><h3>Personal Records</h3><p>Track solo high scores across every grid, pace, and difficulty — plus 2P–4P survival.</p></button>
+        <button class="step active" data-step="1" data-n="1" id="step-tab-1" role="tab" aria-controls="step-screen-1" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Leaderboard tab.</p></button>
+        <button class="step" data-step="2" data-n="2" id="step-tab-2" role="tab" aria-controls="step-screen-2" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy appends one pad per round. Hard reshuffles the whole sequence.</p></button>
+        <button class="step" data-step="3" data-n="3" id="step-tab-3" role="tab" aria-controls="step-screen-3" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
+        <button class="step" data-step="4" data-n="4" id="step-tab-4" role="tab" aria-controls="step-screen-4" aria-selected="false"><h3>Share a challenge</h3><p>Game Over mints a deterministic code naming your score and seed.</p></button>
+        <button class="step" data-step="5" data-n="5" id="step-tab-5" role="tab" aria-controls="step-screen-5" aria-selected="false"><h3>Your rival plays it</h3><p>They paste the code and play the identical sequence, blind to your run.</p></button>
+        <button class="step" data-step="6" data-n="6" id="step-tab-6" role="tab" aria-controls="step-screen-6" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
+        <button class="step" data-step="7" data-n="7" id="step-tab-7" role="tab" aria-controls="step-screen-7" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
+        <button class="step" data-step="8" data-n="8" id="step-tab-8" role="tab" aria-controls="step-screen-8" aria-selected="false"><h3>It's recorded</h3><p>The rival card updates — win, loss or tie — broken down per grid.</p></button>
+        <button class="step" data-step="9" data-n="9" id="step-tab-9" role="tab" aria-controls="step-screen-9" aria-selected="false"><h3>Personal Records</h3><p>Track solo high scores across every grid, pace, and difficulty — plus 2P–4P survival.</p></button>
       </div>
 
       <div class="phone-frame">
@@ -788,7 +804,7 @@
           </div>
 
           <!-- STEP 1: Open GlowBack (Real Home UI) -->
-          <div class="screen active" data-screen="1">
+          <div class="screen active" data-screen="1" id="step-screen-1" role="tabpanel" aria-labelledby="step-tab-1">
             <div class="app-mode-bar">
               <span class="app-mode-tab on">SOLO</span>
               <span class="app-mode-tab">2P</span>
@@ -824,7 +840,7 @@
           </div>
 
           <!-- STEP 2: Choose Easy or Hard -->
-          <div class="screen" data-screen="2">
+          <div class="screen" data-screen="2" id="step-screen-2" role="tabpanel" aria-labelledby="step-tab-2">
             <div class="app-mode-bar">
               <span class="app-mode-tab on">SOLO</span>
               <span class="app-mode-tab">2P</span>
@@ -850,7 +866,7 @@
           </div>
 
           <!-- STEP 3: Pick a Grid (2x2, 3x3, 4x4, and 5 rows x 4 cols) -->
-          <div class="screen" data-screen="3">
+          <div class="screen" data-screen="3" id="step-screen-3" role="tabpanel" aria-labelledby="step-tab-3">
             <div class="app-status-line">Select Board Size &amp; Pace</div>
             <div class="grid-sizes">
               <div class="gs-card">
@@ -896,7 +912,7 @@
           </div>
 
           <!-- STEP 4: Share a Challenge -->
-          <div class="screen" data-screen="4">
+          <div class="screen" data-screen="4" id="step-screen-4" role="tabpanel" aria-labelledby="step-tab-4">
             <div class="app-status-line amber">Game Over · Score 6</div>
             <div class="app-modal-card">
               <div class="app-modal-head">⚔️ Share Challenge</div>
@@ -913,7 +929,7 @@
           </div>
 
           <!-- STEP 5: Your Rival Plays It -->
-          <div class="screen" data-screen="5">
+          <div class="screen" data-screen="5" id="step-screen-5" role="tabpanel" aria-labelledby="step-tab-5">
             <div class="app-status-line">⚔️ Challenge vs ALEX</div>
             <div class="app-modal-card" style="border-color:rgba(245,158,11,0.4);">
               <div class="app-modal-head" style="color:var(--amber-glow);">Target to Beat: 6</div>
@@ -925,7 +941,7 @@
           </div>
 
           <!-- STEP 6: After the Win -->
-          <div class="screen" data-screen="6">
+          <div class="screen" data-screen="6" id="step-screen-6" role="tabpanel" aria-labelledby="step-tab-6">
             <div class="app-status-line green">🎉 Challenge Won!</div>
             <div class="app-modal-card" style="border-color:var(--green);">
               <div class="app-modal-head" style="color:var(--green-glow);">You Beat ALEX!</div>
@@ -946,7 +962,7 @@
           </div>
 
           <!-- STEP 7: Send a Reply -->
-          <div class="screen" data-screen="7">
+          <div class="screen" data-screen="7" id="step-screen-7" role="tabpanel" aria-labelledby="step-tab-7">
             <div class="app-status-line">Reply Code Minted</div>
             <div class="app-modal-card" style="border-color:var(--cyan);">
               <div class="app-modal-head">Send Reply to ALEX</div>
@@ -958,7 +974,7 @@
           </div>
 
           <!-- STEP 8: It's Recorded (Rivalry Tab) -->
-          <div class="screen" data-screen="8">
+          <div class="screen" data-screen="8" id="step-screen-8" role="tabpanel" aria-labelledby="step-tab-8">
             <div class="hof-tabs">
               <span class="hof-tab on">⚔️ RIVALRY</span>
               <span class="hof-tab">🏆 RECORDS</span>
@@ -983,7 +999,7 @@
           </div>
 
           <!-- STEP 9: Personal Records (Real RecordsTabContent UI: Mode Selector + Grid Chips + 4 Score Cards) -->
-          <div class="screen" data-screen="9">
+          <div class="screen" data-screen="9" id="step-screen-9" role="tabpanel" aria-labelledby="step-tab-9">
             <div class="hof-tabs">
               <span class="hof-tab">⚔️ RIVALRY</span>
               <span class="hof-tab on">🏆 RECORDS</span>
@@ -1128,6 +1144,7 @@
         <div class="row"><b>No analytics, no ads</b>Nothing is measured, tracked, or sold. There's no SDK for it to go through.</div>
         <div class="row"><b>Storage stays local</b>Rivals, records, and settings live in on-device storage only, excluded from cloud backup and device transfer.</div>
       </div>
+      <p style="margin:26px 0 0;font-size:14.5px;"><a href="privacy.html" style="color:var(--cyan);text-decoration:none;font-weight:600;">Read the full privacy policy &rarr;</a></p>
     </div>
   </section>
 
@@ -1150,7 +1167,7 @@
     </a>
     <ul class="foot-links">
       <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">GitHub</a></li>
-      <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy policy</a></li>
+      <li><a href="privacy.html">Privacy policy</a></li>
       <li>All rights reserved</li>
     </ul>
   </div>
