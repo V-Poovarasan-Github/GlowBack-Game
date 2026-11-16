@@ -20,7 +20,8 @@
 <meta name="twitter:title" content="GLOWBACK — 100% Offline Neon Memory Duel" />
 <meta name="twitter:description" content="A neon sequence-memory game for Android. Beat your own best, then challenge a friend with a compact text code — no accounts, no servers, no ads." />
 <meta name="twitter:image" content="https://v-poovarasan-github.github.io/GlowBack-Game/og-image.png" />
-<link rel="icon" sizes="any" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2305080F'/><circle cx='22' cy='32' r='10' fill='%2310B981'/><circle cx='42' cy='32' r='10' fill='%23EF4444'/></svg>" />
+<link rel="icon" type="image/png" href="logo.png" />
+<link rel="apple-touch-icon" href="logo.png" />
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -124,6 +125,7 @@
     background: var(--green);
     box-shadow: 0 0 10px rgba(16,185,129,0.85);
   }
+  .wordmark .logo-img{ width: 30px; height: 30px; border-radius: 8px; }
   .wordmark .dot2{
     background: var(--red);
     box-shadow: 0 0 10px rgba(239,68,68,0.85);
@@ -719,7 +721,7 @@
 <header>
   <div class="wrap nav">
     <a class="wordmark" href="#top">
-      <span class="brand-dots"><span class="dot"></span><span class="dot dot2"></span></span>GLOWBACK
+      <img class="logo-img" src="logo.png" alt="" width="30" height="30">GLOWBACK
     </a>
     <ul class="navlinks">
       <li><a href="#how" class="js-jump-how">How it works</a></li>
@@ -781,9 +783,9 @@
     <div class="flow">
       <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
         <button class="step active" data-step="1" data-n="1" id="step-tab-1" role="tab" aria-controls="step-screen-1" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Leaderboard tab.</p></button>
-        <button class="step" data-step="2" data-n="2" id="step-tab-2" role="tab" aria-controls="step-screen-2" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy appends one pad per round. Hard reshuffles the whole sequence.</p></button>
+        <button class="step" data-step="2" data-n="2" id="step-tab-2" role="tab" aria-controls="step-screen-2" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy adds one pad per round. Hard rolls a brand-new sequence every round.</p></button>
         <button class="step" data-step="3" data-n="3" id="step-tab-3" role="tab" aria-controls="step-screen-3" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
-        <button class="step" data-step="4" data-n="4" id="step-tab-4" role="tab" aria-controls="step-screen-4" aria-selected="false"><h3>Share a challenge</h3><p>Game Over mints a deterministic code naming your score and seed.</p></button>
+        <button class="step" data-step="4" data-n="4" id="step-tab-4" role="tab" aria-controls="step-screen-4" aria-selected="false"><h3>Share a challenge</h3><p>Score 5 or more and Game Over mints a deterministic code naming your score and seed.</p></button>
         <button class="step" data-step="5" data-n="5" id="step-tab-5" role="tab" aria-controls="step-screen-5" aria-selected="false"><h3>Your rival plays it</h3><p>They paste the code and play the identical sequence, blind to your run.</p></button>
         <button class="step" data-step="6" data-n="6" id="step-tab-6" role="tab" aria-controls="step-screen-6" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
         <button class="step" data-step="7" data-n="7" id="step-tab-7" role="tab" aria-controls="step-screen-7" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
@@ -917,7 +919,7 @@
             <div class="app-modal-card">
               <div class="app-modal-head">⚔️ Share Challenge</div>
               <div style="font-size:9px;color:var(--dim);text-align:center;">4×4 Board · Target 6 · Easy · 3 Tries</div>
-              <div class="app-code-pill">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
+              <div class="app-code-pill">4x4-6-T3E-ALEX-DG9A-Q579D-W</div>
               <div class="rival-chip-scroll" style="justify-content:center;">
                 <span class="rival-gchip">1 Try</span>
                 <span class="rival-gchip on">3 Tries</span>
@@ -933,7 +935,7 @@
             <div class="app-status-line">⚔️ Challenge vs ALEX</div>
             <div class="app-modal-card" style="border-color:rgba(245,158,11,0.4);">
               <div class="app-modal-head" style="color:var(--amber-glow);">Target to Beat: 6</div>
-              <div class="app-code-pill" style="color:#E2E8F0;border-color:var(--line-strong);">4x4-6-T3E-ALEX-DG9A-Q579D-B</div>
+              <div class="app-code-pill" style="color:#E2E8F0;border-color:var(--line-strong);">4x4-6-T3E-ALEX-DG9A-Q579D-W</div>
               <div style="font-family:var(--font-display);font-size:34px;font-weight:700;color:var(--amber);text-align:center;line-height:1;">3</div>
               <div style="font-size:9px;color:var(--dim);text-align:center;">Ready Gate · Identical 4×4 seed locked</div>
             </div>
@@ -967,7 +969,7 @@
             <div class="app-modal-card" style="border-color:var(--cyan);">
               <div class="app-modal-head">Send Reply to ALEX</div>
               <div style="font-size:9px;color:var(--dim);text-align:center;">Encodes your winning score (7) on chain DG9A</div>
-              <div class="app-code-pill">4x4-7-R3E-HERO-DG9A-Q579D-B</div>
+              <div class="app-code-pill">4x4-7-R3E-HERO-DG9A-Q579D-V</div>
               <div class="app-cta cyan">✓ Reply Copied · Share Card</div>
             </div>
             <div class="step-progress-pill">STEP 7 OF 9 · REPLY R-CODE</div>
@@ -1047,23 +1049,23 @@
     <div class="section-head center">
       <p class="eyebrow">What's actually in the box</p>
       <h2>Built to be memorized, not metered</h2>
-      <p>Every system in GlowBack — from real-time audio synthesis to deterministic seed codes — runs locally with zero external dependencies.</p>
+      <p>Every system in GlowBack — from real-time audio synthesis to deterministic seed codes — runs locally, with no servers and no third-party services.</p>
     </div>
     <div class="bento">
       <div class="card">
         <div class="icon-tile" style="background:rgba(16,185,129,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3>Four grids, two difficulties, two paces</h3>
-        <p>Play 2×2, 3×3, 4×4, or 5×4 (5 rows × 4 columns). Choose Easy's cumulative recall or Hard's fresh sequence every round, at Classic or accelerating Progressive speed.</p>
+        <p>Play 2×2, 3×3, 4×4, or 5×4 (5 rows × 4 columns). Choose Easy's cumulative recall or Hard's fresh sequence every round, at a steady Classic pace or Progressive speed that speeds up as the sequence grows.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(0,229,255,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#00E5FF" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
         <h3>Real synthesized tone per pad</h3>
-        <p>Each pad synthesizes its own pure PCM musical frequency with psychoacoustic harmonics on-device in real time via Android AudioTrack — zero static audio files.</p>
+        <p>Each pad plays its own tone, generated on-device as PCM audio through Android AudioTrack, with added harmonics so low notes stay audible on phone speakers. No bundled sound files.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(245,158,11,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
-        <h3>Haptics that mean something</h3>
-        <p>Distinct tactile vibration waveforms mapped to pad taps, round clears, errors, and victory milestones — with one-tap cycling between Sound, Vibrate, and Mute.</p>
+        <h3>Sound, vibrate, or mute</h3>
+        <p>Pick Sound, Vibrate, or Mute to suit wherever you're playing. Vibrate mode gives haptic feedback through your phone's vibration motor.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(139,92,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" stroke-width="2"><path d="M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m5-1.13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></div>
@@ -1073,7 +1075,7 @@
       <div class="card">
         <div class="icon-tile" style="background:rgba(239,68,68,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
         <h3>Reminders you control</h3>
-        <p>Opt-in local daily nudges via Android WorkManager highlight unplayed rival challenges or personal streaks without ever touching a network server.</p>
+        <p>Optional daily reminders are scheduled on your phone with Android WorkManager. The wording shifts with how long it has been since you last played and your best score — no network server involved.</p>
       </div>
       <div class="card">
         <div class="icon-tile" style="background:rgba(59,130,246,0.15);"><svg viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
@@ -1088,11 +1090,11 @@
     <div class="section-head center">
       <p class="eyebrow">The part that replaces a server</p>
       <h2>A duel fits in one line of text</h2>
-      <p>Every challenge and reply is a compact 7-segment deterministic string. The same code always rebuilds the exact pad sequence on your rival's device and verifies integrity locally in 0ms.</p>
+      <p>Every challenge and reply is a compact 7-segment deterministic string. The same code always rebuilds the exact pad sequence on your rival's device, and a built-in checksum catches typos and hand edits before the game starts — no server needed.</p>
     </div>
     <div class="spec">
-      <div class="spec-code-banner" aria-label="Sample challenge code 4x4-6-T3E-ALEX-DG9A-Q579D-B">
-        <span style="color:#6EE7B7;">4x4</span><span class="sep">-</span><span style="color:#93C5FD;">6</span><span class="sep">-</span><span style="color:#FDE68A;">T3E</span><span class="sep">-</span><span style="color:#DDD6FE;">ALEX</span><span class="sep">-</span><span style="color:#FBCFE8;">DG9A</span><span class="sep">-</span><span style="color:#FCA5A5;">Q579D</span><span class="sep">-</span><span style="color:#67E8F9;">B</span>
+      <div class="spec-code-banner" aria-label="Sample challenge code 4x4-6-T3E-ALEX-DG9A-Q579D-W">
+        <span style="color:#6EE7B7;">4x4</span><span class="sep">-</span><span style="color:#93C5FD;">6</span><span class="sep">-</span><span style="color:#FDE68A;">T3E</span><span class="sep">-</span><span style="color:#DDD6FE;">ALEX</span><span class="sep">-</span><span style="color:#FBCFE8;">DG9A</span><span class="sep">-</span><span style="color:#FCA5A5;">Q579D</span><span class="sep">-</span><span style="color:#67E8F9;">W</span>
       </div>
       <div class="spec-anatomy">
         <div class="spec-col">
@@ -1126,9 +1128,9 @@
           <span class="desc">Deterministic PRNG seed for the pad sequence.</span>
         </div>
         <div class="spec-col">
-          <span class="spec-token" style="background:rgba(0,229,255,0.16);color:#67E8F9;border-color:rgba(0,229,255,0.42);">B</span>
+          <span class="spec-token" style="background:rgba(0,229,255,0.16);color:#67E8F9;border-color:rgba(0,229,255,0.42);">W</span>
           <b>7. Checksum</b>
-          <span class="desc">Tamper-evident character that rejects hand-edited codes.</span>
+          <span class="desc">1-character checksum that catches most typos and hand edits.</span>
         </div>
       </div>
     </div>
@@ -1163,7 +1165,7 @@
 <footer>
   <div class="wrap foot-row">
     <a class="wordmark" href="#top" style="font-size:16px;">
-      <span class="brand-dots"><span class="dot"></span><span class="dot dot2"></span></span>GLOWBACK
+      <img class="logo-img" src="logo.png" alt="" width="30" height="30">GLOWBACK
     </a>
     <ul class="foot-links">
       <li><a href="https://github.com/V-Poovarasan-Github/GlowBack-Game" target="_blank" rel="noopener">GitHub</a></li>
