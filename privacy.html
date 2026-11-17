@@ -50,7 +50,7 @@
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
     border-bottom: 1px solid var(--line);
   }
-  .nav{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding: 15px 0; }
+  .nav{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding-top: 15px; padding-bottom: 15px; }
   .wordmark{
     display:inline-flex; align-items:center; gap:8px;
     font-weight: 900; font-size: 17px; letter-spacing: 0.09em;
@@ -61,6 +61,9 @@
   .wordmark .dot2{ background: var(--red); box-shadow: 0 0 10px rgba(239,68,68,0.85); }
   .backlink{ color: var(--dim); text-decoration:none; font-size: 14px; font-weight: 500; }
   .backlink:hover{ color: var(--paper); }
+  .nav-right{ display:flex; align-items:center; gap:18px; }
+  .nav-right a{ display:inline-flex; align-items:center; white-space:nowrap; }
+  @media (max-width: 560px){ .nav-right{ gap:14px; } .backlink{ font-size:13px; } .hide-sm{ display:none !important; } }
 
   main{ padding: 56px 0 72px; }
   h1{ font-family: var(--font-display); font-size: clamp(30px, 5vw, 42px); letter-spacing: -0.015em; margin: 0 0 6px; }
@@ -107,7 +110,7 @@
     <a class="wordmark" href="./">
       <img class="logo-img" src="logo.png" alt="" width="28" height="28">GLOWBACK
     </a>
-    <a class="backlink" href="./">&larr; Back to site</a>
+    <div class="nav-right"><a class="backlink" href="https://v-poovarasan-github.github.io/"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px;flex-shrink:0"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/></svg>Home</a><a class="backlink" href="./">&larr; Back to site</a></div>
   </div>
 </header>
 
