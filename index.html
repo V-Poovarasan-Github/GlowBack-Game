@@ -927,7 +927,7 @@
 
     <div class="flow">
       <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
-        <button class="step active" data-step="1" data-n="1" id="step-tab-1" role="tab" aria-controls="step-screen-1" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Leaderboard tab.</p></button>
+        <button class="step active" data-step="1" data-n="1" id="step-tab-1" role="tab" aria-controls="step-screen-1" aria-selected="true"><h3>Open GlowBack</h3><p>The home screen: Solo, 2P/3P/4P pass-and-play, or the Hall of Fame tab.</p></button>
         <button class="step" data-step="2" data-n="2" id="step-tab-2" role="tab" aria-controls="step-screen-2" aria-selected="false"><h3>Choose Easy or Hard</h3><p>Easy adds one pad per round. Hard rolls a brand-new sequence every round.</p></button>
         <button class="step" data-step="3" data-n="3" id="step-tab-3" role="tab" aria-controls="step-screen-3" aria-selected="false"><h3>Pick a grid</h3><p>2×2 up to 5×4 — more pads, longer sequences, sharper recall.</p></button>
         <button class="step" data-step="4" data-n="4" id="step-tab-4" role="tab" aria-controls="step-screen-4" aria-selected="false"><h3>Share a challenge</h3><p>Score 5 or more and Game Over mints a deterministic code naming your score and seed.</p></button>
@@ -1142,7 +1142,6 @@
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
                 <span style="font-size:9px;color:#CBD5E1;font-weight:600;">3 Wins • 1 Loss • 0 Ties <span style="color:var(--dim);font-weight:400;">(4 matches)</span></span>
-                <span style="background:#052E16;border:1px solid rgba(34,197,94,.55);color:#22C55E;font-weight:800;font-size:9px;padding:1px 6px;border-radius:8px;">W</span>
               </div>
             </div>
             <div class="rival-card-ui">
@@ -1191,7 +1190,7 @@
           <!-- Persistent Real App Bottom Navigation -->
           <div class="app-bottom-nav" id="phoneBottomNav">
             <span class="app-bnav-item on" id="bnavHome">🏠 Home</span>
-            <span class="app-bnav-item" id="bnavHof">🏆 Leaderboard</span>
+            <span class="app-bnav-item" id="bnavHof">🏆 Hall of Fame</span>
           </div>
 
         </div>
@@ -1451,7 +1450,7 @@
     screens.forEach(function(s){
       s.classList.toggle('active', s.dataset.screen === stepNum);
     });
-    // Sync bottom nav active state (Steps 8 & 9 are on Leaderboard / Hall of Fame)
+    // Sync bottom nav active state (Steps 8 & 9 are on Hall of Fame)
     var isHof = (stepNum === '8' || stepNum === '9');
     if(bnavHome) bnavHome.classList.toggle('on', !isHof);
     if(bnavHof) bnavHof.classList.toggle('on', isHof);
