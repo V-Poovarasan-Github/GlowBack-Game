@@ -764,6 +764,7 @@
 
   /* ---------- theme toggle ---------- */
   .theme-btn{ position:relative; overflow:hidden; width:34px; height:34px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background: transparent; color: var(--dim); border:1px solid var(--line-strong); cursor:pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; transition: color .15s ease, border-color .15s ease, transform .1s ease; view-transition-name: themebtn; }
+  .theme-btn{ order: 99; }   /* always last: far right of the header */
   .theme-btn:hover{ color: var(--paper); border-color: var(--dim); }
   .theme-btn:active{ transform: scale(.9); }
   .theme-btn svg{ position:absolute; inset:0; margin:auto; width:16px; height:16px; transition: transform .7s cubic-bezier(.22,.7,.2,1), opacity .45s ease; }
