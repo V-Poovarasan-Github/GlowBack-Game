@@ -5137,9 +5137,23 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_paste_reply_button_ALEX").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_recopy_code_button_ALEX").assertIsDisplayed()
+        assertTrue(
+            "Recommendation must remain suppressed while pending outbound is active",
+            ChallengeStorage.computeSleepingScoresForRival(
+                context,
+                ChallengeStorage.findRivalByName(context, "ALEX")!!,
+                getShareableBoardScores(prefs)
+            ).isEmpty()
+        )
 
-        // Reopen ALEX's RivalMatchSetupDialog via rival header -> recommendation chip is suppressed!
-        composeTestRule.onNodeWithTag("rival_card_name_ALEX").performScrollTo().performClick()
+        // Resolve pending outbound so dynamic action button appears, then reopen RivalMatchSetupDialog -> recommendation chip is suppressed!
+        val alexWithPending = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        ChallengeStorage.saveRival(context, alexWithPending.copy(pendingOutbounds = emptyList()))
+        composeTestRule.onNodeWithTag("nav_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertDoesNotExist()
@@ -6716,8 +6730,8 @@ class ExampleRobolectricTest {
         )
         assertTrue("rival_grid_chip_HERO_4x4 height must be >= 48dp", chip4x4.boundsInRoot.height >= min48Px)
 
-        // Open RivalMatchSetupDialog via rival name tap and check grid/difficulty selectors
-        composeTestRule.onNodeWithTag("rival_card_name_HERO").performClick()
+        // Open RivalMatchSetupDialog via dynamic action button and check grid/difficulty selectors
+        composeTestRule.onNodeWithTag("rival_dynamic_button_HERO").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         val setupGrid4x4 = composeTestRule.onNodeWithTag("rival_setup_grid_4x4").fetchSemanticsNode()
         val setupGrid2x2 = composeTestRule.onNodeWithTag("rival_setup_grid_2x2").fetchSemanticsNode()
@@ -6992,9 +7006,9 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("card_expand_tooltip")
             .assertIsDisplayed()
             .assertTextContains("Tap card to expand/collapse", substring = true)
-        assertFalse(
-            "One-time expand/collapse tooltip must remain unseen in SharedPreferences until X is clicked",
-            ChallengeStorage.hasSeenCardExpandTooltip(context)
+        assertTrue(
+            "One-time expand/collapse tooltip must remain eligible to show in SharedPreferences until X is clicked",
+            ChallengeStorage.shouldShowCardExpandTooltip(context)
         )
 
         // 2. Both AwaitingCard and RivalCards default to Collapsed stateDescription, show "▾" chevron, and do not merge descendants
@@ -7063,11 +7077,11 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("card_expand_tooltip_dismiss").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("card_expand_tooltip").assertDoesNotExist()
-        assertTrue(
+        assertFalse(
             "One-time expand/collapse tooltip must mark itself seen after X button is clicked",
-            ChallengeStorage.hasSeenCardExpandTooltip(context)
+            ChallengeStorage.shouldShowCardExpandTooltip(context)
         )
-        composeTestRule.onNodeWithText("One-time info: Tap any card to expand or collapse. Good game!", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Got it — tap any card to expand or collapse.", substring = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertTextContains("▴")
         assertEquals(
             "Expanded",
@@ -7350,5 +7364,333 @@ class ExampleRobolectricTest {
             ChallengeSeed.extractCodeFromText(revengeTauntCaption)
         )
     }
+
+    @Test
+    fun phase1_A1_copyReplyCodeTwice_reusesSameCodeAndRecordsOnce() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "PLAYER1")
+
+        val seed = 42424
+        val rng = java.util.Random(seed.toLong())
+        val firstPad = CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)]
+        val wrongPad = CLASSIC_2X2_PADS.first { it.id != firstPad.id }
+
+        // Seed an in-progress challenge with EMPTY chainId and 1 try left
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "HERO",
+                wins = 0,
+                losses = 0,
+                ties = 0,
+                matches = 0,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 3,
+                lastUserScore = 0,
+                lastStatus = "IN_PROGRESS",
+                inProgressTriesLeft = 1,
+                inProgressMaxTries = 1,
+                inProgressSeed = seed
+            )
+        )
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 3,
+            tries = 1,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "",
+            isRevenge = false
+        )
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = tCode,
+                rivalName = "HERO",
+                gridSizeTag = "2x2",
+                targetScore = 3,
+                maxTries = 1,
+                attemptsLeft = 1,
+                bestScore = 0,
+                seed = seed,
+                difficulty = GameDifficulty.EASY,
+                chainId = ""
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_card_HERO").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_HERO").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1500L)
+        composeTestRule.waitForIdle()
+
+        // End the challenge on Try 1 of 1 so the Game Over reply button is displayed
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(1000L)
+        composeTestRule.waitForIdle()
+
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        while (shadowApp.nextStartedActivity != null) { /* drain prior intents */ }
+
+        // First tap on Copy Reply Code + immediate rapid second tap (< 600ms) while guard is active
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_reply_button").assertIsDisplayed().performClick()
+        val firstCopied = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        val parsedFirst = ChallengeSeed.parseChallengeCode(firstCopied)
+        assertNotNull("First tap must copy a valid 7-segment reply code", parsedFirst)
+        assertTrue("Reply code must be a revenge/reply token", parsedFirst!!.isRevenge)
+
+        // Rapid second tap 100ms later (while 600ms flash/in-flight guard is active)
+        composeTestRule.mainClock.advanceTimeBy(100L)
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.mainClock.autoAdvance = true
+
+        // Wait wall-clock time for async Dispatchers.IO PNG generation + FileProvider chooser launch from the 1st tap
+        val deadline1 = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadline1) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        val firstChooserIntent = shadowApp.nextStartedActivity
+        assertNotNull("First tap must launch share chooser", firstChooserIntent)
+        assertEquals(
+            "Share reply code with HERO",
+            firstChooserIntent?.getCharSequenceExtra(android.content.Intent.EXTRA_TITLE)?.toString()
+        )
+        assertNull("Tap guard must block stacking a second chooser during flash window", shadowApp.nextStartedActivity)
+
+        // Advance virtual frame clock past the 600ms flash window (both in triggerReplyWithFlash and executeReplyToRival finally block)
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("clear", ""))
+
+        // Second tap after guard expires -> reuses exact same reply code and does not double-count stats
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.waitForIdle()
+        val secondCopied = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        assertEquals("Second tap must reuse the exact same reply code (never regenerate chainId)", firstCopied, secondCopied)
+
+        // Drain the second tap's async chooser so no Dispatchers.IO work remains in flight at test teardown
+        val deadline2 = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadline2) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        val secondChooserIntent = shadowApp.nextStartedActivity
+        assertNotNull("Second tap after guard expiry must also launch share chooser", secondChooserIntent)
+        assertEquals(
+            "Share reply code with HERO",
+            secondChooserIntent?.getCharSequenceExtra(android.content.Intent.EXTRA_TITLE)?.toString()
+        )
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+
+        // Verify RivalRecord stats were not double-counted and reply code was saved & marked sent once
+        val rivalAfter = ChallengeStorage.findRivalByName(context, "HERO")!!
+        assertEquals("Match outcome must be recorded once", 1, rivalAfter.matches)
+        assertEquals("Saved lastReply code for 2x2 must match the reused reply code", firstCopied, rivalAfter.lastReplies["2x2"]?.code)
+        assertNotNull("markReplySent must have stamped copiedAt on the reply", rivalAfter.lastReplies["2x2"]?.copiedAt)
+    }
+
+    @Test
+    fun phase1_A2_rivalResultBadge_wltAndNoBadgeForInProgressOrUnknown() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val statuses = listOf(
+            "RIVAL_WON" to "WON",
+            "RIVAL_LOST" to "LOST",
+            "RIVAL_TIED" to "TIED",
+            "RIVAL_PROG" to "IN_PROGRESS",
+            "RIVAL_UNK" to "UNKNOWN_STATE"
+        )
+        for ((name, status) in statuses) {
+            ChallengeStorage.saveRival(
+                context,
+                RivalRecord(
+                    name = name,
+                    wins = if (status == "WON") 1 else 0,
+                    losses = if (status == "LOST") 1 else 0,
+                    ties = if (status == "TIED") 1 else 0,
+                    matches = if (status in listOf("WON", "LOST", "TIED")) 1 else 0,
+                    lastGrid = "2x2",
+                    lastDifficulty = GameDifficulty.EASY,
+                    lastTarget = 5,
+                    lastUserScore = 5,
+                    lastStatus = status,
+                    inProgressTriesLeft = if (status == "IN_PROGRESS") 2 else 0,
+                    inProgressMaxTries = if (status == "IN_PROGRESS") 3 else 0
+                )
+            )
+        }
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_card_RIVAL_WON").performScrollTo()
+        composeTestRule.onNodeWithTag("rival_result_badge_RIVAL_WON").assertIsDisplayed().assertTextContains("W")
+
+        composeTestRule.onNodeWithTag("rival_card_RIVAL_LOST").performScrollTo()
+        composeTestRule.onNodeWithTag("rival_result_badge_RIVAL_LOST").assertIsDisplayed().assertTextContains("L")
+
+        composeTestRule.onNodeWithTag("rival_card_RIVAL_TIED").performScrollTo()
+        composeTestRule.onNodeWithTag("rival_result_badge_RIVAL_TIED").assertIsDisplayed().assertTextContains("T")
+
+        composeTestRule.onNodeWithTag("rival_card_RIVAL_PROG").performScrollTo()
+        composeTestRule.onNodeWithTag("rival_result_badge_RIVAL_PROG").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("rival_card_RIVAL_UNK").performScrollTo()
+        composeTestRule.onNodeWithTag("rival_result_badge_RIVAL_UNK").assertDoesNotExist()
+    }
+
+    @Test
+    fun phase1_A3_expandedRivalCard_tappingNameCollapsesWithoutOpeningDialog() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 5,
+                lastUserScore = 6,
+                lastStatus = "WON"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Expand rival card first
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Expanded",
+            composeTestRule.onNodeWithTag("rival_card_ALEX").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+
+        // Tap rival_card_name_ALEX while expanded -> must collapse card and NOT open rival_match_setup_dialog
+        composeTestRule.onNodeWithTag("rival_card_name_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Collapsed",
+            composeTestRule.onNodeWithTag("rival_card_ALEX").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        composeTestRule.onNodeWithTag("rival_match_setup_dialog").assertDoesNotExist()
+    }
+
+    @Test
+    fun phase1_C4_deleteRivalAndUndo_restoresSentRecommendationEntries() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val pending = com.example.challenge.PendingOutboundChallenge(
+            chainId = "P99",
+            code = "GLOWBACK-2x2-9-T3E-HERO-P99-22209",
+            gridTag = "2x2",
+            difficulty = GameDifficulty.EASY,
+            target = 9,
+            tries = 3,
+            seed = 22209,
+            mintedAt = System.currentTimeMillis(),
+            rivalName = "ALEX"
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 6,
+                lastUserScore = 7,
+                lastStatus = "WON",
+                pendingOutbounds = listOf(pending)
+            )
+        )
+        ChallengeStorage.recordSentRecommendation(
+            context = context,
+            rivalName = "ALEX",
+            gridTag = "2x2",
+            difficulty = GameDifficulty.EASY,
+            seed = 22209
+        )
+        assertTrue(
+            "Precondition: sent recommendation must be present before delete",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22209")
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Delete rival ALEX via kebab menu -> removes sent recommendation entry
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_confirm").performClick()
+        composeTestRule.waitForIdle()
+
+        assertFalse(
+            "Delete must remove pending outbound entry from sent-recommendation ledger",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22209")
+        )
+
+        // Tap Undo on the snackbar -> restores both rival ALEX and its sent recommendation entry
+        composeTestRule.onNodeWithText("Undo").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        assertNotNull("Undo must restore rival ALEX", ChallengeStorage.findRivalByName(context, "ALEX"))
+        assertTrue(
+            "Undo must restore pending outbound entry in sent-recommendation ledger",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22209")
+        )
+    }
 }
+
 

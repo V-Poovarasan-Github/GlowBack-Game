@@ -1102,6 +1102,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var isChallengeLost by remember { mutableStateOf(false) }
     var hasRecordedChallengeOutcome by remember { mutableStateOf(false) }
     var hasSentChallengeReply by remember { mutableStateOf(false) }
+    var cachedChallengeReplyCode by remember { mutableStateOf<String?>(null) }
+    var recordedChallengeReplyCode by remember { mutableStateOf<String?>(null) }
+    var isReplyShareInFlight by remember { mutableStateOf(false) }
     var isChallengeReadyGateVisible by remember { mutableStateOf(false) }
     var isVictoryDecisionVisible by remember { mutableStateOf(false) }
     var hasShownVictoryDecisionThisTry by remember { mutableStateOf(false) }
@@ -1230,36 +1233,57 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         // Reply-Code Exemption: Responder's reply code bypasses the score-5 minimum gate at any score (>= 1)
         // and embeds the responder's own name, bestScore across tries, seed, chainId, and R-prefixed revenge token
         // with tries GRANTED (ch.maxTries, Stage B #5).
-        val replyChainId = ch.chainId.ifEmpty { ChallengeSeed.generateChainId() }
-        val replyCode = ChallengeSeed.formatChallengeCode(
-            gridTag = ch.gridSizeTag,
-            targetScore = bestAttemptScore.coerceAtLeast(1),
-            tries = ch.maxTries,
-            difficulty = ch.difficulty,
-            seed = currentRunSeed,
-            senderName = senderName,
-            chainId = replyChainId,
-            isRevenge = true
-        )
-        ChallengeStorage.recordCreatedCode(context, replyCode)
-        ChallengeStorage.saveLastReplyForGrid(context, ch.rivalName, ch.gridSizeTag, replyCode)
-        ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
-        hasSentChallengeReply = true
+        // Build the reply code once per challenge and reuse it on later taps.
+        val replyCode = cachedChallengeReplyCode?.takeIf { it.isNotBlank() } ?: run {
+            val replyChainId = ch.chainId.ifEmpty {
+                ChallengeStorage.findRivalByName(context, ch.rivalName)?.lastChainId?.takeIf { it.isNotBlank() }
+                    ?: ChallengeSeed.generateChainId()
+            }
+            ChallengeSeed.formatChallengeCode(
+                gridTag = ch.gridSizeTag,
+                targetScore = bestAttemptScore.coerceAtLeast(1),
+                tries = ch.maxTries,
+                difficulty = ch.difficulty,
+                seed = currentRunSeed,
+                senderName = senderName,
+                chainId = replyChainId,
+                isRevenge = true
+            ).also { built ->
+                cachedChallengeReplyCode = built
+            }
+        }
+        // Keep the clipboard copy first, on every tap.
         runCatching {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCode))
         }
-        coroutineScope.launch {
-            ChallengeShareHelper.shareReplyResult(
-                context = context,
-                code = replyCode,
-                gridSizeTag = ch.gridSizeTag,
-                myScore = bestAttemptScore,
-                targetScore = ch.targetScore,
-                rivalName = ch.rivalName,
-                won = bestAttemptScore > ch.targetScore,
-                tied = bestAttemptScore == ch.targetScore
-            )
+        // recordCreatedCode, saveLastReplyForGrid and markReplySent run once per reply code, not once per tap.
+        if (recordedChallengeReplyCode != replyCode) {
+            recordedChallengeReplyCode = replyCode
+            ChallengeStorage.recordCreatedCode(context, replyCode)
+            ChallengeStorage.saveLastReplyForGrid(context, ch.rivalName, ch.gridSizeTag, replyCode)
+            ChallengeStorage.markReplySent(context, ch.rivalName, replyCode)
+        }
+        hasSentChallengeReply = true
+        if (!isReplyShareInFlight) {
+            isReplyShareInFlight = true
+            coroutineScope.launch {
+                try {
+                    ChallengeShareHelper.shareReplyResult(
+                        context = context,
+                        code = replyCode,
+                        gridSizeTag = ch.gridSizeTag,
+                        myScore = bestAttemptScore,
+                        targetScore = ch.targetScore,
+                        rivalName = ch.rivalName,
+                        won = bestAttemptScore > ch.targetScore,
+                        tied = bestAttemptScore == ch.targetScore
+                    )
+                } finally {
+                    flashDelayMs(600L)
+                    isReplyShareInFlight = false
+                }
+            }
         }
     }
 
@@ -1675,6 +1699,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             isChallengeLost = false
             hasRecordedChallengeOutcome = false
             hasSentChallengeReply = false
+            cachedChallengeReplyCode = null
+            recordedChallengeReplyCode = null
+            isReplyShareInFlight = false
             gameMode = GameMode.SOLO
 
             val targetGrid = when (resolvedItem.gridSizeTag.lowercase()) {
@@ -1745,6 +1772,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             isChallengeLost = false
             hasRecordedChallengeOutcome = false
             hasSentChallengeReply = false
+            cachedChallengeReplyCode = null
+            recordedChallengeReplyCode = null
+            isReplyShareInFlight = false
             gameMode = GameMode.SOLO
             selectedShareTries = 3
             val seed = ChallengeSeed.generateRandomSeed()
@@ -1775,6 +1805,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             isChallengeTied = false
             isChallengeLost = false
             hasSentChallengeReply = false
+            cachedChallengeReplyCode = null
+            recordedChallengeReplyCode = null
+            isReplyShareInFlight = false
             val targetGrid = when (challenge.gridSizeTag.lowercase()) {
                 "3x3" -> GridSize.THREE_BY_THREE
                 "4x4" -> GridSize.FOUR_BY_FOUR
@@ -1797,6 +1830,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             isChallengeTied = false
             isChallengeLost = false
             hasSentChallengeReply = false
+            cachedChallengeReplyCode = null
+            recordedChallengeReplyCode = null
+            isReplyShareInFlight = false
             if (isOutboundRivalRun || isRevengeRun) {
                 paceMode = PaceMode.CLASSIC
                 isChallengeReadyGateVisible = true
@@ -2221,6 +2257,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
         hasSentChallengeReply = false
+        cachedChallengeReplyCode = null
+        recordedChallengeReplyCode = null
+        isReplyShareInFlight = false
         activeShareSource = ShareSource.FromBoardSelector
         isPausedMidGame = false
         isMatchComplete = false
@@ -2386,6 +2425,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
                             hasSentChallengeReply = false
+                            cachedChallengeReplyCode = null
+                            recordedChallengeReplyCode = null
+                            isReplyShareInFlight = false
                             activeShareSource = ShareSource.FromBoardSelector
                             isMatchComplete = false
                             matchStandings = emptyList()
@@ -2939,6 +2981,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
                             hasSentChallengeReply = false
+                            cachedChallengeReplyCode = null
+                            recordedChallengeReplyCode = null
+                            isReplyShareInFlight = false
                             activeShareSource = ShareSource.FromBoardSelector
                             isMatchComplete = false
                             matchStandings = emptyList()
@@ -6992,8 +7037,8 @@ private fun BottomActionSection(
         var isReplyFlashing by remember { mutableStateOf(false) }
         val triggerReplyWithFlash: (() -> Unit) -> Unit = { callback ->
             if (!isReplyFlashing) {
-                callback()
                 isReplyFlashing = true
+                callback()
                 actionScope.launch {
                     flashDelayMs(600L)
                     isReplyFlashing = false

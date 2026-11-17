@@ -3428,12 +3428,16 @@ fun HallOfFameScreen(
                     },
                     onPasteNewCode = { rival -> rivalForPasteCode = rival },
                     onDeleteRival = { rival ->
-                        // Change A: Capture undo snapshot including named AwaitingChallenge rows
+                        // Change A + C4: Capture undo snapshot including named AwaitingChallenge rows and sent-recommendation ledger entries
                         val snapshotRival: RivalRecord = rival
                         val snapshotChallenges: List<ChallengeItem> = ChallengeStorage.loadChallenges(context)
                             .filter { it.rivalName.equals(rival.name, ignoreCase = true) }
                         val snapshotNamedAwaiting: List<AwaitingChallenge> = ChallengeStorage.loadAwaitingChallenges(context)
                             .filter { it.rivalName.equals(rival.name, ignoreCase = true) }
+                        val currentSentKeys: Set<String> = ChallengeStorage.getSentRecommendationsForRival(context, rival.name)
+                        val snapshotSentPendings: List<PendingOutboundChallenge> = rival.pendingOutbounds.filter { p ->
+                            p.seed > 0 && "${p.gridTag.trim().lowercase()}:${p.difficulty.name.lowercase()}:${p.seed}" in currentSentKeys
+                        }
 
                         // Delete rival & its ChallengeItem entries
                         ChallengeStorage.deleteRival(context, rival.name)
@@ -3459,6 +3463,15 @@ fun HallOfFameScreen(
                                 }
                                 for (originalRow in snapshotNamedAwaiting) {
                                     ChallengeStorage.saveAwaitingChallenge(context, originalRow)
+                                }
+                                for (pending in snapshotSentPendings) {
+                                    ChallengeStorage.recordSentRecommendation(
+                                        context = context,
+                                        rivalName = snapshotRival.name,
+                                        gridTag = pending.gridTag,
+                                        difficulty = pending.difficulty,
+                                        seed = pending.seed
+                                    )
                                 }
                                 refreshData()
                             }
@@ -3489,7 +3502,7 @@ fun HallOfFameScreen(
                         scope.launch {
                             snackbarHostState.currentSnackbarData?.dismiss()
                             snackbarHostState.showSnackbar(
-                                message = "One-time info: Tap any card to expand or collapse. Good game! 🎮",
+                                message = "Got it — tap any card to expand or collapse.",
                                 duration = SnackbarDuration.Short
                             )
                         }
@@ -4880,13 +4893,7 @@ fun RivalCard(
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(
                                 role = Role.Button,
-                                onClick = {
-                                    if (isExpanded) {
-                                        onDynamicAction()
-                                    } else {
-                                        onToggleExpand()
-                                    }
-                                }
+                                onClick = { onToggleExpand() }
                             )
                             .padding(end = 6.dp),
                         contentAlignment = Alignment.CenterStart
@@ -5047,28 +5054,31 @@ fun RivalCard(
                     color = Color(0xFF64748B),
                     fontSize = 11.sp
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-
-                val (badgeLetter, badgeTextColor, badgeBgColor) = when (rival.lastStatus) {
+                val badgeSpec: Triple<String, Color, Color>? = when (rival.lastStatus) {
                     "WON" -> Triple("W", Color(0xFF22C55E), Color(0xFF052E16))
                     "LOST" -> Triple("L", Color(0xFFEF4444), Color(0xFF450A0A))
-                    else -> Triple("T", Color(0xFFFACC15), Color(0xFF422006))
+                    "TIED" -> Triple("T", Color(0xFFFACC15), Color(0xFF422006))
+                    else -> null
                 }
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = badgeBgColor,
-                    border = BorderStroke(1.dp, badgeTextColor.copy(alpha = 0.55f)),
-                    modifier = Modifier
-                        .semantics(mergeDescendants = true) {}
-                        .testTag("rival_result_badge_${rival.name}")
-                ) {
-                    Text(
-                        text = badgeLetter,
-                        color = badgeTextColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
-                    )
+                if (badgeSpec != null) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val (badgeLetter, badgeTextColor, badgeBgColor) = badgeSpec
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = badgeBgColor,
+                        border = BorderStroke(1.dp, badgeTextColor.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .semantics(mergeDescendants = true) {}
+                            .testTag("rival_result_badge_${rival.name}")
+                    ) {
+                        Text(
+                            text = badgeLetter,
+                            color = badgeTextColor,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                        )
+                    }
                 }
             }
 

@@ -251,15 +251,17 @@ object ChallengeShareHelper {
 
         // Stamp 1x1 variant signature pixel at (0,0) so Bitmap.sameAs distinguishes
         // generic vs targeted vs revenge-taunt cards in JVM/Robolectric ShadowBitmap mode
-        val signatureColor = when {
-            !isReply && ellipsizedRival != null && isRevengeTaunt -> Color.parseColor("#0B0F1B")
-            !isReply && ellipsizedRival != null -> Color.parseColor("#0B0F1A")
-            isReply && tied -> Color.parseColor("#0B0F1C")
-            isReply && won -> Color.parseColor("#0B0F1D")
-            isReply -> Color.parseColor("#0B0F1E")
-            else -> Color.parseColor("#0B0F19")
+        if (BuildConfig.DEBUG) {
+            val signatureColor = when {
+                !isReply && ellipsizedRival != null && isRevengeTaunt -> Color.parseColor("#0B0F1B")
+                !isReply && ellipsizedRival != null -> Color.parseColor("#0B0F1A")
+                isReply && tied -> Color.parseColor("#0B0F1C")
+                isReply && won -> Color.parseColor("#0B0F1D")
+                isReply -> Color.parseColor("#0B0F1E")
+                else -> Color.parseColor("#0B0F19")
+            }
+            bitmap.setPixel(0, 0, signatureColor)
         }
-        bitmap.setPixel(0, 0, signatureColor)
 
         // 6. Challenge Code Box
         val codeBoxRect = RectF(100f, 880f, (width - 100).toFloat(), 1080f)
@@ -504,7 +506,8 @@ object ChallengeShareHelper {
         }
 
         withContext(Dispatchers.Main) {
-            val chooser = Intent.createChooser(sendIntent, "Send Result to Rival").apply {
+            val rivalLabel = rivalName.trim().ifBlank { "your rival" }
+            val chooser = Intent.createChooser(sendIntent, "Share reply code with $rivalLabel").apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             try {
