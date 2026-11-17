@@ -25,6 +25,8 @@ object ChallengeStorage {
     private const val KEY_MY_NAME = "glowback_player_name"
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
     private const val KEY_SENT_RECOMMENDATIONS = "sent_rival_recommendations_v1"
+    private const val KEY_SEEN_EXPAND_TOOLTIP = "seen_card_expand_tooltip_v1"
+    private const val KEY_PENDING_EXPAND_TOOLTIP = "pending_card_expand_tooltip_v1"
 
     const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours) UI nudge TTL
     const val CHAIN_TARGET_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days hard expiry for outbound chain targets
@@ -92,6 +94,35 @@ object ChallengeStorage {
      */
     fun shouldShareTextOnly(context: Context, currentRivalName: String?): Boolean {
         return false
+    }
+
+    // ==========================================
+    // ONE-TIME CARD EXPAND/COLLAPSE TOOLTIP
+    // ==========================================
+
+    fun hasSeenCardExpandTooltip(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_SEEN_EXPAND_TOOLTIP, false)
+    }
+
+    fun shouldShowCardExpandTooltip(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return !prefs.getBoolean(KEY_SEEN_EXPAND_TOOLTIP, false)
+    }
+
+    fun triggerCardExpandTooltipIfUnseen(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_SEEN_EXPAND_TOOLTIP, false)) {
+            prefs.edit().putBoolean(KEY_PENDING_EXPAND_TOOLTIP, true).apply()
+        }
+    }
+
+    fun markCardExpandTooltipSeen(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_SEEN_EXPAND_TOOLTIP, true)
+            .putBoolean(KEY_PENDING_EXPAND_TOOLTIP, false)
+            .apply()
     }
 
     // ==========================================
@@ -566,13 +597,17 @@ object ChallengeStorage {
                     }
                 }
 
+                val parsedWins = obj.optInt("wins", 0)
+                val parsedLosses = obj.optInt("losses", 0)
+                val parsedTies = obj.optInt("ties", 0)
+                val parsedMatches = maxOf(obj.optInt("matches", 0), parsedWins + parsedLosses + parsedTies)
                 list.add(
                     RivalRecord(
                         name = obj.getString("name"),
-                        wins = obj.optInt("wins", 0),
-                        losses = obj.optInt("losses", 0),
-                        ties = obj.optInt("ties", 0),
-                        matches = obj.optInt("matches", 0),
+                        wins = parsedWins,
+                        losses = parsedLosses,
+                        ties = parsedTies,
+                        matches = parsedMatches,
                         lastGrid = obj.optString("lastGrid", "2x2"),
                         lastDifficulty = difficulty,
                         lastTarget = obj.optInt("lastTarget", 0),
@@ -677,10 +712,14 @@ object ChallengeStorage {
     fun saveRival(context: Context, record: RivalRecord) {
         val existing = loadRivals(context).toMutableList()
         val index = existing.indexOfFirst { it.name.equals(record.name, ignoreCase = true) }
+        val normalizedRecord = record.copy(
+            matches = maxOf(record.matches, record.wins + record.losses + record.ties)
+        )
         if (index >= 0) {
-            existing[index] = record
+            existing[index] = normalizedRecord
         } else {
-            existing.add(0, record)
+            existing.add(0, normalizedRecord)
+            triggerCardExpandTooltipIfUnseen(context)
         }
         persistRivals(context, existing)
     }
@@ -1183,6 +1222,7 @@ object ChallengeStorage {
             rivals[index] = updatedRecord
         } else {
             rivals.add(0, updatedRecord)
+            triggerCardExpandTooltipIfUnseen(context)
         }
         persistRivals(context, rivals)
     }
@@ -1375,7 +1415,7 @@ object ChallengeStorage {
         val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
         val updatedLosses = (existing?.losses ?: 0) + (if (isLoss) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
-        val updatedMatches = (existing?.matches ?: 0) + 1
+        val updatedMatches = maxOf((existing?.matches ?: 0) + 1, updatedWins + updatedLosses + updatedTies)
         val updatedGridStats = updateGridStatsMap(
             existingStats = existing?.gridStats ?: emptyMap(),
             gridSize = gridSize,
@@ -1483,7 +1523,7 @@ object ChallengeStorage {
         val updatedWins = (existing?.wins ?: 0) + (if (isWon) 1 else 0)
         val updatedLosses = (existing?.losses ?: 0) + (if (isLost) 1 else 0)
         val updatedTies = (existing?.ties ?: 0) + (if (isTie) 1 else 0)
-        val updatedMatches = (existing?.matches ?: 0) + 1
+        val updatedMatches = maxOf((existing?.matches ?: 0) + 1, updatedWins + updatedLosses + updatedTies)
         val updatedGridStats = updateGridStatsMap(
             existingStats = existing?.gridStats ?: emptyMap(),
             gridSize = gridSize,
@@ -1628,6 +1668,7 @@ object ChallengeStorage {
             existing[index] = awaiting
         } else {
             existing.add(0, awaiting)
+            triggerCardExpandTooltipIfUnseen(context)
         }
         persistAwaitingChallenges(context, existing)
     }

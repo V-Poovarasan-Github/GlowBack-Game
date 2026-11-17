@@ -10,16 +10,20 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,7 +42,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
@@ -65,6 +68,8 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -76,14 +81,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -97,12 +105,135 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+import android.animation.ValueAnimator
+import android.database.ContentObserver
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/**
+ * ViewModel holding in-memory UI state for the Rivalry tab (v1.1-RIVALRY-UX):
+ * - Default-collapsed card sets for RivalCard and AwaitingCard
+ * - Top-bar search active flag and live query
+ */
+class RivalryViewModel : ViewModel() {
+    private val _expandedRivalNames = MutableStateFlow<Set<String>>(emptySet())
+    val expandedRivalNames: StateFlow<Set<String>> = _expandedRivalNames.asStateFlow()
+
+    private val _expandedAwaitingIds = MutableStateFlow<Set<String>>(emptySet())
+    val expandedAwaitingIds: StateFlow<Set<String>> = _expandedAwaitingIds.asStateFlow()
+
+    private val _isSearchActive = MutableStateFlow(false)
+    val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    fun toggleRivalExpanded(rivalName: String) {
+        val key = rivalName.trim().uppercase()
+        val current = _expandedRivalNames.value
+        _expandedRivalNames.value = if (key in current) current - key else current + key
+    }
+
+    fun toggleAwaitingExpanded(chainId: String) {
+        val key = chainId.trim().uppercase()
+        val current = _expandedAwaitingIds.value
+        _expandedAwaitingIds.value = if (key in current) current - key else current + key
+    }
+
+    fun openSearch() {
+        _isSearchActive.value = true
+    }
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query.take(10)
+    }
+
+    fun clearSearchQuery() {
+        _searchQuery.value = ""
+    }
+
+    fun closeSearch() {
+        _searchQuery.value = ""
+        _isSearchActive.value = false
+    }
+}
+
+/**
+ * Reads the real Android system reduced-motion / animator duration scale setting
+ * (Settings.Global.ANIMATOR_DURATION_SCALE == 0f or !ValueAnimator.areAnimatorsEnabled())
+ * and observes live changes via ContentObserver.
+ */
+@Composable
+fun rememberIsReducedMotionEnabled(): Boolean {
+    val context = LocalContext.current
+    fun readSystemSetting(): Boolean {
+        val scale = runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+        }.getOrDefault(1.0f)
+        val animatorsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { ValueAnimator.areAnimatorsEnabled() }.getOrDefault(true)
+        } else {
+            true
+        }
+        return scale == 0f || !animatorsEnabled
+    }
+
+    var isReducedMotion by remember { mutableStateOf(readSystemSetting()) }
+    DisposableEffect(context) {
+        val resolver = context.contentResolver
+        val uri = runCatching { Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE) }.getOrNull()
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                isReducedMotion = readSystemSetting()
+            }
+        }
+        if (uri != null) {
+            runCatching { resolver.registerContentObserver(uri, false, observer) }
+        }
+        onDispose {
+            runCatching { resolver.unregisterContentObserver(observer) }
+        }
+    }
+    return isReducedMotion
+}
 
 /**
  * Frame-clock-driven delay for tactile button confirmation flashes (150ms / 600ms).
@@ -1793,8 +1924,13 @@ fun PasteRivalCodeDialog(
                             .semantics { heading() }
                             .testTag("paste_rival_dialog_title")
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize().size(28.dp)) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1965,7 +2101,7 @@ fun ShareTriesSelectorDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     val headerTitle = if (!lockedRivalName.isNullOrBlank()) "Share Challenge to $lockedRivalName" else "Share Challenge"
@@ -1988,10 +2124,14 @@ fun ShareTriesSelectorDialog(
                             onClick = onDismiss,
                             modifier = Modifier
                                 .testTag("close_tries_selector_button")
-                                .minimumInteractiveComponentSize()
-                                .size(28.dp)
+                                .size(48.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
 
@@ -2127,13 +2267,19 @@ fun ShareTriesSelectorDialog(
                                 text = "Target Score to Beat:",
                                 color = Color(0xFFCBD5E1),
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Duels are played at Classic pace.",
                                 color = Color(0xFF38BDF8),
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
@@ -2182,7 +2328,7 @@ fun ShareTriesSelectorDialog(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
                         text = "How many tries does your friend get?",
@@ -2192,125 +2338,229 @@ fun ShareTriesSelectorDialog(
                         modifier = Modifier.fillMaxWidth().testTag("tries_selector_title")
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
-                    Row(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
-                            .padding(3.dp)
-                            .testTag("tries_segmented_row"),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .heightIn(min = 48.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        options.forEach { triesVal ->
-                            val isSelected = selectedTries == triesVal
-                            val label = if (triesVal == 0) "Free" else "$triesVal"
-                            val tag = if (triesVal == 0) "tries_option_free" else "tries_option_$triesVal"
-                            Box(
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(19.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(19.dp))
+                                .padding(2.dp)
+                                .testTag("tries_segmented_row"),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            options.forEach { triesVal ->
+                                val isSelected = selectedTries == triesVal
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(17.dp))
+                                        .background(
+                                            if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent
+                                        )
+                                        .then(
+                                            if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(17.dp))
+                                            else Modifier
+                                        )
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .padding(horizontal = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            options.forEach { triesVal ->
+                                val isSelected = selectedTries == triesVal
+                                val label = if (triesVal == 0) "Free" else "$triesVal"
+                                val tag = if (triesVal == 0) "tries_option_free" else "tries_option_$triesVal"
+                                val pillInteraction = remember { MutableInteractionSource() }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .widthIn(min = 48.dp)
+                                        .testTag(tag)
+                                        .clickable(
+                                            interactionSource = pillInteraction,
+                                            indication = null,
+                                            role = Role.RadioButton,
+                                            onClick = { selectedTries = triesVal }
+                                        )
+                                        .semantics {
+                                            selected = isSelected
+                                            stateDescription = if (isSelected) "Selected" else "Not selected"
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(34.dp)
+                                            .clip(RoundedCornerShape(17.dp))
+                                            .indication(pillInteraction, ripple()),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (isSelected) Color(0xFF00E5FF) else Color(0xFFCBD5E1),
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                            fontFamily = if (triesVal == 0) FontFamily.Default else FontFamily.Monospace,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    val generateInteraction = remember { MutableInteractionSource() }
+                    val generateContainerColor = when {
+                        !canShare -> Color(0xFF334155)
+                        isGenerateFlashing -> Color(0xFF10B981)
+                        else -> Color(0xFF00E5FF)
+                    }
+                    val generateContentColor = if (!canShare) Color(0xFF64748B) else Color(0xFF090D16)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("generate_card_button")
+                            .clickable(
+                                interactionSource = generateInteraction,
+                                indication = null,
+                                enabled = canShare && !isGenerateFlashing,
+                                role = Role.Button,
+                                onClick = {
+                                    if (!canShare || isGenerateFlashing) return@clickable
+                                    val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
+                                    isGenerateFlashing = true
+                                    scope.launch {
+                                        flashDelayMs(150L)
+                                        isGenerateFlashing = false
+                                        onGenerateCard(selectedTries, senderName, chosenBoard)
+                                    }
+                                }
+                            )
+                            .semantics {
+                                if (!canShare) disabled()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .indication(generateInteraction, ripple()),
+                            shape = RoundedCornerShape(10.dp),
+                            color = generateContainerColor,
+                            contentColor = generateContentColor
+                        ) {
+                            Row(
                                 modifier = Modifier
-                                    .weight(1f)
                                     .fillMaxSize()
-                                    .testTag(tag)
-                                    .minimumInteractiveComponentSize()
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(
-                                        if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent
-                                    )
-                                    .then(
-                                        if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(20.dp))
-                                        else Modifier
-                                    )
-                                    .clickable(role = Role.RadioButton) { selectedTries = triesVal }
-                                    .semantics {
-                                        selected = isSelected
-                                        stateDescription = if (isSelected) "Selected" else "Not selected"
-                                    },
-                                contentAlignment = Alignment.Center
+                                    .padding(horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = label,
-                                    color = if (isSelected) Color(0xFF00E5FF) else Color(0xFFCBD5E1),
-                                    fontSize = if (triesVal == 0) 13.sp else 15.sp,
-                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                    fontFamily = if (triesVal == 0) FontFamily.Default else FontFamily.Monospace
+                                    text = if (isGenerateFlashing) "✓ Generating..." else "Generate Card",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            if (!canShare || isGenerateFlashing) return@Button
-                            val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
-                            isGenerateFlashing = true
-                            scope.launch {
-                                flashDelayMs(150L)
-                                isGenerateFlashing = false
-                                onGenerateCard(selectedTries, senderName, chosenBoard)
-                            }
-                        },
-                        enabled = canShare,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("generate_card_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isGenerateFlashing) Color(0xFF10B981) else Color(0xFF00E5FF),
-                            contentColor = Color(0xFF090D16),
-                            disabledContainerColor = Color(0xFF334155),
-                            disabledContentColor = Color(0xFF64748B)
-                        )
-                    ) {
-                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = if (isGenerateFlashing) "✓ Generating..." else "Generate Card", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
-                    }
-
                     if (onCopyOnly != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                if (!canShare || isCopyOnlyFlashing) return@OutlinedButton
-                                val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
-                                isCopyOnlyFlashing = true
-                                scope.launch {
-                                    flashDelayMs(150L)
-                                    isCopyOnlyFlashing = false
-                                    onCopyOnly(selectedTries, senderName, chosenBoard)
-                                }
-                            },
-                            enabled = canShare,
+                        val copyInteraction = remember { MutableInteractionSource() }
+                        val copyAccent = when {
+                            !canShare -> Color(0xFF64748B)
+                            isCopyOnlyFlashing -> Color(0xFF10B981)
+                            else -> Color(0xFF38BDF8)
+                        }
+                        val copyBorderColor = if (!canShare) Color(0xFF334155) else copyAccent
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 44.dp)
-                                .testTag("tries_selector_copy_code_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, if (!canShare) Color(0xFF334155) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color(0xFF38BDF8),
-                                disabledContentColor = Color(0xFF64748B)
-                            )
+                                .heightIn(min = 48.dp)
+                                .testTag("tries_selector_copy_code_button")
+                                .clickable(
+                                    interactionSource = copyInteraction,
+                                    indication = null,
+                                    enabled = canShare && !isCopyOnlyFlashing,
+                                    role = Role.Button,
+                                    onClick = {
+                                        if (!canShare || isCopyOnlyFlashing) return@clickable
+                                        val chosenBoard = boardOptions.getOrNull(selectedBoardIndex)
+                                        isCopyOnlyFlashing = true
+                                        scope.launch {
+                                            flashDelayMs(150L)
+                                            isCopyOnlyFlashing = false
+                                            onCopyOnly(selectedTries, senderName, chosenBoard)
+                                        }
+                                    }
+                                )
+                                .semantics {
+                                    if (!canShare) disabled()
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = null,
-                                tint = if (!canShare) Color(0xFF64748B) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isCopyOnlyFlashing) "✓ Copied!" else "Copy Code",
-                                color = if (!canShare) Color(0xFF64748B) else if (isCopyOnlyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(copyInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, copyBorderColor),
+                                contentColor = copyAccent
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = null,
+                                        tint = copyAccent,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isCopyOnlyFlashing) "✓ Copied!" else "Copy Code",
+                                        color = copyAccent,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2509,10 +2759,14 @@ fun RivalMatchSetupDialog(
                         onClick = onDismiss,
                         modifier = Modifier
                             .testTag("rival_setup_close_button")
-                            .minimumInteractiveComponentSize()
-                            .size(28.dp)
+                            .size(48.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF94A3B8))
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
@@ -2892,10 +3146,18 @@ fun HallOfFameScreen(
     sharedPrefs: android.content.SharedPreferences,
     allBoardScores: List<BoardScoreOption> = emptyList(),
     refreshTrigger: Any? = null,
+    rivalryViewModel: RivalryViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = RIVALRY, 1 = RECORDS
+
+    val isSearchActive by rivalryViewModel.isSearchActive.collectAsState()
+    val searchQuery by rivalryViewModel.searchQuery.collectAsState()
+    val expandedRivalNames by rivalryViewModel.expandedRivalNames.collectAsState()
+    val expandedAwaitingIds by rivalryViewModel.expandedAwaitingIds.collectAsState()
 
     var rivals by remember(refreshTrigger) {
         ChallengeStorage.sweepExpiredPendingOutbounds(context)
@@ -2911,6 +3173,15 @@ fun HallOfFameScreen(
         ChallengeStorage.sweepExpiredLastReplies(context)
         rivals = ChallengeStorage.loadRivals(context)
         awaitingChallenges = ChallengeStorage.loadAwaitingChallenges(context)
+    }
+
+    // Back arrow / system back exits search first, then navigates back
+    BackHandler {
+        if (isSearchActive) {
+            rivalryViewModel.closeSearch()
+        } else {
+            onNavigateBack()
+        }
     }
 
     if (rivalForSetup != null) {
@@ -2949,43 +3220,153 @@ fun HallOfFameScreen(
         )
     }
 
+    var isSearchFocused by remember(isSearchActive) { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .testTag("hall_of_fame_screen")
     ) {
-        // Top Header
+        // Top Header (Default vs Compact Search Mode)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier
-                    .testTag("leaderboard_back_button")
-                    .minimumInteractiveComponentSize()
-                    .size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back to Game",
-                    tint = Color.White
+            if (!isSearchActive) {
+                Text(
+                    text = "HALL OF FAME",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { heading() }
+                        .testTag("leaderboard_screen_title")
                 )
+                IconButton(
+                    onClick = {
+                        selectedTab = 0
+                        rivalryViewModel.openSearch()
+                    },
+                    modifier = Modifier
+                        .testTag("leaderboard_search_button")
+                        .size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search rivals and challenges",
+                        tint = Color(0xFF00E5FF),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            } else {
+                val searchFocusRequester = remember { FocusRequester() }
+                LaunchedEffect(Unit) {
+                    runCatching { searchFocusRequester.requestFocus() }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF090E17))
+                            .border(
+                                1.dp,
+                                if (isSearchFocused) Color(0xFF00E5FF) else Color(0xFF334155),
+                                RoundedCornerShape(10.dp)
+                            )
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .padding(start = 10.dp, end = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { rivalryViewModel.updateSearchQuery(it.take(10)) },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            cursorBrush = SolidColor(Color(0xFF00E5FF)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .focusRequester(searchFocusRequester)
+                                .onFocusChanged { isSearchFocused = it.isFocused }
+                                .testTag("leaderboard_search_input"),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Search rivals & challenges...",
+                                            color = Color(0xFF64748B),
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            }
+                        )
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { rivalryViewModel.clearSearchQuery() },
+                                modifier = Modifier
+                                    .testTag("leaderboard_search_clear_button")
+                                    .size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear search",
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = { rivalryViewModel.closeSearch() },
+                    modifier = Modifier
+                        .testTag("leaderboard_search_close_button")
+                        .size(48.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0F172A))
+                            .border(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close search",
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "HALL OF FAME",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 1.sp,
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics { heading() }
-                    .testTag("leaderboard_screen_title")
-            )
         }
 
         // 2-Tab Selector
@@ -3031,6 +3412,13 @@ fun HallOfFameScreen(
                 RivalryTabContent(
                     rivals = rivals,
                     awaitingChallenges = awaitingChallenges,
+                    searchQuery = searchQuery,
+                    hideActionBar = isSearchActive && isSearchFocused,
+                    onClearSearch = { rivalryViewModel.clearSearchQuery() },
+                    expandedRivalNames = expandedRivalNames,
+                    onToggleRivalExpand = { rivalName -> rivalryViewModel.toggleRivalExpanded(rivalName) },
+                    expandedAwaitingIds = expandedAwaitingIds,
+                    onToggleAwaitingExpand = { chainId -> rivalryViewModel.toggleAwaitingExpanded(chainId) },
                     onGetRevenge = { rival ->
                         if (rival.lastStatus == "IN_PROGRESS") {
                             onStartRevenge(rival)
@@ -3040,15 +3428,71 @@ fun HallOfFameScreen(
                     },
                     onPasteNewCode = { rival -> rivalForPasteCode = rival },
                     onDeleteRival = { rival ->
+                        // Change A: Capture undo snapshot including named AwaitingChallenge rows
+                        val snapshotRival: RivalRecord = rival
+                        val snapshotChallenges: List<ChallengeItem> = ChallengeStorage.loadChallenges(context)
+                            .filter { it.rivalName.equals(rival.name, ignoreCase = true) }
+                        val snapshotNamedAwaiting: List<AwaitingChallenge> = ChallengeStorage.loadAwaitingChallenges(context)
+                            .filter { it.rivalName.equals(rival.name, ignoreCase = true) }
+
+                        // Delete rival & its ChallengeItem entries
                         ChallengeStorage.deleteRival(context, rival.name)
+
+                        // Reassign named AwaitingChallenge rows to rivalName = null (broadcast)
+                        // so they fall back to "Unknown challenger" and stay visible + cancellable
+                        for (row in snapshotNamedAwaiting) {
+                            ChallengeStorage.saveAwaitingChallenge(context, row.copy(rivalName = null))
+                        }
                         refreshData()
+
+                        scope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            val result = snackbarHostState.showSnackbar(
+                                message = "Deleted rivalry with ${snapshotRival.name}",
+                                actionLabel = "Undo",
+                                duration = SnackbarDuration.Long
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                ChallengeStorage.saveRival(context, snapshotRival)
+                                for (item in snapshotChallenges) {
+                                    ChallengeStorage.saveChallenge(context, item)
+                                }
+                                for (originalRow in snapshotNamedAwaiting) {
+                                    ChallengeStorage.saveAwaitingChallenge(context, originalRow)
+                                }
+                                refreshData()
+                            }
+                        }
                     },
                     onDeleteAwaiting = { awaiting ->
+                        val snapshotAwaiting: AwaitingChallenge = awaiting
                         ChallengeStorage.deleteAwaitingChallenge(context, awaiting.chainId)
                         refreshData()
+
+                        scope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            val result = snackbarHostState.showSnackbar(
+                                message = "Challenge cancelled",
+                                actionLabel = "Undo",
+                                duration = SnackbarDuration.Long
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                ChallengeStorage.saveAwaitingChallenge(context, snapshotAwaiting)
+                                refreshData()
+                            }
+                        }
                     },
                     onSendReply = { _ ->
                         refreshData()
+                    },
+                    onDismissExpandTooltip = {
+                        scope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            snackbarHostState.showSnackbar(
+                                message = "One-time info: Tap any card to expand or collapse. Good game! 🎮",
+                                duration = SnackbarDuration.Short
+                            )
+                        }
                     },
                     onShareCode = onShareCodeClicked,
                     onPasteCode = onPasteCodeClicked,
@@ -3058,6 +3502,59 @@ fun HallOfFameScreen(
                 RecordsTabContent(
                     sharedPrefs = sharedPrefs,
                     modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .testTag("rivalry_snackbar_host")
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExpandCollapseTooltipBanner(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF0F172A),
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.7f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {}
+            .testTag("card_expand_tooltip")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "💡 Tap card to expand/collapse",
+                color = Color(0xFFE2E8F0),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .testTag("card_expand_tooltip_dismiss")
+                    .size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss tooltip",
+                    tint = Color(0xFF94A3B8),
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }
@@ -3071,21 +3568,42 @@ fun HallOfFameScreen(
 fun RivalryTabContent(
     rivals: List<RivalRecord>,
     awaitingChallenges: List<AwaitingChallenge>,
+    searchQuery: String = "",
+    hideActionBar: Boolean = false,
+    onClearSearch: () -> Unit = {},
+    expandedRivalNames: Set<String> = emptySet(),
+    onToggleRivalExpand: (String) -> Unit = {},
+    expandedAwaitingIds: Set<String> = emptySet(),
+    onToggleAwaitingExpand: (String) -> Unit = {},
     onGetRevenge: (RivalRecord) -> Unit,
     onPasteNewCode: (RivalRecord) -> Unit,
     onDeleteRival: (RivalRecord) -> Unit,
     onDeleteAwaiting: (AwaitingChallenge) -> Unit,
     onSendReply: (RivalRecord) -> Unit = {},
+    onDismissExpandTooltip: () -> Unit = {},
     onShareCode: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
-    val broadcastAwaiting = awaitingChallenges.filter { it.rivalName.isNullOrBlank() }
+    // Orphan-proof UI-layer deduplication filter:
+    // Hides awaiting rows whose rival currently exists in rivals (since those already surface via the
+    // rival card's "● waiting" signal), while guaranteeing no AwaitingChallenge whose rival no longer
+    // exists is ever filtered out of every section.
+    val activeRivalNames = remember(rivals) {
+        rivals.map { it.name.trim().uppercase() }.toSet()
+    }
+    val broadcastAwaiting = remember(awaitingChallenges, activeRivalNames) {
+        awaitingChallenges.filter { awaiting ->
+            val rName = awaiting.rivalName?.trim()?.uppercase()
+            rName.isNullOrEmpty() || rName !in activeRivalNames
+        }
+    }
 
-    if (rivals.isEmpty() && broadcastAwaiting.isEmpty()) {
+    val query = searchQuery.trim()
+
+    if (rivals.isEmpty() && broadcastAwaiting.isEmpty() && query.isEmpty()) {
         EmptyRivalryState(
             awaitingCount = 0,
             onShareCode = onShareCode,
@@ -3095,118 +3613,349 @@ fun RivalryTabContent(
         return
     }
 
+    val filteredAwaiting = remember(broadcastAwaiting, activeRivalNames, query) {
+        if (query.isEmpty()) {
+            broadcastAwaiting
+        } else {
+            broadcastAwaiting.filter { awaiting ->
+                val displayName = awaiting.rivalName?.takeIf {
+                    it.isNotBlank() && it.trim().uppercase() in activeRivalNames
+                } ?: "Unknown challenger"
+                displayName.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    val filteredRivals = remember(rivals, query) {
+        if (query.isEmpty()) {
+            rivals
+        } else {
+            rivals.filter { it.name.contains(query, ignoreCase = true) }
+        }
+    }
+
+    val isGlobalSearchEmpty = query.isNotEmpty() && filteredAwaiting.isEmpty() && filteredRivals.isEmpty()
+
+    // Item 4: One-Time Expand/Collapse Tooltip visible after the first card until the user clicks the X button
+    val isReducedMotion = rememberIsReducedMotionEnabled()
+    val tooltipSlideOffsetPx = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
+    var showExpandTooltip by remember(rivals.size, broadcastAwaiting.size) {
+        mutableStateOf(
+            (rivals.isNotEmpty() || broadcastAwaiting.isNotEmpty()) &&
+                ChallengeStorage.shouldShowCardExpandTooltip(context)
+        )
+    }
+    val shouldShowTooltipNow = showExpandTooltip && !isGlobalSearchEmpty
+    val tooltipTransitionState = remember(rivals.size, broadcastAwaiting.size) {
+        MutableTransitionState(isReducedMotion && shouldShowTooltipNow)
+    }
+    LaunchedEffect(shouldShowTooltipNow, isReducedMotion) {
+        tooltipTransitionState.targetState = shouldShowTooltipNow
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag("rivalry_list"),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(bottom = 84.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Persistent Action Bar: [Share to Everyone | Paste Code]
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("rivalry_action_bar"),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onShareCode,
+        // Suggestion 3: Hide [Share to Everyone | Paste Code] row when search field is active and has focus
+        if (!hideActionBar) {
+            item {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 46.dp)
-                        .testTag("rivalry_share_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFF00E5FF)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        .fillMaxWidth()
+                        .testTag("rivalry_action_bar"),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share to Everyone", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
-                }
+                    val shareActionInteraction = remember { MutableInteractionSource() }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("rivalry_share_button")
+                            .clickable(
+                                interactionSource = shareActionInteraction,
+                                indication = null,
+                                role = Role.Button,
+                                onClick = onShareCode
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .indication(shareActionInteraction, ripple()),
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color.Transparent,
+                            border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                            contentColor = Color(0xFF00E5FF)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Share to Everyone", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
+                    }
 
-                Button(
-                    onClick = onPasteCode,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 46.dp)
-                        .testTag("rivalry_paste_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
-                        contentColor = Color.Black
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    val pasteActionInteraction = remember { MutableInteractionSource() }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("rivalry_paste_button")
+                            .clickable(
+                                interactionSource = pasteActionInteraction,
+                                indication = null,
+                                role = Role.Button,
+                                onClick = onPasteCode
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .indication(pasteActionInteraction, ripple()),
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF00E5FF),
+                            contentColor = Color.Black
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 10.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Global Awaiting Challenges Section (Broadcast only; targeted shares live on their rival card)
-        if (broadcastAwaiting.isNotEmpty()) {
+        if (tooltipTransitionState.currentState || tooltipTransitionState.targetState) {
+            item(key = "card_expand_tooltip_item") {
+                val dismissTooltip = {
+                    showExpandTooltip = false
+                    tooltipTransitionState.targetState = false
+                    ChallengeStorage.markCardExpandTooltipSeen(context)
+                    onDismissExpandTooltip()
+                }
+                if (isReducedMotion) {
+                    if (shouldShowTooltipNow) {
+                        ExpandCollapseTooltipBanner(onDismiss = dismissTooltip)
+                    }
+                } else {
+                    AnimatedVisibility(
+                        visibleState = tooltipTransitionState,
+                        enter = fadeIn(
+                            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        ) + slideInVertically(
+                            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                            initialOffsetY = { tooltipSlideOffsetPx }
+                        ),
+                        exit = fadeOut(
+                            animationSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing)
+                        )
+                    ) {
+                        ExpandCollapseTooltipBanner(onDismiss = dismissTooltip)
+                    }
+                }
+            }
+        }
+
+        if (isGlobalSearchEmpty) {
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
+                        .testTag("rivalry_search_empty_state"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
                 ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "No rivals or challenges match \"$query\"",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        val emptyClearInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .widthIn(min = 48.dp)
+                                .testTag("rivalry_search_empty_clear_button")
+                                .clickable(
+                                    interactionSource = emptyClearInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onClearSearch
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .indication(emptyClearInteraction, ripple()),
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                                contentColor = Color(0xFF00E5FF)
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Clear search", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Change C: Hide AWAITING CHALLENGES section header entirely when broadcastAwaiting is empty
+            if (broadcastAwaiting.isNotEmpty()) {
+                item {
+                    val headerText = if (query.isEmpty()) {
+                        "AWAITING CHALLENGES (${broadcastAwaiting.size})"
+                    } else {
+                        "AWAITING CHALLENGES (${filteredAwaiting.size} of ${broadcastAwaiting.size})"
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = headerText,
+                            color = Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.testTag("awaiting_section_header")
+                        )
+                    }
+                }
+
+                if (filteredAwaiting.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No matching awaiting challenges",
+                            color = Color(0xFF64748B),
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .testTag("awaiting_section_empty_filter")
+                        )
+                    }
+                } else {
+                    items(filteredAwaiting, key = { it.chainId }) { awaiting ->
+                        val isCardExpanded = awaiting.chainId.trim().uppercase() in expandedAwaitingIds
+                        val displayName = awaiting.rivalName?.takeIf {
+                            it.isNotBlank() && it.trim().uppercase() in activeRivalNames
+                        } ?: "Unknown challenger"
+                        AwaitingCard(
+                            awaiting = awaiting,
+                            displayName = displayName,
+                            isExpanded = isCardExpanded,
+                            onToggleExpand = {
+                                onToggleAwaitingExpand(awaiting.chainId)
+                            },
+                            onPasteReply = onPasteCode,
+                            onCopyAgain = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", awaiting.code))
+                                Toast.makeText(context, "Code copied: ${awaiting.code}", Toast.LENGTH_SHORT).show()
+                            },
+                            onDelete = { onDeleteAwaiting(awaiting) }
+                        )
+                    }
+                }
+            }
+
+            // Active Rivals Section
+            if (rivals.isNotEmpty()) {
+                item {
+                    val headerText = if (query.isEmpty()) {
+                        "RIVAL BATTLES (${rivals.size})"
+                    } else {
+                        "RIVAL BATTLES (${filteredRivals.size} of ${rivals.size})"
+                    }
                     Text(
-                        text = "AWAITING CHALLENGES (${broadcastAwaiting.size})",
-                        color = Color(0xFF38BDF8),
+                        text = headerText,
+                        color = Color(0xFF00E5FF),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
-                        modifier = Modifier.testTag("awaiting_section_header")
+                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp).testTag("rivals_section_header")
                     )
                 }
-            }
 
-            items(broadcastAwaiting, key = { it.chainId }) { awaiting ->
-                AwaitingCard(
-                    awaiting = awaiting,
-                    onPasteReply = onPasteCode,
-                    onCopyAgain = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", awaiting.code))
-                        Toast.makeText(context, "Code copied: ${awaiting.code}", Toast.LENGTH_SHORT).show()
-                    },
-                    onDelete = { onDeleteAwaiting(awaiting) }
-                )
-            }
-        }
-
-        // Active Rivals Section
-        if (rivals.isNotEmpty()) {
-            item {
-                Text(
-                    text = "RIVAL BATTLES (${rivals.size})",
-                    color = Color(0xFF00E5FF),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 2.dp).testTag("rivals_section_header")
-                )
-            }
-
-            items(rivals, key = { it.name }) { rival ->
-                RivalCard(
-                    rival = rival,
-                    onDynamicAction = { onGetRevenge(rival) },
-                    onPasteNewCode = { onPasteNewCode(rival) },
-                    onPasteReplyCode = { onPasteNewCode(rival) },
-                    onRecopyCode = { pending ->
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", pending.code))
-                        Toast.makeText(context, "Challenge code re-copied: ${pending.code}", Toast.LENGTH_SHORT).show()
-                    },
-                    onSendReply = {
-                        onSendReply(rival)
-                    },
-                    onDeleteRival = { onDeleteRival(rival) }
-                )
+                if (filteredRivals.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No matching rival battles",
+                            color = Color(0xFF64748B),
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .testTag("rivals_section_empty_filter")
+                        )
+                    }
+                } else {
+                    items(filteredRivals, key = { it.name }) { rival ->
+                        val isCardExpanded = rival.name.trim().uppercase() in expandedRivalNames
+                        RivalCard(
+                            rival = rival,
+                            isExpanded = isCardExpanded,
+                            onToggleExpand = {
+                                onToggleRivalExpand(rival.name)
+                            },
+                            onDynamicAction = { onGetRevenge(rival) },
+                            onPasteNewCode = { onPasteNewCode(rival) },
+                            onPasteReplyCode = { onPasteNewCode(rival) },
+                            onRecopyCode = { pending ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", pending.code))
+                                Toast.makeText(context, "Challenge code re-copied: ${pending.code}", Toast.LENGTH_SHORT).show()
+                            },
+                            onSendReply = {
+                                onSendReply(rival)
+                            },
+                            onDeleteRival = { onDeleteRival(rival) }
+                        )
+                    }
+                }
             }
         }
     }
@@ -3226,7 +3975,7 @@ fun EmptyRivalryState(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 16.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)
             .testTag("empty_rivalry_state"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -3237,7 +3986,7 @@ fun EmptyRivalryState(
                 color = Color(0xFF0284C7).copy(alpha = 0.18f),
                 border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.45f)),
                 modifier = Modifier
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 12.dp)
                     .testTag("pending_challenge_pill")
             ) {
                 Text(
@@ -3253,16 +4002,16 @@ fun EmptyRivalryState(
 
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF1E293B))
                 .border(2.dp, Color(0xFF00E5FF), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(text = "⚔️", fontSize = 32.sp)
+            Text(text = "⚔️", fontSize = 28.sp)
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Text(
             text = "No rivalries yet",
@@ -3272,7 +4021,7 @@ fun EmptyRivalryState(
             modifier = Modifier.testTag("empty_rivalry_title")
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         Text(
             text = "Start a duel with a friend and track your head-to-head records.",
@@ -3283,7 +4032,7 @@ fun EmptyRivalryState(
             modifier = Modifier.padding(horizontal = 16.dp)
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // 4-Step Battle Walkthrough Card (testTag "two_step_battle_card" preserved for stability)
         Card(
@@ -3293,7 +4042,7 @@ fun EmptyRivalryState(
             border = BorderStroke(1.dp, Color(0xFF334155))
         ) {
             Column(
-                modifier = Modifier.padding(14.dp),
+                modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val walkthroughSteps = listOf(
@@ -3352,159 +4101,544 @@ fun EmptyRivalryState(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedButton(
-                onClick = onShareCode,
+            val emptyShareInteraction = remember { MutableInteractionSource() }
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
-                    .testTag("empty_share_button"),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
+                    .testTag("empty_share_button")
+                    .clickable(
+                        interactionSource = emptyShareInteraction,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onShareCode
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Share Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .indication(emptyShareInteraction, ripple()),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF)),
+                    contentColor = Color(0xFF00E5FF)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Share Code", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                    }
+                }
             }
 
-            Button(
-                onClick = onPasteCode,
+            val emptyPasteInteraction = remember { MutableInteractionSource() }
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
-                    .testTag("empty_paste_button"),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF00E5FF),
-                    contentColor = Color.Black
-                )
+                    .testTag("empty_paste_button")
+                    .clickable(
+                        interactionSource = emptyPasteInteraction,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onPasteCode
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .indication(emptyPasteInteraction, ripple()),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF00E5FF),
+                    contentColor = Color.Black
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Paste Code", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * Outbound Awaiting Card with 72h expiry indicator and in-card [Paste Reply Code] + [Copy Code Again].
+ * Outbound Awaiting Card with default-collapsed layout, kebab menu, waiting pulse,
+ * and side-by-side [Paste Reply Code | Copy Code Again] row when expanded.
  */
 @Composable
 fun AwaitingCard(
     awaiting: AwaitingChallenge,
+    displayName: String = "Unknown challenger",
+    isExpanded: Boolean = false,
+    onToggleExpand: () -> Unit = {},
     onPasteReply: () -> Unit = {},
     onCopyAgain: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
+    val isReducedMotion = rememberIsReducedMotionEnabled()
     var isCopyFlashing by remember { mutableStateOf(false) }
-    val expiryText = formatAwaitingExpiry(awaiting.createdAt)
+    var showMenu by remember { mutableStateOf(false) }
+    var showCancelConfirm by remember { mutableStateOf(false) }
+
+    if (showCancelConfirm) {
+        Dialog(onDismissRequest = { showCancelConfirm = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .border(1.5.dp, Color(0xFFFF5252), RoundedCornerShape(20.dp))
+                    .testTag("confirm_cancel_awaiting_dialog"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Cancel Challenge?",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val displayGrid = awaiting.gridSizeTag.replace('x', '×')
+                    Text(
+                        text = "Remove this awaiting $displayGrid ${awaiting.difficulty.label} challenge (Target ${awaiting.targetScore})?",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val keepInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("confirm_cancel_awaiting_cancel")
+                                .clickable(
+                                    interactionSource = keepInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { showCancelConfirm = false }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(keepInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, Color(0xFF475569)),
+                                contentColor = Color(0xFF94A3B8)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Keep",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        val cancelConfirmInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("confirm_cancel_awaiting_confirm")
+                                .clickable(
+                                    interactionSource = cancelConfirmInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = {
+                                        showCancelConfirm = false
+                                        onDelete()
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(cancelConfirmInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFFF5252),
+                                contentColor = Color.White
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Cancel",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val pulseAlpha = if (isReducedMotion) {
+        1f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "awaiting_waiting_pulse")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "awaiting_pulse_alpha"
+        )
+        animated
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .border(1.dp, Color(0xFF0284C7).copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+            .then(
+                if (!isReducedMotion) {
+                    Modifier.animateContentSize(
+                        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .border(1.dp, Color(0xFF0284C7).copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            .pointerInput(onToggleExpand) {
+                detectTapGestures(onTap = { onToggleExpand() })
+            }
+            .semantics(mergeDescendants = false) {
+                stateDescription = if (isExpanded) "Expanded" else "Collapsed"
+                onClick {
+                    onToggleExpand()
+                    true
+                }
+            }
             .testTag("awaiting_card_${awaiting.chainId}"),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0B132B))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "❓", fontSize = 16.sp)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "❓", fontSize = 15.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Unknown challenger",
+                        text = displayName,
                         color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("awaiting_card_title_${awaiting.chainId}")
                     )
                 }
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(24.dp).testTag("delete_awaiting_${awaiting.chainId}")
-                ) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (isExpanded) "▴" else "▾",
+                        color = Color(0xFF64748B),
+                        fontSize = 12.sp,
+                        modifier = Modifier.testTag("awaiting_chevron_${awaiting.chainId}")
+                    )
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("awaiting_menu_button_${awaiting.chainId}")
+                                .semantics { role = Role.Button }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More options for awaiting challenge",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            containerColor = Color(0xFF0F172A)
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Copy code again",
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onCopyAgain()
+                                },
+                                modifier = Modifier.testTag("awaiting_menu_copy_${awaiting.chainId}")
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Paste reply",
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onPasteReply()
+                                },
+                                modifier = Modifier.testTag("awaiting_menu_paste_${awaiting.chainId}")
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Cancel challenge",
+                                        color = Color(0xFFEF4444),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    showCancelConfirm = true
+                                },
+                                modifier = Modifier.testTag("awaiting_menu_cancel_${awaiting.chainId}")
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
             val displayGrid = awaiting.gridSizeTag.replace('x', '×')
-            Text(
-                text = "$displayGrid ${awaiting.difficulty.label} • Target ${awaiting.targetScore} • sent ${formatTimeAgo(awaiting.createdAt)}",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                modifier = Modifier.testTag("awaiting_meta_${awaiting.chainId}")
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = "Once they finish, ask for their reply code and paste it here to record the match.",
-                color = Color(0xFFCBD5E1),
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.padding(end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = onPasteReply,
-                    modifier = Modifier
-                        .height(36.dp)
-                        .testTag("paste_reply_awaiting_${awaiting.chainId}"),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF00E5FF),
-                        contentColor = Color.Black
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                Text(
+                    text = "$displayGrid ${awaiting.difficulty.label} • Target ${awaiting.targetScore} • sent ${formatTimeAgo(awaiting.createdAt)}",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    modifier = Modifier.testTag("awaiting_meta_${awaiting.chainId}")
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.testTag("awaiting_waiting_signal_${awaiting.chainId}")
                 ) {
-                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(13.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Paste Reply Code", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFF59E0B).copy(alpha = pulseAlpha))
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "waiting",
+                        color = Color(0xFFF59E0B).copy(alpha = pulseAlpha),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
+            }
 
-                val copyAccent = if (isCopyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)
-                OutlinedButton(
-                    onClick = {
-                        if (isCopyFlashing) return@OutlinedButton
-                        // Lock 2: Clipboard write happens at 0ms immediately on tap
-                        onCopyAgain()
-                        isCopyFlashing = true
-                        scope.launch {
-                            flashDelayMs(600L)
-                            isCopyFlashing = false
-                        }
-                    },
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Anyone who plays your code will send back a reply code — paste it here to reveal who & log the duel.",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(end = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                BoxWithConstraints(
                     modifier = Modifier
-                        .height(36.dp)
-                        .testTag("copy_awaiting_${awaiting.chainId}"),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, copyAccent),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        .fillMaxWidth()
+                        .padding(end = 10.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp), tint = copyAccent)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(if (isCopyFlashing) "✓ Copied!" else "Copy Code Again", color = copyAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    val isCompactWidth = maxWidth <= 320.dp
+                    val pasteLabel = if (isCompactWidth) "📋 Paste Reply" else "📋 Paste Reply Code"
+                    val copyLabel = if (isCopyFlashing) {
+                        "✓ Copied!"
+                    } else if (isCompactWidth) {
+                        "❐ Copy Again"
+                    } else {
+                        "❐ Copy Code Again"
+                    }
+                    val copyAccent = if (isCopyFlashing) Color(0xFF10B981) else Color(0xFF38BDF8)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val pasteReplyInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("paste_reply_awaiting_${awaiting.chainId}")
+                                .clickable(
+                                    interactionSource = pasteReplyInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onPasteReply
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(pasteReplyInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF00E5FF),
+                                contentColor = Color(0xFF06131F)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = pasteLabel,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        val copyAgainInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("copy_awaiting_${awaiting.chainId}")
+                                .clickable(
+                                    interactionSource = copyAgainInteraction,
+                                    indication = null,
+                                    enabled = !isCopyFlashing,
+                                    role = Role.Button,
+                                    onClick = {
+                                        if (isCopyFlashing) return@clickable
+                                        // Lock 2: Clipboard write happens at 0ms immediately on tap
+                                        onCopyAgain()
+                                        isCopyFlashing = true
+                                        scope.launch {
+                                            flashDelayMs(600L)
+                                            isCopyFlashing = false
+                                        }
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(copyAgainInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, copyAccent),
+                                contentColor = copyAccent
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = copyLabel,
+                                        color = copyAccent,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3512,11 +4646,14 @@ fun AwaitingCard(
 }
 
 /**
- * Head-to-Head Rival Card.
+ * Head-to-Head Rival Card with default-collapsed state, W/L/T result badge,
+ * reply-ready / waiting state signal, and kebab menu.
  */
 @Composable
 fun RivalCard(
     rival: RivalRecord,
+    isExpanded: Boolean = false,
+    onToggleExpand: () -> Unit = {},
     onDynamicAction: () -> Unit,
     onPasteNewCode: () -> Unit,
     onSendReply: () -> Unit = {},
@@ -3526,7 +4663,9 @@ fun RivalCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isReducedMotion = rememberIsReducedMotionEnabled()
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
 
     val statusColor = when (rival.lastStatus) {
         "WON" -> Color(0xFF00E676)
@@ -3559,44 +4698,105 @@ fun RivalCard(
                         fontWeight = FontWeight.ExtraBold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                    val totalMatches = maxOf(rival.matches, rival.wins + rival.losses + rival.ties)
                     Text(
-                        text = "Remove your head-to-head record with ${rival.name} (${rival.matches} ${if (rival.matches == 1) "match" else "matches"})?",
+                        text = "Remove your head-to-head record with ${rival.name} ($totalMatches ${if (totalMatches == 1) "match" else "matches"})?",
                         color = Color(0xFF94A3B8),
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp
                     )
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedButton(
-                            onClick = { showClearConfirm = false },
+                        val clearCancelInteraction = remember { MutableInteractionSource() }
+                        Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .heightIn(min = 44.dp)
-                                .testTag("confirm_clear_rivalry_cancel"),
-                            shape = RoundedCornerShape(12.dp)
+                                .heightIn(min = 48.dp)
+                                .testTag("confirm_clear_rivalry_cancel")
+                                .clickable(
+                                    interactionSource = clearCancelInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { showClearConfirm = false }
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text("Cancel", color = Color(0xFF94A3B8), fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(clearCancelInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, Color(0xFF475569)),
+                                contentColor = Color(0xFF94A3B8)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Cancel",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
-                        Button(
-                            onClick = {
-                                showClearConfirm = false
-                                onDeleteRival()
-                            },
+
+                        val clearConfirmInteraction = remember { MutableInteractionSource() }
+                        Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .heightIn(min = 44.dp)
-                                .testTag("confirm_clear_rivalry_confirm"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFF5252),
-                                contentColor = Color.White
-                            )
+                                .heightIn(min = 48.dp)
+                                .testTag("confirm_clear_rivalry_confirm")
+                                .clickable(
+                                    interactionSource = clearConfirmInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = {
+                                        showClearConfirm = false
+                                        onDeleteRival()
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text("Clear", fontWeight = FontWeight.Bold)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(clearConfirmInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFFF5252),
+                                contentColor = Color.White
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Clear",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -3606,472 +4806,806 @@ fun RivalCard(
 
     val cardBorderColor = if (rival.lastStatus == "IN_PROGRESS") Color(0xFF00E5FF).copy(alpha = 0.65f) else Color(0xFF1E293B)
 
+    // Determine state signals for collapsed/header display:
+    // 1. "reply ready" (green) when any grid has an unsent reply code (copiedAt == null && code.isNotBlank())
+    //    or (!rival.isReplySent && rival.lastReplyCode.isNotBlank())
+    // 2. "waiting" (amber) when rival.pendingOutbounds.isNotEmpty()
+    val hasUnsentReply = rival.lastStatus != "IN_PROGRESS" && (
+        rival.lastReplies.values.any { it.code.isNotBlank() && it.copiedAt == null } ||
+            (!rival.isReplySent && rival.lastReplyCode.isNotBlank())
+        )
+    val hasPendingOutbound = rival.pendingOutbounds.isNotEmpty()
+
+    val signalPulseAlpha = if (isReducedMotion) {
+        1f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "rival_signal_pulse")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "rival_pulse_alpha"
+        )
+        animated
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .then(
+                if (!isReducedMotion) {
+                    Modifier.animateContentSize(
+                        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .border(1.5.dp, cardBorderColor, RoundedCornerShape(16.dp))
+            .pointerInput(onToggleExpand) {
+                detectTapGestures(onTap = { onToggleExpand() })
+            }
+            .semantics(mergeDescendants = false) {
+                stateDescription = if (isExpanded) "Expanded" else "Collapsed"
+                onClick {
+                    onToggleExpand()
+                    true
+                }
+            }
             .testTag("rival_card_${rival.name}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row: ⚔️ [NAME] and Bin Icon (matching AwaitingCard)
+        Column(modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) {
+            // Header Row: ⚔️ [NAME] + Inline Status Signal ("● reply ready" / "● waiting") + Chevron + Flush-Right Kebab Icon
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "⚔️", fontSize = 18.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "⚔️", fontSize = 15.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
                             .testTag("rival_card_name_${rival.name}")
-                            .minimumInteractiveComponentSize()
                             .heightIn(min = 48.dp)
                             .widthIn(min = 48.dp)
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable(
                                 role = Role.Button,
-                                onClick = { onDynamicAction() }
-                            ),
+                                onClick = {
+                                    if (isExpanded) {
+                                        onDynamicAction()
+                                    } else {
+                                        onToggleExpand()
+                                    }
+                                }
+                            )
+                            .padding(end = 6.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         Text(
                             text = rival.name,
                             color = Color.White,
-                            fontSize = 17.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                }
 
-                IconButton(
-                    onClick = { showClearConfirm = true },
-                    modifier = Modifier
-                        .testTag("delete_rival_${rival.name}")
-                        .minimumInteractiveComponentSize()
-                        .size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Clear rivalry",
-                        tint = Color(0xFF64748B),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Scoreline: Wins • Losses • Ties (Matches)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "${rival.wins} Wins  •  ${rival.losses} Losses  •  ${rival.ties} Ties",
-                    color = Color(0xFFCBD5E1),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "  (${rival.matches} matches)",
-                    color = Color(0xFF64748B),
-                    fontSize = 12.sp
-                )
-            }
-
-            // PASS 5.17 Item 4 + PASS 5.35 Fix 1 & Fix 3:
-            // Scrollable Single-Line Per-Grid Selector Chips sorted by last-played DESC (leftmost = most recent duel)
-            val orderedGridKeys = listOf("2x2", "3x3", "4x4", "5x4")
-            val activeGridEntries = orderedGridKeys.mapNotNull { key ->
-                val stat = rival.gridStats[key]
-                val hasStoredReply = rival.lastReplies[key]?.code?.isNotBlank() == true
-                if ((stat != null && (stat.wins + stat.losses + stat.ties) > 0) || hasStoredReply) {
-                    key to (stat ?: GridStat())
-                } else null
-            }.sortedWith(
-                compareByDescending<Pair<String, GridStat>> { (key, _) ->
-                    key.equals(rival.lastGrid, ignoreCase = true)
-                }.thenByDescending { (key, stat) ->
-                    maxOf(stat.lastPlayedAt, rival.lastReplies[key]?.mintedAt ?: 0L)
-                }
-            )
-            val defaultGridKey = activeGridEntries.firstOrNull { (k, _) ->
-                k.equals(rival.lastGrid, ignoreCase = true)
-            }?.first ?: activeGridEntries.firstOrNull()?.first ?: rival.lastGrid.lowercase()
-            var selectedGridKey by remember(rival.name, rival.lastGrid) {
-                mutableStateOf(defaultGridKey)
-            }
-
-            if (activeGridEntries.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                LazyRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .testTag("rival_grid_chips_row_${rival.name}"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items(activeGridEntries, key = { it.first }) { (gridKey, stat) ->
-                        val isSelected = selectedGridKey.equals(gridKey, ignoreCase = true)
-                        val displayGrid = gridKey.replace('x', '×')
-                        val chipText = if (stat.ties > 0) {
-                            "$displayGrid: ${stat.wins}W - ${stat.losses}L - ${stat.ties}T"
-                        } else {
-                            "$displayGrid: ${stat.wins}W - ${stat.losses}L"
-                        }
-                        val chipBorderColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155)
-                        val chipBgColor = if (isSelected) Color(0xFF0F2942) else Color(0xFF1E293B)
-                        val chipTextColor = if (isSelected) Color.White else Color(0xFF94A3B8)
-                        Box(
-                            modifier = Modifier
-                                .testTag("rival_grid_chip_${rival.name}_$gridKey")
-                                .minimumInteractiveComponentSize()
-                                .heightIn(min = 48.dp)
-                                .widthIn(min = 56.dp)
-                                .clickable(
-                                    role = Role.RadioButton,
-                                    onClick = { selectedGridKey = gridKey }
-                                )
-                                .semantics {
-                                    selected = isSelected
-                                    stateDescription = if (isSelected) "Selected" else "Not selected"
-                                },
-                            contentAlignment = Alignment.Center
+                    if (hasUnsentReply || hasPendingOutbound) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .height(26.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(chipBgColor)
-                                    .border(
-                                        width = if (isSelected) 1.5.dp else 1.dp,
-                                        color = chipBorderColor,
-                                        shape = RoundedCornerShape(6.dp)
+                            if (hasUnsentReply) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .semantics(mergeDescendants = true) {}
+                                        .testTag("rival_signal_reply_ready_${rival.name}")
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF22C55E))
                                     )
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = chipText,
-                                    color = chipTextColor,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "reply ready",
+                                        color = Color(0xFF22C55E),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            if (hasPendingOutbound) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .semantics(mergeDescendants = true) {}
+                                        .testTag("rival_signal_waiting_${rival.name}")
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFF59E0B).copy(alpha = signalPulseAlpha))
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "waiting",
+                                        color = Color(0xFFF59E0B).copy(alpha = signalPulseAlpha),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }
                 }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (isExpanded) "▴" else "▾",
+                        color = Color(0xFF64748B),
+                        fontSize = 12.sp,
+                        modifier = Modifier.testTag("rival_chevron_${rival.name}")
+                    )
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("rival_menu_button_${rival.name}")
+                                .semantics { role = Role.Button }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More options for ${rival.name}",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            containerColor = Color(0xFF0F172A)
+                        ) {
+                            val pasteMenuLabel = if (hasPendingOutbound) "Paste Reply" else "Paste Code"
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = pasteMenuLabel,
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    if (hasPendingOutbound) {
+                                        (onPasteReplyCode ?: onPasteNewCode).invoke()
+                                    } else {
+                                        onPasteNewCode()
+                                    }
+                                },
+                                modifier = Modifier.testTag("rival_menu_paste_${rival.name}")
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Delete Rival",
+                                        color = Color(0xFFEF4444),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    showClearConfirm = true
+                                },
+                                modifier = Modifier.testTag("rival_menu_delete_${rival.name}")
+                            )
+                        }
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            // Scoreline: Wins • Losses • Ties (Matches) + Inline Result Badge (W/L/T) right after text
+            val totalMatches = maxOf(rival.matches, rival.wins + rival.losses + rival.ties)
+            val winsWord = if (rival.wins == 1) "Win" else "Wins"
+            val lossesWord = if (rival.losses == 1) "Loss" else "Losses"
+            val tiesWord = if (rival.ties == 1) "Tie" else "Ties"
+            val matchesWord = if (totalMatches == 1) "match" else "matches"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${rival.wins} $winsWord  •  ${rival.losses} $lossesWord  •  ${rival.ties} $tiesWord",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "  ($totalMatches $matchesWord)",
+                    color = Color(0xFF64748B),
+                    fontSize = 11.sp
+                )
+                Spacer(modifier = Modifier.width(8.dp))
 
-            // PASS 5.33: If rival has pending outbound challenges, render awaiting banner + Paste Reply / Re-copy buttons
-            if (rival.pendingOutbounds.isNotEmpty()) {
-                val newestPending = rival.pendingOutbounds.maxByOrNull { it.mintedAt } ?: rival.pendingOutbounds.first()
-                val ageText = formatTimeAgo(newestPending.mintedAt)
-                val displayGrid = newestPending.gridTag.replace('x', '×')
-                val triesPhrase = if (newestPending.tries == 0) "Free tries" else "${newestPending.tries} ${if (newestPending.tries == 1) "try" else "tries"}"
-
-                Box(
+                val (badgeLetter, badgeTextColor, badgeBgColor) = when (rival.lastStatus) {
+                    "WON" -> Triple("W", Color(0xFF22C55E), Color(0xFF052E16))
+                    "LOST" -> Triple("L", Color(0xFFEF4444), Color(0xFF450A0A))
+                    else -> Triple("T", Color(0xFFFACC15), Color(0xFF422006))
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = badgeBgColor,
+                    border = BorderStroke(1.dp, badgeTextColor.copy(alpha = 0.55f)),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF0C243B))
-                        .border(1.dp, Color(0xFF0284C7).copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp)
-                        .testTag("rival_awaiting_banner_${rival.name}")
+                        .semantics(mergeDescendants = true) {}
+                        .testTag("rival_result_badge_${rival.name}")
                 ) {
-                    Column {
+                    Text(
+                        text = badgeLetter,
+                        color = badgeTextColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                    )
+                }
+            }
+
+            if (isExpanded) {
+                // PASS 5.17 Item 4 + PASS 5.35 Fix 1 & Fix 3:
+                // Scrollable Single-Line Per-Grid Selector Chips sorted by last-played DESC (leftmost = most recent duel)
+                val orderedGridKeys = listOf("2x2", "3x3", "4x4", "5x4")
+                val activeGridEntries = orderedGridKeys.mapNotNull { key ->
+                    val stat = rival.gridStats[key]
+                    val hasStoredReply = rival.lastReplies[key]?.code?.isNotBlank() == true
+                    if ((stat != null && (stat.wins + stat.losses + stat.ties) > 0) || hasStoredReply) {
+                        key to (stat ?: GridStat())
+                    } else null
+                }.sortedWith(
+                    compareByDescending<Pair<String, GridStat>> { (key, _) ->
+                        key.equals(rival.lastGrid, ignoreCase = true)
+                    }.thenByDescending { (key, stat) ->
+                        maxOf(stat.lastPlayedAt, rival.lastReplies[key]?.mintedAt ?: 0L)
+                    }
+                )
+                val defaultGridKey = activeGridEntries.firstOrNull { (k, _) ->
+                    k.equals(rival.lastGrid, ignoreCase = true)
+                }?.first ?: activeGridEntries.firstOrNull()?.first ?: rival.lastGrid.lowercase()
+                var selectedGridKey by remember(rival.name, rival.lastGrid) {
+                    mutableStateOf(defaultGridKey)
+                }
+
+                if (activeGridEntries.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 10.dp)
+                            .heightIn(min = 48.dp)
+                            .testTag("rival_grid_chips_row_${rival.name}"),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        items(activeGridEntries, key = { it.first }) { (gridKey, stat) ->
+                            val isSelected = selectedGridKey.equals(gridKey, ignoreCase = true)
+                            val displayGrid = gridKey.replace('x', '×')
+                            val chipText = if (stat.ties > 0) {
+                                "$displayGrid: ${stat.wins}W - ${stat.losses}L - ${stat.ties}T"
+                            } else {
+                                "$displayGrid: ${stat.wins}W - ${stat.losses}L"
+                            }
+                            val chipBorderColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155)
+                            val chipBgColor = if (isSelected) Color(0xFF0F2942) else Color(0xFF1E293B)
+                            val chipTextColor = if (isSelected) Color.White else Color(0xFF94A3B8)
+                            val chipInteraction = remember { MutableInteractionSource() }
+                            Box(
+                                modifier = Modifier
+                                    .testTag("rival_grid_chip_${rival.name}_$gridKey")
+                                    .heightIn(min = 48.dp)
+                                    .widthIn(min = 56.dp)
+                                    .clickable(
+                                        interactionSource = chipInteraction,
+                                        indication = null,
+                                        role = Role.RadioButton,
+                                        onClick = { selectedGridKey = gridKey }
+                                    )
+                                    .semantics {
+                                        selected = isSelected
+                                        stateDescription = if (isSelected) "Selected" else "Not selected"
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .height(24.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(chipBgColor)
+                                        .border(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = chipBorderColor,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        .indication(chipInteraction, ripple())
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = chipText,
+                                        color = chipTextColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                // PASS 5.33: If rival has pending outbound challenges, render awaiting banner + Paste Reply / Re-copy buttons
+                if (rival.pendingOutbounds.isNotEmpty()) {
+                    val newestPending = rival.pendingOutbounds.maxByOrNull { it.mintedAt } ?: rival.pendingOutbounds.first()
+                    val ageText = formatTimeAgo(newestPending.mintedAt)
+                    val displayGrid = newestPending.gridTag.replace('x', '×')
+                    val triesPhrase = if (newestPending.tries == 0) "Free tries" else "${newestPending.tries} ${if (newestPending.tries == 1) "try" else "tries"}"
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 10.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0C243B))
+                            .border(1.dp, Color(0xFF0284C7).copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .testTag("rival_awaiting_banner_${rival.name}")
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "⏳ AWAITING REPLY • sent $ageText",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.testTag("rival_awaiting_title_${rival.name}")
+                                )
+                                if (rival.pendingOutbounds.size > 1) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFF0284C7).copy(alpha = 0.35f),
+                                        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                                    ) {
+                                        Text(
+                                            text = "+${rival.pendingOutbounds.size - 1} more",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                .testTag("rival_awaiting_more_badge_${rival.name}")
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "$displayGrid ${newestPending.difficulty.label} • Target ${newestPending.target} • $triesPhrase",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val pasteReplyInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .heightIn(min = 48.dp)
+                                .testTag("rival_paste_reply_button_${rival.name}")
+                                .clickable(
+                                    interactionSource = pasteReplyInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { (onPasteReplyCode ?: onPasteNewCode).invoke() }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(pasteReplyInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF0284C7),
+                                contentColor = Color.White
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(text = "Paste Reply Code", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+
+                        val recopyInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("rival_recopy_code_button_${rival.name}")
+                                .clickable(
+                                    interactionSource = recopyInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { onRecopyCode?.invoke(newestPending) }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(recopyInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, Color(0xFF334155)),
+                                contentColor = Color(0xFF38BDF8)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(text = "Re-copy", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Last Match / In-Progress Info
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 10.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF090E17))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                                "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                            } else {
+                                "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                            }
+                            val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
+                                val triesPhrase = if (rival.inProgressMaxTries == 0) {
+                                    "Free tries"
+                                } else {
+                                    "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                                }
+                                "Target: ${rival.lastTarget} • In Progress: $triesPhrase"
+                            } else {
+                                "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]"
+                            }
+
                             Text(
-                                text = "⏳ AWAITING REPLY • sent $ageText",
-                                color = Color(0xFF38BDF8),
+                                text = leftMetaLabel,
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = rightStatusLabel,
+                                color = statusColor,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.testTag("rival_awaiting_title_${rival.name}")
+                                modifier = Modifier.testTag("rival_status_text_${rival.name}")
                             )
-                            if (rival.pendingOutbounds.size > 1) {
+                        }
+                    }
+
+                    // PASS 5.35 Fix 2: Open Challenge Resume Entry ("Resume Challenge - N tries left - [grid] [diff]")
+                    if (rival.lastStatus == "IN_PROGRESS") {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val triesPhrase = if (rival.inProgressMaxTries == 0) {
+                            "Free tries"
+                        } else {
+                            "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                        }
+                        val displayGrid = rival.lastGrid.lowercase().replace('x', '×')
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 10.dp)
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF0C243B))
+                                .border(1.2.dp, Color(0xFF00E5FF).copy(alpha = 0.75f), RoundedCornerShape(10.dp))
+                                .clickable(role = Role.Button) { onDynamicAction() }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .testTag("rival_resume_challenge_entry_${rival.name}"),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "▶ Resume Challenge",
+                                    color = Color(0xFF00E5FF),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "$triesPhrase - $displayGrid ${rival.lastDifficulty.label}",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
+                    // PASS 5.37: State-Aware Reply Presentation
+                    val selectedReply = rival.lastReplies[selectedGridKey.lowercase()]
+                    val hasSelectedReply = rival.lastStatus != "IN_PROGRESS" && selectedReply != null && selectedReply.code.isNotBlank()
+                    if (hasSelectedReply) {
+                        val replyCodeToCopy = selectedReply!!.code
+                        val isUnsent = selectedReply.copiedAt == null
+                        if (isUnsent) {
+                            val sendReplyInteraction = remember { MutableInteractionSource() }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = 10.dp)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("rival_send_reply_button_${rival.name}")
+                                    .clickable(
+                                        interactionSource = sendReplyInteraction,
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = {
+                                            runCatching {
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                                            }
+                                            ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                            Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
+                                            onSendReply()
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = Color(0xFF0284C7).copy(alpha = 0.35f),
-                                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(38.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .indication(sendReplyInteraction, ripple()),
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF10B981),
+                                    contentColor = Color(0xFF090D16)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 10.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Copy Reply Code",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            val ageStr = formatTimeAgo(selectedReply.copiedAt!!)
+                            val replySentInteraction = remember { MutableInteractionSource() }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = 10.dp)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("rival_reply_sent_row_${rival.name}")
+                                    .clickable(
+                                        interactionSource = replySentInteraction,
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = {
+                                            runCatching {
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                                            }
+                                            ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                            Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
+                                            onSendReply()
+                                        }
+                                    ),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(20.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .indication(replySentInteraction, ripple())
+                                        .padding(horizontal = 2.dp)
+                                        .testTag("rival_reply_sent_visual_${rival.name}"),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "+${rival.pendingOutbounds.size - 1} more",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier
-                                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                                            .testTag("rival_awaiting_more_badge_${rival.name}")
+                                        text = "✓ Reply copied $ageStr · copy again",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy again",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(12.dp)
                                     )
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "$displayGrid ${newestPending.difficulty.label} • Target ${newestPending.target} • $triesPhrase",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { (onPasteReplyCode ?: onPasteNewCode).invoke() },
-                        modifier = Modifier
-                            .weight(1.3f)
-                            .heightIn(min = 38.dp)
-                            .testTag("rival_paste_reply_button_${rival.name}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF0284C7),
-                            contentColor = Color.White
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(text = "Paste Reply Code", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    }
-
-                    OutlinedButton(
-                        onClick = { onRecopyCode?.invoke(newestPending) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 38.dp)
-                            .testTag("rival_recopy_code_button_${rival.name}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(text = "Re-copy", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                }
-            } else {
-                // Last Match / In-Progress Info
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF090E17))
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
-                            "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
-                        } else {
-                            "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
-                        }
-                        val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
-                            val triesPhrase = if (rival.inProgressMaxTries == 0) {
-                                "Free tries"
-                            } else {
-                                "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
-                            }
-                            "Target: ${rival.lastTarget} • In Progress: $triesPhrase"
-                        } else {
-                            "Target: ${rival.lastTarget} vs You: ${rival.lastUserScore} [${rival.lastStatus}]"
-                        }
-
-                        Text(
-                            text = leftMetaLabel,
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = rightStatusLabel,
-                            color = statusColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.testTag("rival_status_text_${rival.name}")
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // PASS 5.35 Fix 2: Open Challenge Resume Entry ("Resume Challenge - N tries left - [grid] [diff]")
-                if (rival.lastStatus == "IN_PROGRESS") {
-                    val triesPhrase = if (rival.inProgressMaxTries == 0) {
-                        "Free tries"
                     } else {
-                        "${rival.inProgressTriesLeft} ${if (rival.inProgressTriesLeft == 1) "try" else "tries"} left"
+                        Spacer(modifier = Modifier.height(2.dp))
                     }
-                    val displayGrid = rival.lastGrid.lowercase().replace('x', '×')
-                    Box(
+
+                    // Dynamic Action Button & Secondary Button
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF0C243B))
-                            .border(1.2.dp, Color(0xFF00E5FF).copy(alpha = 0.75f), RoundedCornerShape(10.dp))
-                            .clickable { onDynamicAction() }
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .testTag("rival_resume_challenge_entry_${rival.name}")
+                            .padding(end = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = "▶ Resume Challenge",
-                                color = Color(0xFF00E5FF),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "$triesPhrase - $displayGrid ${rival.lastDifficulty.label}",
-                                color = Color(0xFFE2E8F0),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                // PASS 5.37: State-Aware Reply Presentation
-                val selectedReply = rival.lastReplies[selectedGridKey.lowercase()]
-                val hasSelectedReply = rival.lastStatus != "IN_PROGRESS" && selectedReply != null && selectedReply.code.isNotBlank()
-                if (hasSelectedReply) {
-                    val replyCodeToCopy = selectedReply!!.code
-                    val isUnsent = selectedReply.copiedAt == null
-                    if (isUnsent) {
-                        Button(
-                            onClick = {
-                                runCatching {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
+                        // Dynamic Button
+                        val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
+                            "IN_PROGRESS" -> {
+                                val resumeText = if (rival.inProgressMaxTries == 0) {
+                                    "▶ Resume Challenge"
+                                } else {
+                                    "▶ Resume (${rival.inProgressTriesLeft} left)"
                                 }
-                                ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
-                                Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
-                                onSendReply()
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 38.dp)
-                                .testTag("rival_send_reply_button_${rival.name}"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF10B981),
-                                contentColor = Color(0xFF090D16)
-                            ),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Send Reply to ${rival.name}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1
-                            )
-                        }
-                    } else {
-                        val ageStr = formatTimeAgo(selectedReply.copiedAt!!)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    runCatching {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                        clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
-                                    }
-                                    ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
-                                    Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
-                                    onSendReply()
-                                }
-                                .padding(vertical = 4.dp, horizontal = 2.dp)
-                                .testTag("rival_reply_sent_row_${rival.name}"),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "✓ Reply copied $ageStr · copy again",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy again",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                // Dynamic Action Button & Secondary Button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Dynamic Button
-                    val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
-                        "IN_PROGRESS" -> {
-                            val resumeText = if (rival.inProgressMaxTries == 0) {
-                                "▶ Resume Challenge"
-                            } else {
-                                "▶ Resume (${rival.inProgressTriesLeft} left)"
+                                Triple(resumeText, Color(0xFF00E5FF), Color.Black)
                             }
-                            Triple(resumeText, Color(0xFF00E5FF), Color.Black)
+                            "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
+                            "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
+                            else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
                         }
-                        "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
-                        "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
-                        else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
-                    }
 
-                    Button(
-                        onClick = onDynamicAction,
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .heightIn(min = 38.dp)
-                            .testTag("rival_dynamic_button_${rival.name}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = buttonColor,
-                            contentColor = buttonTextColor
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
-                    ) {
-                        Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
+                        val dynamicInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .heightIn(min = 48.dp)
+                                .testTag("rival_dynamic_button_${rival.name}")
+                                .clickable(
+                                    interactionSource = dynamicInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onDynamicAction
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(dynamicInteraction, ripple())
+                                    .testTag("rival_dynamic_visual_${rival.name}"),
+                                shape = RoundedCornerShape(10.dp),
+                                color = buttonColor,
+                                contentColor = buttonTextColor
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
 
-                    OutlinedButton(
-                        onClick = onPasteNewCode,
-                        modifier = Modifier
-                            .weight(1.1f)
-                            .heightIn(min = 38.dp)
-                            .testTag("rival_paste_button_${rival.name}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
-                    ) {
-                        Text(text = "Paste Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        val rivalPasteInteraction = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .weight(1.1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("rival_paste_button_${rival.name}")
+                                .clickable(
+                                    interactionSource = rivalPasteInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onPasteNewCode
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(rivalPasteInteraction, ripple()),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, Color(0xFF334155)),
+                                contentColor = Color(0xFF38BDF8)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = "Paste Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4102,97 +5636,152 @@ fun RecordsTabContent(
             .testTag("records_tab_content"),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Mode Selector: [SOLO] [2P] [3P] [4P]
-        val modeTrackHeight = (48f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.25f)).dp
-        Row(
+        // Mode Selector: [SOLO] [2P] [3P] [4P] — Slim 36.dp track inside non-overlapping 48.dp touch slots
+        val modeTrackHeight = (36f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.15f)).dp
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(modeTrackHeight)
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF1E293B))
-                .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
-                .padding(3.dp)
-                .testTag("records_mode_selector"),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                .heightIn(min = 48.dp),
+            contentAlignment = Alignment.Center
         ) {
-            modes.forEachIndexed { index, modeLabel ->
-                val isSelected = selectedModeIndex == index
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize()
-                        .testTag("records_mode_$modeLabel")
-                        .minimumInteractiveComponentSize()
-                        .clip(RoundedCornerShape(21.dp))
-                        .background(if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent)
-                        .then(if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(21.dp)) else Modifier)
-                        .clickable(role = Role.Tab) { selectedModeIndex = index }
-                        .semantics {
-                            selected = isSelected
-                            stateDescription = if (isSelected) "Selected" else "Not selected"
-                        }
-                        .padding(horizontal = 4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = modeLabel,
-                        color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
-                        fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1,
-                        softWrap = false
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(modeTrackHeight)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF1E293B))
+                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(18.dp))
+                    .padding(2.dp)
+                    .testTag("records_mode_selector"),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                modes.forEachIndexed { index, _ ->
+                    val isSelected = selectedModeIndex == index
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) Color(0xFF0284C7).copy(alpha = 0.42f) else Color.Transparent)
+                            .then(
+                                if (isSelected) Modifier.border(1.dp, Color(0xFF00E5FF), RoundedCornerShape(16.dp))
+                                else Modifier
+                            )
                     )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .padding(horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                modes.forEachIndexed { index, modeLabel ->
+                    val isSelected = selectedModeIndex == index
+                    val modeInteraction = remember { MutableInteractionSource() }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .widthIn(min = 48.dp)
+                            .testTag("records_mode_$modeLabel")
+                            .clickable(
+                                interactionSource = modeInteraction,
+                                indication = null,
+                                role = Role.Tab,
+                                onClick = { selectedModeIndex = index }
+                            )
+                            .semantics {
+                                selected = isSelected
+                                stateDescription = if (isSelected) "Selected" else "Not selected"
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(modeTrackHeight - 4.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .indication(modeInteraction, ripple())
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = modeLabel,
+                                color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
         if (selectedModeIndex == 0) {
-            // SOLO MODE: Grid Size Chips + 4 Score Cards
+            // SOLO MODE: Slim 32.dp Grid Size Chips inside non-overlapping 48.dp touch slots
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("records_grid_chips"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 grids.forEachIndexed { index, gridLabel ->
                     val isSelected = selectedGridIndex == index
-                    OutlinedButton(
-                        onClick = { selectedGridIndex = index },
+                    val gridChipInteraction = remember { MutableInteractionSource() }
+                    Box(
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("records_grid_$gridLabel")
-                            .minimumInteractiveComponentSize()
                             .heightIn(min = 48.dp)
+                            .widthIn(min = 48.dp)
+                            .testTag("records_grid_$gridLabel")
+                            .clickable(
+                                interactionSource = gridChipInteraction,
+                                indication = null,
+                                role = Role.RadioButton,
+                                onClick = { selectedGridIndex = index }
+                            )
                             .semantics {
-                                role = Role.RadioButton
                                 selected = isSelected
                                 stateDescription = if (isSelected) "Selected" else "Not selected"
                             },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color.Transparent,
-                            contentColor = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8)
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155)
-                        )
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = gridLabel,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color.Transparent)
+                                .border(
+                                    1.dp,
+                                    if (isSelected) Color(0xFF00E5FF) else Color(0xFF334155),
+                                    RoundedCornerShape(9.dp)
+                                )
+                                .indication(gridChipInteraction, ripple()),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = gridLabel,
+                                color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             val currentGridKey = gridKeys[selectedGridIndex]
 

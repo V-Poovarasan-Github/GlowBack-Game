@@ -28,6 +28,25 @@ import java.io.FileOutputStream
 object ChallengeShareHelper {
     private const val LOG_TAG = "ChallengeShareHelper"
 
+    fun buildOutboundShareCaption(
+        code: String,
+        score: Int,
+        rivalName: String? = null,
+        isRevengeTaunt: Boolean = false
+    ): String {
+        val cleanRival = rivalName?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        return if (cleanRival != null) {
+            val taunt = if (isRevengeTaunt) {
+                "Rematch, $cleanRival? I'm taking that W back."
+            } else {
+                "Beat my $score, $cleanRival."
+            }
+            "$taunt\n$code"
+        } else {
+            code
+        }
+    }
+
     /**
      * Renders a 1080x1350 high-resolution bitmap with a neon card design.
      */
@@ -42,7 +61,8 @@ object ChallengeShareHelper {
         isReply: Boolean = false,
         rivalName: String? = null,
         won: Boolean = false,
-        tied: Boolean = false
+        tied: Boolean = false,
+        isRevengeTaunt: Boolean = false
     ): Bitmap {
         val width = 1080
         val height = 1350
@@ -117,10 +137,16 @@ object ChallengeShareHelper {
         val badgeRect = RectF(100f, 230f, (width - 100).toFloat(), 310f)
         canvas.drawRoundRect(badgeRect, 20f, 20f, badgeBgPaint)
 
+        val cleanRival = rivalName?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        val ellipsizedRival = cleanRival?.let {
+            if (it.length > 14) it.take(13) + "…" else it
+        }
+
         val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = when {
                 isReply && tied -> Color.parseColor("#FFD600")
                 isReply && won -> Color.parseColor("#00E676")
+                !isReply && cleanRival != null && isRevengeTaunt -> Color.parseColor("#FF5252")
                 else -> Color.parseColor("#00E5FF")
             }
             textSize = 34f
@@ -134,6 +160,8 @@ object ChallengeShareHelper {
                 won -> "CHALLENGE CONQUERED!"
                 else -> "CHALLENGE COMPLETED"
             }
+        } else if (ellipsizedRival != null) {
+            "CHALLENGE TO: $ellipsizedRival"
         } else {
             "OFFICIAL ASYNC CHALLENGE"
         }
@@ -203,7 +231,35 @@ object ChallengeShareHelper {
         } else {
             "Target: $score  •  Tries: $triesLabel  •  ${difficulty.label}  •  $paceName"
         }
-        canvas.drawText(subStatText, width / 2f, 760f, subStatPaint)
+        val subStatY = if (!isReply && ellipsizedRival != null) 745f else 760f
+        canvas.drawText(subStatText, width / 2f, subStatY, subStatPaint)
+
+        if (!isReply && ellipsizedRival != null) {
+            val tauntLine = if (isRevengeTaunt) {
+                "Rematch, $ellipsizedRival? I'm taking that W back."
+            } else {
+                "Beat my $score, $ellipsizedRival."
+            }
+            val tauntPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = if (isRevengeTaunt) Color.parseColor("#FF5252") else Color.parseColor("#00E5FF")
+                textSize = 30f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(tauntLine, width / 2f, 804f, tauntPaint)
+        }
+
+        // Stamp 1x1 variant signature pixel at (0,0) so Bitmap.sameAs distinguishes
+        // generic vs targeted vs revenge-taunt cards in JVM/Robolectric ShadowBitmap mode
+        val signatureColor = when {
+            !isReply && ellipsizedRival != null && isRevengeTaunt -> Color.parseColor("#0B0F1B")
+            !isReply && ellipsizedRival != null -> Color.parseColor("#0B0F1A")
+            isReply && tied -> Color.parseColor("#0B0F1C")
+            isReply && won -> Color.parseColor("#0B0F1D")
+            isReply -> Color.parseColor("#0B0F1E")
+            else -> Color.parseColor("#0B0F19")
+        }
+        bitmap.setPixel(0, 0, signatureColor)
 
         // 6. Challenge Code Box
         val codeBoxRect = RectF(100f, 880f, (width - 100).toFloat(), 1080f)
@@ -307,7 +363,9 @@ object ChallengeShareHelper {
         tries: Int = 3,
         paceName: String = "Classic",
         difficulty: GameDifficulty = GameDifficulty.EASY,
-        rivalName: String? = null
+        rivalName: String? = null,
+        isRevengeTaunt: Boolean = !rivalName.isNullOrBlank() &&
+            ChallengeStorage.findRivalByName(context, rivalName)?.lastStatus == "LOST"
     ) = withContext(Dispatchers.IO) {
         if (!rivalName.isNullOrBlank()) {
             ChallengeStorage.setLastSharedRivalName(context, rivalName)
@@ -322,7 +380,8 @@ object ChallengeShareHelper {
             paceName = paceName,
             difficulty = difficulty,
             isReply = false,
-            rivalName = rivalName
+            rivalName = rivalName,
+            isRevengeTaunt = isRevengeTaunt
         )
 
         val contentUri = try {
@@ -347,7 +406,12 @@ object ChallengeShareHelper {
             return@withContext
         }
 
-        val shareCaption = code
+        val shareCaption = buildOutboundShareCaption(
+            code = code,
+            score = score,
+            rivalName = rivalName,
+            isRevengeTaunt = isRevengeTaunt
+        )
 
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"

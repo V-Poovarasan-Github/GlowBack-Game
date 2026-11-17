@@ -1224,7 +1224,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
 
     fun executeReplyToRival(senderName: String) {
         val ch = activeChallenge ?: return
-        if (hasSentChallengeReply) return
         val bestAttemptScore = maxOf(currentScore, ch.bestScore)
         ch.bestScore = bestAttemptScore
         finalizePendingChallengeOutcomeIfNeeded()
@@ -2560,7 +2559,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     ) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(0.dp)
                         ) {
                             if (gameState == GameState.IDLE) {
                                 // ROW A: Single segmented capsule [SOLO|2P|3P|4P] with sliding highlight thumb
@@ -3340,6 +3339,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     awaitingChallengeForDialog = null
                     activeDialog = ActiveDialog.NONE
 
+                    val isRevengeTaunt = !shareRival.isNullOrBlank() &&
+                        ChallengeStorage.findRivalByName(context, shareRival)?.lastStatus == "LOST"
+
                     coroutineScope.launch {
                         ChallengeShareHelper.shareChallenge(
                             context = context,
@@ -3350,7 +3352,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             tries = chosenTries,
                             paceName = chosenPace,
                             difficulty = chosenDiff,
-                            rivalName = shareRival
+                            rivalName = shareRival,
+                            isRevengeTaunt = isRevengeTaunt
                         )
                     }
                 }
@@ -3824,22 +3827,20 @@ private fun SegmentedModeTrack(
 ) {
     val modes = GameMode.entries
     val selectedIndex = modes.indexOf(selectedMode).coerceAtLeast(0)
-    val fontScaleFactor = LocalDensity.current.fontScale.coerceIn(1f, 1.25f)
-    val trackHeight = (48f * fontScaleFactor).dp
+    val fontScaleFactor = LocalDensity.current.fontScale.coerceIn(1f, 1.15f)
+    val trackHeight = (36f * fontScaleFactor).dp
+    val segmentGap = 2.dp
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(trackHeight)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xFF1E293B))
-            .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
-            .padding(3.dp)
-            .testTag("segmented_mode_track")
+            .height(48.dp),
+        contentAlignment = Alignment.Center
     ) {
-        val segmentWidth = maxWidth / modes.size
+        val innerTrackWidth = (maxWidth - 4.dp).coerceAtLeast(0.dp)
+        val segmentWidth = ((innerTrackWidth - segmentGap * (modes.size - 1)) / modes.size).coerceAtLeast(0.dp)
         val thumbOffset by animateDpAsState(
-            targetValue = segmentWidth * selectedIndex,
+            targetValue = (segmentWidth + segmentGap) * selectedIndex,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioNoBouncy,
                 stiffness = Spring.StiffnessMedium
@@ -3847,31 +3848,47 @@ private fun SegmentedModeTrack(
             label = "modeThumbOffset"
         )
 
-        // Sliding highlight thumb
+        // Visual 36.dp track + sliding highlight thumb
         Box(
             modifier = Modifier
-                .offset(x = thumbOffset)
-                .width(segmentWidth)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(21.dp))
-                .background(Color(0xFF0284C7).copy(alpha = 0.42f))
-                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(21.dp))
-        )
+                .fillMaxWidth()
+                .height(trackHeight)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFF1E293B))
+                .border(1.dp, Color(0xFF334155), RoundedCornerShape(18.dp))
+                .padding(2.dp)
+                .testTag("segmented_mode_track")
+        ) {
+            Box(
+                modifier = Modifier
+                    .offset(x = thumbOffset)
+                    .width(segmentWidth)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF0284C7).copy(alpha = 0.42f))
+                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(16.dp))
+            )
+        }
 
+        // Foreground non-overlapping 48.dp touch slots with clipped 32.dp visual ripple
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(segmentGap),
             verticalAlignment = Alignment.CenterVertically
         ) {
             modes.forEach { mode ->
                 val isSelected = mode == selectedMode
+                val interactionSource = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .testTag(mode.tagId)
-                        .minimumInteractiveComponentSize()
-                        .clip(RoundedCornerShape(21.dp))
                         .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
                             enabled = enabled,
                             role = Role.Tab,
                             onClick = { onSelectMode(mode) }
@@ -3879,18 +3896,27 @@ private fun SegmentedModeTrack(
                         .semantics {
                             selected = isSelected
                             stateDescription = if (isSelected) "Selected" else "Not selected"
-                        }
-                        .padding(horizontal = 4.dp),
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = mode.label,
-                        color = if (isSelected) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
-                        fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(trackHeight - 4.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .indication(interactionSource, ripple())
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = mode.label,
+                            color = if (isSelected) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
         }
@@ -3911,63 +3937,78 @@ private fun BoardAndContextRow(
         val isProgressive = paceMode == PaceMode.PROGRESSIVE
         val abbreviatePace = isProgressive && (maxWidth < 330.dp || fontScaleFactor > 1.15f)
         val displayPaceLabel = if (abbreviatePace) "Prog." else paceMode.shortLabel
-        val trackVisualHeight = (40f * fontScaleFactor.coerceAtMost(1.2f)).dp
-        val containerHeight = trackVisualHeight + 8.dp
+        val trackVisualHeight = (32f * fontScaleFactor.coerceAtMost(1.15f)).dp
+        val containerHeight = 48.dp
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = containerHeight),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left: ONE Board pill ("2×2 · Classic") opening Settings — 40dp visual height (scales cleanly), 48dp+ touch target
+            // Left: ONE Board pill ("2×2 · Classic") opening Settings — 32dp slim visual height, >=48dp touch targets
+            val gridInteractionSource = remember { MutableInteractionSource() }
+            val paceInteractionSource = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier.height(containerHeight),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(11.dp),
                     color = Color(0xFF1E293B),
                     border = BorderStroke(1.dp, Color(0xFF334155)),
                     modifier = Modifier
                         .matchParentSize()
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = (containerHeight - trackVisualHeight) / 2)
                 ) {}
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(vertical = 4.dp)
-                        .clip(RoundedCornerShape(14.dp)),
+                    modifier = Modifier.fillMaxHeight(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
+                    Box(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
-                            .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
-                            .padding(start = 10.dp, end = 4.dp)
-                            .testTag("config_pill_grid"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            .widthIn(min = 48.dp)
+                            .testTag("config_pill_grid")
+                            .clickable(
+                                interactionSource = gridInteractionSource,
+                                indication = null,
+                                enabled = enabled,
+                                role = Role.Button,
+                                onClick = onOpenSettings
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.GridView,
-                            contentDescription = null,
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = gridSize.label,
-                            color = Color(0xFFF8FAFC),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Row(
+                            modifier = Modifier
+                                .height(trackVisualHeight)
+                                .clip(RoundedCornerShape(topStart = 11.dp, bottomStart = 11.dp))
+                                .indication(gridInteractionSource, ripple())
+                                .padding(start = 10.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GridView,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = gridSize.label,
+                                color = Color(0xFFF8FAFC),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                     Text(
                         text = "·",
                         color = Color(0xFF64748B),
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         softWrap = false
@@ -3975,30 +4016,45 @@ private fun BoardAndContextRow(
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp))
-                            .clickable(enabled = enabled, role = Role.Button, onClick = onOpenSettings)
-                            .padding(start = 4.dp, end = 10.dp)
-                            .testTag("config_pill_pace"),
+                            .widthIn(min = 48.dp)
+                            .testTag("config_pill_pace")
+                            .clickable(
+                                interactionSource = paceInteractionSource,
+                                indication = null,
+                                enabled = enabled,
+                                role = Role.Button,
+                                onClick = onOpenSettings
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = displayPaceLabel,
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Box(
+                            modifier = Modifier
+                                .height(trackVisualHeight)
+                                .clip(RoundedCornerShape(topEnd = 11.dp, bottomEnd = 11.dp))
+                                .indication(paceInteractionSource, ripple())
+                                .padding(start = 4.dp, end = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = displayPaceLabel,
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
 
-            // Right: Segmented [Easy | Hard] Slider matching SOLO track — scales width & height cleanly with fontScale
+            // Right: Segmented [Easy | Hard] Slider — 32dp slim visual track, spacedBy(2.dp), clipped ripple, 48dp touch slots
             val isEasy = difficultyMode == GameDifficulty.EASY
             val isHard = difficultyMode == GameDifficulty.HARD
-            val segmentWidth = (58f * fontScaleFactor).dp
+            val segmentGap = 2.dp
+            val segmentWidth = (56f * fontScaleFactor).dp
             val thumbOffset by animateDpAsState(
-                targetValue = if (isEasy) 0.dp else segmentWidth,
+                targetValue = if (isEasy) 0.dp else segmentWidth + segmentGap,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
                     stiffness = Spring.StiffnessMedium
@@ -4016,40 +4072,43 @@ private fun BoardAndContextRow(
                 Color(0xFFFF5252)
             }
 
+            val easyInteractionSource = remember { MutableInteractionSource() }
+            val hardInteractionSource = remember { MutableInteractionSource() }
+
             Box(
                 modifier = Modifier
-                    .width(segmentWidth * 2 + 4.dp)
+                    .width(segmentWidth * 2 + segmentGap + 4.dp)
                     .height(containerHeight),
                 contentAlignment = Alignment.Center
             ) {
-                // Visual outer track with 2.dp uniform inset and sliding concentric thumb
+                // Visual outer track with 2.dp uniform inset and sliding concentric thumb (32dp slim height)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(trackVisualHeight)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(11.dp))
                         .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(11.dp))
                         .padding(2.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .offset(x = thumbOffset)
                             .width(segmentWidth)
-                            .widthIn(min = 56.dp)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(9.dp))
                             .background(thumbFill)
-                            .border(1.dp, thumbBorder, RoundedCornerShape(12.dp))
+                            .border(1.dp, thumbBorder, RoundedCornerShape(9.dp))
                     )
                 }
 
-                // Foreground touch targets spanning full 48dp+ containerHeight while visual track remains 40dp
+                // Foreground non-overlapping 48dp touch slots with clipped 28dp inner ripple boxes
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .fillMaxHeight()
                         .padding(horizontal = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(segmentGap),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
@@ -4057,13 +4116,12 @@ private fun BoardAndContextRow(
                             .width(segmentWidth)
                             .fillMaxHeight()
                             .testTag("difficulty_toggle_easy")
-                            .minimumInteractiveComponentSize()
-                            .clip(RoundedCornerShape(12.dp))
                             .clickable(
+                                interactionSource = easyInteractionSource,
+                                indication = null,
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.EASY) }
                             )
-                            .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Easy difficulty"
                                 selected = isEasy
@@ -4071,14 +4129,24 @@ private fun BoardAndContextRow(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Easy",
-                            color = if (isEasy) Color(0xFF34D399) else Color(0xFF94A3B8),
-                            fontSize = 13.sp,
-                            fontWeight = if (isEasy) FontWeight.Bold else FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(trackVisualHeight - 4.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .indication(easyInteractionSource, ripple())
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Easy",
+                                color = if (isEasy) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isEasy) FontWeight.Bold else FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
 
                     Box(
@@ -4086,13 +4154,12 @@ private fun BoardAndContextRow(
                             .width(segmentWidth)
                             .fillMaxHeight()
                             .testTag("difficulty_toggle_hard")
-                            .minimumInteractiveComponentSize()
-                            .clip(RoundedCornerShape(12.dp))
                             .clickable(
+                                interactionSource = hardInteractionSource,
+                                indication = null,
                                 role = Role.RadioButton,
                                 onClick = { onSelectDifficulty(GameDifficulty.HARD) }
                             )
-                            .padding(horizontal = 4.dp)
                             .semantics {
                                 contentDescription = "Hard difficulty"
                                 selected = isHard
@@ -4100,14 +4167,24 @@ private fun BoardAndContextRow(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Hard",
-                            color = if (isHard) Color(0xFFFF5252) else Color(0xFF94A3B8),
-                            fontSize = 13.sp,
-                            fontWeight = if (isHard) FontWeight.Bold else FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(trackVisualHeight - 4.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .indication(hardInteractionSource, ripple())
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Hard",
+                                color = if (isHard) Color(0xFFFF5252) else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isHard) FontWeight.Bold else FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
@@ -6914,12 +6991,12 @@ private fun BottomActionSection(
     if (activeChallenge != null && gameState == GameState.GAME_OVER) {
         var isReplyFlashing by remember { mutableStateOf(false) }
         val triggerReplyWithFlash: (() -> Unit) -> Unit = { callback ->
-            if (!isReplyFlashing && !hasSentChallengeReply) {
+            if (!isReplyFlashing) {
+                callback()
                 isReplyFlashing = true
                 actionScope.launch {
-                    flashDelayMs(150L)
+                    flashDelayMs(600L)
                     isReplyFlashing = false
-                    callback()
                 }
             }
         }
@@ -6945,17 +7022,17 @@ private fun BottomActionSection(
                 }
 
                 // PASS 5.19 Part 2 Bug 3 & Clarifying Answer #3:
-                // - When tied on Try 1 with tries remaining: Show Secondary "Send Tie to Rival" + Tertiary "Exit Challenge"
+                // - When tied on Try 1 with tries remaining: Show Secondary "Copy Reply Code" + Tertiary "Exit Challenge"
                 // - When failed (< targetScore) with tries remaining: HIDE "Share Score", show ONLY "Exit Challenge"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (isChallengeTied) {
-                        val tieColor = if (hasSentChallengeReply) Color(0xFF10B981) else Color(0xFFFFD600)
+                        val tieColor = if (hasSentChallengeReply || isReplyFlashing) Color(0xFF10B981) else Color(0xFFFFD600)
                         OutlinedButton(
                             onClick = { triggerReplyWithFlash(onSendTieEarly) },
-                            enabled = !hasSentChallengeReply,
+                            enabled = true,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(40.dp)
@@ -6970,11 +7047,7 @@ private fun BottomActionSection(
                             )
                         ) {
                             Text(
-                                text = when {
-                                    hasSentChallengeReply -> "✓ Tie Sent"
-                                    isReplyFlashing -> "✓ Sending..."
-                                    else -> "Send Tie to Rival"
-                                },
+                                text = if (isReplyFlashing) "✓ Copied!" else "Copy Reply Code",
                                 color = if (isReplyFlashing || hasSentChallengeReply) Color(0xFF34D399) else tieColor,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -7001,16 +7074,10 @@ private fun BottomActionSection(
                     isChallengeTied -> Color(0xFFFFD600)
                     else -> Color(0xFF38BDF8)
                 }
-                val primaryLabel = when {
-                    hasSentChallengeReply -> "✓ Reply Sent"
-                    isReplyFlashing -> "✓ Sending..."
-                    isChallengeWon -> "Send Victory to Rival!"
-                    isChallengeTied -> "Send Tie to Rival! 🤝"
-                    else -> "Send Result to Rival"
-                }
+                val primaryLabel = if (isReplyFlashing) "✓ Copied!" else "Copy Reply Code"
                 Button(
                     onClick = { triggerReplyWithFlash(onReplyToRival) },
-                    enabled = !hasSentChallengeReply,
+                    enabled = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp)
@@ -7018,12 +7085,10 @@ private fun BottomActionSection(
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = primaryColor,
-                        contentColor = Color.Black,
-                        disabledContainerColor = Color(0xFF10B981).copy(alpha = 0.28f),
-                        disabledContentColor = Color(0xFF34D399)
+                        contentColor = Color.Black
                     )
                 ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = primaryLabel,
