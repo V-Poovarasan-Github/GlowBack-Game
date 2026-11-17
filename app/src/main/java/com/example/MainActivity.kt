@@ -1109,6 +1109,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var isVictoryDecisionVisible by remember { mutableStateOf(false) }
     var hasShownVictoryDecisionThisTry by remember { mutableStateOf(false) }
     var bestScoreBeforeCurrentTry by remember { mutableIntStateOf(0) }
+    var soloBestAtRunStart by remember { mutableIntStateOf(0) }
     var hasPreDeductedCurrentTry by remember { mutableStateOf(false) }
     var currentRivalNameForShare by remember { mutableStateOf<String?>(null) }
     var currentRivalChainId by remember { mutableStateOf<String?>(null) }
@@ -1546,6 +1547,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         isChallengeTied = false
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
+        soloBestAtRunStart = 0
         gridSize = newGridSize
         paceMode = newPaceMode
         sharedPrefs.edit().putString(KEY_GRID_SIZE, newGridSize.name).putString(KEY_PACE_MODE, newPaceMode.name).apply()
@@ -1564,6 +1566,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         isChallengeTied = false
         isChallengeLost = false
         hasRecordedChallengeOutcome = false
+        soloBestAtRunStart = 0
         gameMode = newMode
         writeGameMode(sharedPrefs, newMode)
         isMatchComplete = false
@@ -1800,6 +1803,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         if (activeChallenge != null) {
             val challenge = activeChallenge!!
             bestScoreBeforeCurrentTry = challenge.bestScore
+            soloBestAtRunStart = 0
             hasPreDeductedCurrentTry = false
             isChallengeWon = false
             isChallengeTied = false
@@ -1837,6 +1841,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 paceMode = PaceMode.CLASSIC
                 isChallengeReadyGateVisible = true
                 hasSharedCurrentRivalRun = false
+                soloBestAtRunStart = 0
+            } else {
+                bestScore = readMigratedBestScore(sharedPrefs, gridSize, paceMode, difficultyMode)
+                soloBestAtRunStart = bestScore
             }
             val newSeed = ChallengeSeed.generateRandomSeed()
             currentRunSeed = newSeed
@@ -1848,6 +1856,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
             roundTrigger++
             gameState = GameState.WATCHING
         } else {
+            soloBestAtRunStart = 0
             soloRng = null
             players.clear()
             players.addAll(List(gameMode.playerCount) { i -> PlayerSlot(i, "P${i + 1}", PLAYER_COLORS[i], isAlive = true, roundsSurvived = 0) })
@@ -2428,6 +2437,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             cachedChallengeReplyCode = null
                             recordedChallengeReplyCode = null
                             isReplyShareInFlight = false
+                            soloBestAtRunStart = 0
                             activeShareSource = ShareSource.FromBoardSelector
                             isMatchComplete = false
                             matchStandings = emptyList()
@@ -2437,8 +2447,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         ChallengeStorage.reconcileOrphanedInProgressChallenges(context)
                         currentScreen = AppScreen.LEADERBOARD
                     },
-                    icon = { Icon(imageVector = Icons.Default.EmojiEvents, contentDescription = "Leaderboard") },
-                    label = { Text("Leaderboard", fontWeight = if (currentScreen == AppScreen.LEADERBOARD) FontWeight.Bold else FontWeight.Medium) },
+                    icon = { Icon(imageVector = Icons.Default.EmojiEvents, contentDescription = "Hall of Fame") },
+                    label = { Text("Hall of Fame", fontWeight = if (currentScreen == AppScreen.LEADERBOARD) FontWeight.Bold else FontWeight.Medium) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Color(0xFF00E5FF),
                         selectedTextColor = Color(0xFF00E5FF),
@@ -2625,6 +2635,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                             Toast.makeText(context, "Finish your round to switch difficulty.", Toast.LENGTH_SHORT).show()
                                         } else {
                                             clearRevengeState()
+                                            soloBestAtRunStart = 0
                                             difficultyMode = newDiff
                                             sharedPrefs.edit().putString(KEY_DIFFICULTY_MODE, newDiff.name).apply()
                                             bestScore = readMigratedBestScore(sharedPrefs, gridSize, paceMode, newDiff)
@@ -2732,6 +2743,9 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             revengeTargetScore = revengeTargetScore,
                             revengeRivalName = currentRivalNameForShare,
                             isChallengeReadyGateVisible = isChallengeReadyGateVisible,
+                            isSoloNewBest = shouldUpdateSoloBest(activeChallenge, isOutboundRivalRun, isRevengeRun, gameMode) &&
+                                soloBestAtRunStart > 0 &&
+                                currentScore > soloBestAtRunStart,
                             onConfirmChallengeReady = ::onChallengeReadyGateDismissed,
                             onWatchMyRound = ::startWatchMyRoundReplay
                         )
@@ -6496,6 +6510,7 @@ private fun StatusBanner(
     revengeTargetScore: Int = 0,
     revengeRivalName: String? = null,
     isChallengeReadyGateVisible: Boolean = false,
+    isSoloNewBest: Boolean = false,
     onConfirmChallengeReady: () -> Unit = {},
     onWatchMyRound: () -> Unit
 ) {
@@ -6563,6 +6578,7 @@ private fun StatusBanner(
             effectiveTarget > 0 && currentScore == effectiveTarget -> "🤝 Target Tied! ($currentScore/$effectiveTarget)"
             else -> "Your Turn!"
         }
+        gameState == GameState.GAME_OVER && isSoloNewBest -> "🏆 New Best: $currentScore!"
         else -> "Game Over!"
     }
     val statusSubtitle = when {

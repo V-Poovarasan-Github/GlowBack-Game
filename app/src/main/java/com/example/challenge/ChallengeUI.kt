@@ -146,15 +146,15 @@ import kotlinx.coroutines.launch
 
 /**
  * ViewModel holding in-memory UI state for the Rivalry tab (v1.1-RIVALRY-UX):
- * - Default-collapsed card sets for RivalCard and AwaitingCard
+ * - Default-expanded card state (stores collapsed card keys) for RivalCard and AwaitingCard
  * - Top-bar search active flag and live query
  */
 class RivalryViewModel : ViewModel() {
-    private val _expandedRivalNames = MutableStateFlow<Set<String>>(emptySet())
-    val expandedRivalNames: StateFlow<Set<String>> = _expandedRivalNames.asStateFlow()
+    private val _collapsedRivalNames = MutableStateFlow<Set<String>>(emptySet())
+    val collapsedRivalNames: StateFlow<Set<String>> = _collapsedRivalNames.asStateFlow()
 
-    private val _expandedAwaitingIds = MutableStateFlow<Set<String>>(emptySet())
-    val expandedAwaitingIds: StateFlow<Set<String>> = _expandedAwaitingIds.asStateFlow()
+    private val _collapsedAwaitingIds = MutableStateFlow<Set<String>>(emptySet())
+    val collapsedAwaitingIds: StateFlow<Set<String>> = _collapsedAwaitingIds.asStateFlow()
 
     private val _isSearchActive = MutableStateFlow(false)
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
@@ -164,14 +164,14 @@ class RivalryViewModel : ViewModel() {
 
     fun toggleRivalExpanded(rivalName: String) {
         val key = rivalName.trim().uppercase()
-        val current = _expandedRivalNames.value
-        _expandedRivalNames.value = if (key in current) current - key else current + key
+        val current = _collapsedRivalNames.value
+        _collapsedRivalNames.value = if (key in current) current - key else current + key
     }
 
     fun toggleAwaitingExpanded(chainId: String) {
         val key = chainId.trim().uppercase()
-        val current = _expandedAwaitingIds.value
-        _expandedAwaitingIds.value = if (key in current) current - key else current + key
+        val current = _collapsedAwaitingIds.value
+        _collapsedAwaitingIds.value = if (key in current) current - key else current + key
     }
 
     fun openSearch() {
@@ -2905,7 +2905,7 @@ fun RivalMatchSetupDialog(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "${rival.lastGrid.uppercase()} • ${if (rival.lastDifficulty == GameDifficulty.HARD) "Hard" else "Easy"} • Classic",
+                                text = "${rival.lastGrid.uppercase().replace('X', '×')} • ${if (rival.lastDifficulty == GameDifficulty.HARD) "Hard" else "Easy"} • Classic",
                                 color = Color.White,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
@@ -3156,8 +3156,8 @@ fun HallOfFameScreen(
 
     val isSearchActive by rivalryViewModel.isSearchActive.collectAsState()
     val searchQuery by rivalryViewModel.searchQuery.collectAsState()
-    val expandedRivalNames by rivalryViewModel.expandedRivalNames.collectAsState()
-    val expandedAwaitingIds by rivalryViewModel.expandedAwaitingIds.collectAsState()
+    val collapsedRivalNames by rivalryViewModel.collapsedRivalNames.collectAsState()
+    val collapsedAwaitingIds by rivalryViewModel.collapsedAwaitingIds.collectAsState()
 
     var rivals by remember(refreshTrigger) {
         ChallengeStorage.sweepExpiredPendingOutbounds(context)
@@ -3415,9 +3415,9 @@ fun HallOfFameScreen(
                     searchQuery = searchQuery,
                     hideActionBar = isSearchActive && isSearchFocused,
                     onClearSearch = { rivalryViewModel.clearSearchQuery() },
-                    expandedRivalNames = expandedRivalNames,
+                    collapsedRivalNames = collapsedRivalNames,
                     onToggleRivalExpand = { rivalName -> rivalryViewModel.toggleRivalExpanded(rivalName) },
-                    expandedAwaitingIds = expandedAwaitingIds,
+                    collapsedAwaitingIds = collapsedAwaitingIds,
                     onToggleAwaitingExpand = { chainId -> rivalryViewModel.toggleAwaitingExpanded(chainId) },
                     onGetRevenge = { rival ->
                         if (rival.lastStatus == "IN_PROGRESS") {
@@ -3534,10 +3534,43 @@ private fun ExpandCollapseTooltipBanner(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val isReducedMotion = rememberIsReducedMotionEnabled()
+    var isBlinking by remember { mutableStateOf(false) }
+    val blinkAlpha = remember { androidx.compose.animation.core.Animatable(0.7f) }
+
+    LaunchedEffect(Unit) {
+        if (ChallengeStorage.shouldBlinkCardExpandTooltip(context)) {
+            ChallengeStorage.markCardExpandTooltipBlinkDone(context)
+            if (!isReducedMotion) {
+                isBlinking = true
+                try {
+                    blinkAlpha.snapTo(1.0f)
+                    repeat(5) {
+                        blinkAlpha.animateTo(
+                            targetValue = 0.3f,
+                            animationSpec = tween(durationMillis = 500, easing = androidx.compose.animation.core.LinearEasing)
+                        )
+                        blinkAlpha.animateTo(
+                            targetValue = 1.0f,
+                            animationSpec = tween(durationMillis = 500, easing = androidx.compose.animation.core.LinearEasing)
+                        )
+                    }
+                } finally {
+                    isBlinking = false
+                    blinkAlpha.snapTo(0.7f)
+                }
+            }
+        }
+    }
+
+    val borderWidth = if (isBlinking) 2.dp else 1.dp
+    val borderAlpha = if (isBlinking) blinkAlpha.value else 0.7f
+
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = Color(0xFF0F172A),
-        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.7f)),
+        border = BorderStroke(borderWidth, Color(0xFF00E5FF).copy(alpha = borderAlpha)),
         modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {}
@@ -3584,9 +3617,9 @@ fun RivalryTabContent(
     searchQuery: String = "",
     hideActionBar: Boolean = false,
     onClearSearch: () -> Unit = {},
-    expandedRivalNames: Set<String> = emptySet(),
+    collapsedRivalNames: Set<String> = emptySet(),
     onToggleRivalExpand: (String) -> Unit = {},
-    expandedAwaitingIds: Set<String> = emptySet(),
+    collapsedAwaitingIds: Set<String> = emptySet(),
     onToggleAwaitingExpand: (String) -> Unit = {},
     onGetRevenge: (RivalRecord) -> Unit,
     onPasteNewCode: (RivalRecord) -> Unit,
@@ -3892,7 +3925,7 @@ fun RivalryTabContent(
                     }
                 } else {
                     items(filteredAwaiting, key = { it.chainId }) { awaiting ->
-                        val isCardExpanded = awaiting.chainId.trim().uppercase() in expandedAwaitingIds
+                        val isCardExpanded = awaiting.chainId.trim().uppercase() !in collapsedAwaitingIds
                         val displayName = awaiting.rivalName?.takeIf {
                             it.isNotBlank() && it.trim().uppercase() in activeRivalNames
                         } ?: "Unknown challenger"
@@ -3947,7 +3980,7 @@ fun RivalryTabContent(
                     }
                 } else {
                     items(filteredRivals, key = { it.name }) { rival ->
-                        val isCardExpanded = rival.name.trim().uppercase() in expandedRivalNames
+                        val isCardExpanded = rival.name.trim().uppercase() !in collapsedRivalNames
                         RivalCard(
                             rival = rival,
                             isExpanded = isCardExpanded,
@@ -4209,7 +4242,7 @@ fun EmptyRivalryState(
 fun AwaitingCard(
     awaiting: AwaitingChallenge,
     displayName: String = "Unknown challenger",
-    isExpanded: Boolean = false,
+    isExpanded: Boolean = true,
     onToggleExpand: () -> Unit = {},
     onPasteReply: () -> Unit = {},
     onCopyAgain: () -> Unit,
@@ -4421,7 +4454,7 @@ fun AwaitingCard(
                     Text(
                         text = if (isExpanded) "▴" else "▾",
                         color = Color(0xFF64748B),
-                        fontSize = 12.sp,
+                        fontSize = 16.sp,
                         modifier = Modifier.testTag("awaiting_chevron_${awaiting.chainId}")
                     )
                     Box {
@@ -4665,7 +4698,7 @@ fun AwaitingCard(
 @Composable
 fun RivalCard(
     rival: RivalRecord,
-    isExpanded: Boolean = false,
+    isExpanded: Boolean = true,
     onToggleExpand: () -> Unit = {},
     onDynamicAction: () -> Unit,
     onPasteNewCode: () -> Unit,
@@ -4926,12 +4959,12 @@ fun RivalCard(
                                         modifier = Modifier
                                             .size(6.dp)
                                             .clip(CircleShape)
-                                            .background(Color(0xFF22C55E))
+                                            .background(Color(0xFF22C55E).copy(alpha = signalPulseAlpha))
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "reply ready",
-                                        color = Color(0xFF22C55E),
+                                        color = Color(0xFF22C55E).copy(alpha = signalPulseAlpha),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1
@@ -4969,7 +5002,7 @@ fun RivalCard(
                     Text(
                         text = if (isExpanded) "▴" else "▾",
                         color = Color(0xFF64748B),
-                        fontSize = 12.sp,
+                        fontSize = 16.sp,
                         modifier = Modifier.testTag("rival_chevron_${rival.name}")
                     )
                     Box {
@@ -5031,7 +5064,7 @@ fun RivalCard(
                 }
             }
 
-            // Scoreline: Wins • Losses • Ties (Matches) + Inline Result Badge (W/L/T) right after text
+            // Scoreline: Wins • Losses • Ties (Matches)
             val totalMatches = maxOf(rival.matches, rival.wins + rival.losses + rival.ties)
             val winsWord = if (rival.wins == 1) "Win" else "Wins"
             val lossesWord = if (rival.losses == 1) "Loss" else "Losses"
@@ -5054,32 +5087,6 @@ fun RivalCard(
                     color = Color(0xFF64748B),
                     fontSize = 11.sp
                 )
-                val badgeSpec: Triple<String, Color, Color>? = when (rival.lastStatus) {
-                    "WON" -> Triple("W", Color(0xFF22C55E), Color(0xFF052E16))
-                    "LOST" -> Triple("L", Color(0xFFEF4444), Color(0xFF450A0A))
-                    "TIED" -> Triple("T", Color(0xFFFACC15), Color(0xFF422006))
-                    else -> null
-                }
-                if (badgeSpec != null) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val (badgeLetter, badgeTextColor, badgeBgColor) = badgeSpec
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = badgeBgColor,
-                        border = BorderStroke(1.dp, badgeTextColor.copy(alpha = 0.55f)),
-                        modifier = Modifier
-                            .semantics(mergeDescendants = true) {}
-                            .testTag("rival_result_badge_${rival.name}")
-                    ) {
-                        Text(
-                            text = badgeLetter,
-                            color = badgeTextColor,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
-                        )
-                    }
-                }
             }
 
             if (isExpanded) {
@@ -5334,10 +5341,11 @@ fun RivalCard(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val formattedLastGrid = rival.lastGrid.uppercase().replace('X', '×')
                             val leftMetaLabel = if (rival.lastStatus == "IN_PROGRESS") {
-                                "Active: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                                "Active: $formattedLastGrid ${rival.lastDifficulty.label}"
                             } else {
-                                "Last: ${rival.lastGrid.uppercase()} ${rival.lastDifficulty.label}"
+                                "Last: $formattedLastGrid ${rival.lastDifficulty.label}"
                             }
                             val rightStatusLabel = if (rival.lastStatus == "IN_PROGRESS") {
                                 val triesPhrase = if (rival.inProgressMaxTries == 0) {

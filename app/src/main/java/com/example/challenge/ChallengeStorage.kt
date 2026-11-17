@@ -26,6 +26,7 @@ object ChallengeStorage {
     private const val KEY_PENDING_SHARE = "pending_share_challenge_json"
     private const val KEY_SENT_RECOMMENDATIONS = "sent_rival_recommendations_v1"
     private const val KEY_SEEN_EXPAND_TOOLTIP = "seen_card_expand_tooltip_v1"
+    private const val KEY_EXPAND_TOOLTIP_BLINK_DONE = "card_expand_tooltip_blink_done_v1"
 
     const val AWAITING_TTL_MS = 3 * 24 * 60 * 60 * 1000L // 3 days (72 hours) UI nudge TTL
     const val CHAIN_TARGET_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days hard expiry for outbound chain targets
@@ -108,6 +109,18 @@ object ChallengeStorage {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_SEEN_EXPAND_TOOLTIP, true)
+            .apply()
+    }
+
+    fun shouldBlinkCardExpandTooltip(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return !prefs.getBoolean(KEY_EXPAND_TOOLTIP_BLINK_DONE, false)
+    }
+
+    fun markCardExpandTooltipBlinkDone(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_EXPAND_TOOLTIP_BLINK_DONE, true)
             .apply()
     }
 
