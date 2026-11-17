@@ -1994,11 +1994,10 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
-        // Verify 3-dot kebab menu on RivalCard replaces old bin icon and opens Clear Rivalry confirmation dialog
+        // Verify expanded RivalCard shows bin icon (no 3-dot kebab menu when expanded) and opens Clear Rivalry confirmation dialog
         composeTestRule.onNodeWithTag("delete_rival_ALEX").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertIsDisplayed().performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_delete_button_ALEX").assertIsDisplayed().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("confirm_clear_rivalry_dialog").assertIsDisplayed()
         composeTestRule.onNodeWithTag("confirm_clear_rivalry_cancel").performClick()
@@ -6959,11 +6958,12 @@ class ExampleRobolectricTest {
             ChallengeStorage.shouldShowCardExpandTooltip(context)
         )
 
-        // 2. Both AwaitingCard and RivalCards default to Expanded stateDescription, show "▴" chevron, and do not merge descendants
+        // 2. Both AwaitingCard and RivalCards default to Expanded stateDescription, display vector chevron (>= 48dp wide), and do not merge descendants
         val awaitingNode = composeTestRule.onNodeWithTag("awaiting_card_AW2").fetchSemanticsNode()
         assertEquals("Expanded", awaitingNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription])
         assertFalse(awaitingNode.config.isMergingSemanticsOfDescendants)
-        composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertTextContains("▴")
+        val awaitingChevronBounds = composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("awaiting_chevron_AW2 width >= 48dp", awaitingChevronBounds.width >= min48Px)
         composeTestRule.onNodeWithTag("paste_reply_awaiting_AW2").assertIsDisplayed()
         composeTestRule.onNodeWithTag("copy_awaiting_AW2").assertIsDisplayed()
 
@@ -6971,7 +6971,8 @@ class ExampleRobolectricTest {
         val royceNode = composeTestRule.onNodeWithTag("rival_card_ROYCE07_").fetchSemanticsNode()
         assertEquals("Expanded", royceNode.config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription])
         assertFalse(royceNode.config.isMergingSemanticsOfDescendants)
-        composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertTextContains("▴")
+        val royceChevronBounds = composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("rival_chevron_ROYCE07_ width >= 48dp", royceChevronBounds.width >= min48Px)
         composeTestRule.onNodeWithTag("rival_dynamic_button_ROYCE07_").assertIsDisplayed()
         composeTestRule.onNodeWithText("1 Win  •  0 Losses  •  0 Ties", substring = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_result_badge_ROYCE07_").assertDoesNotExist()
@@ -6994,7 +6995,24 @@ class ExampleRobolectricTest {
         assertEquals("Status signal 'reply ready' must be on the same row as Rival Name", praveenNameBounds.center.y, praveenReplyReadyBounds.center.y, 6f * density)
         assertEquals("Status signal 'waiting' must be on the same row as Rival Name", praveenNameBounds.center.y, praveenWaitingBounds.center.y, 6f * density)
 
-        // Verify context-aware 3-dot menu: PRAVEEN has pendingOutbounds ("waiting") -> "Paste Reply"; ROYCE07_ does not -> "Paste Code"
+        // Expanded cards show header bin icons (>= 48dp Role.Button) and hide 3-dot kebab buttons
+        for ((cardTag, binTag, menuTag) in listOf(
+            Triple("awaiting_card_AW2", "awaiting_cancel_button_AW2", "awaiting_menu_button_AW2"),
+            Triple("rival_card_ROYCE07_", "rival_delete_button_ROYCE07_", "rival_menu_button_ROYCE07_"),
+            Triple("rival_card_PRAVEEN", "rival_delete_button_PRAVEEN", "rival_menu_button_PRAVEEN")
+        )) {
+            composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag(cardTag))
+            composeTestRule.onNodeWithTag(menuTag).assertDoesNotExist()
+            val binNode = composeTestRule.onNodeWithTag(binTag).assertIsDisplayed().fetchSemanticsNode()
+            assertEquals(androidx.compose.ui.semantics.Role.Button, binNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
+            assertTrue("$binTag width >= 48dp", binNode.boundsInRoot.width >= min48Px)
+            assertTrue("$binTag height >= 48dp", binNode.boundsInRoot.height >= min48Px)
+        }
+
+        // Collapse PRAVEEN and ROYCE07_ to verify context-aware 3-dot menu: PRAVEEN has pendingOutbounds ("waiting") -> "Paste Reply"; ROYCE07_ does not -> "Paste Code"
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_PRAVEEN"))
+        composeTestRule.onNodeWithTag("rival_card_PRAVEEN").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_button_PRAVEEN").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_paste_PRAVEEN").assertIsDisplayed().assertTextContains("Paste Reply")
@@ -7002,24 +7020,38 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ROYCE07_"))
+        composeTestRule.onNodeWithTag("rival_card_ROYCE07_").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_button_ROYCE07_").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_paste_ROYCE07_").assertIsDisplayed().assertTextContains("Paste Code")
         composeTestRule.onNodeWithTag("rival_menu_button_ROYCE07_").performClick()
         composeTestRule.waitForIdle()
 
-        // 4. Verify kebab buttons have Role.Button and >= 48dp touch targets
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("awaiting_card_AW2"))
+        composeTestRule.onNodeWithTag("awaiting_card_AW2").performClick()
+        composeTestRule.waitForIdle()
+
+        // 4. Verify collapsed kebab buttons have Role.Button and >= 48dp touch targets
         for ((cardTag, menuTag) in listOf(
             "awaiting_card_AW2" to "awaiting_menu_button_AW2",
             "rival_card_ROYCE07_" to "rival_menu_button_ROYCE07_",
             "rival_card_PRAVEEN" to "rival_menu_button_PRAVEEN"
         )) {
             composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag(cardTag))
-            val menuNode = composeTestRule.onNodeWithTag(menuTag).fetchSemanticsNode()
+            val menuNode = composeTestRule.onNodeWithTag(menuTag).assertIsDisplayed().fetchSemanticsNode()
             assertEquals(androidx.compose.ui.semantics.Role.Button, menuNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
             assertTrue("$menuTag width >= 48dp", menuNode.boundsInRoot.width >= min48Px)
             assertTrue("$menuTag height >= 48dp", menuNode.boundsInRoot.height >= min48Px)
         }
+
+        // Re-expand AW2 and ROYCE07_ for sections 5 & 6
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("awaiting_card_AW2"))
+        composeTestRule.onNodeWithTag("awaiting_card_AW2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ROYCE07_"))
+        composeTestRule.onNodeWithTag("rival_card_ROYCE07_").performClick()
+        composeTestRule.waitForIdle()
 
         // 5. Tooltip stays visible until X is clicked, Paste Reply Code & Copy Code Again are in ONE side-by-side Row
         composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rivalry_action_bar"))
@@ -7032,7 +7064,7 @@ class ExampleRobolectricTest {
             ChallengeStorage.shouldShowCardExpandTooltip(context)
         )
         composeTestRule.onNodeWithText("Got it — tap any card to expand or collapse.", substring = true).assertIsDisplayed()
-        composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW2").assertIsDisplayed()
         assertEquals(
             "Expanded",
             composeTestRule.onNodeWithTag("awaiting_card_AW2").fetchSemanticsNode()
@@ -7047,10 +7079,10 @@ class ExampleRobolectricTest {
         assertEquals("Top Share button height must match AwaitingCard Paste button height", pasteBounds.height, topShareBounds.height, 2.0f)
         assertEquals("Top Paste button height must match AwaitingCard Copy button height", copyBounds.height, topPasteBounds.height, 2.0f)
 
-        // 6. RivalCard ROYCE07_ is expanded, chevron is "▴", stateDescription = "Expanded", inner controls appear with matching height and compact Reply Copied row
+        // 6. RivalCard ROYCE07_ is expanded, chevron is visible, stateDescription = "Expanded", inner controls appear with matching height and compact Reply Copied row
         composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ROYCE07_"))
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("rival_chevron_ROYCE07_").assertIsDisplayed()
         assertEquals(
             "Expanded",
             composeTestRule.onNodeWithTag("rival_card_ROYCE07_").fetchSemanticsNode()
@@ -7148,12 +7180,15 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("awaiting_card_BCAST1").assertIsDisplayed()
         composeTestRule.onNodeWithTag("awaiting_card_NAMED1").assertDoesNotExist()
 
-        // 1. Delete rival ALEX via kebab menu -> verify "Expand/Collapse" option is removed (Item 3),
+        // 1. Collapse rival ALEX first, then delete via collapsed kebab menu -> verify "Expand/Collapse" option is removed,
         //    Change A reassigns NAMED1 to rivalName = null ("Unknown challenger"),
         //    and displays Snackbar with Undo (SnackbarDuration.Long)
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("rival_menu_toggle_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_menu_action_ALEX").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_menu_paste_ALEX").assertIsDisplayed().assertTextContains("Paste Code")
         composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").performClick()
         composeTestRule.waitForIdle()
@@ -7186,8 +7221,10 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("awaiting_section_header").assertTextContains("AWAITING CHALLENGES (1)")
         composeTestRule.onNodeWithTag("rival_card_ALEX").assertIsDisplayed()
 
-        // 2. Cancel broadcast awaiting challenge BCAST1 via kebab menu -> verify "Expand/Collapse" option is removed (Item 3),
-        //    confirm -> Undo restores BCAST1
+        // 2. Collapse broadcast awaiting challenge BCAST1 first, then cancel via collapsed kebab menu ->
+        //    verify "Expand/Collapse" option is removed, confirm -> Undo restores BCAST1
+        composeTestRule.onNodeWithTag("awaiting_card_BCAST1").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("awaiting_menu_button_BCAST1").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("awaiting_menu_toggle_BCAST1").assertDoesNotExist()
@@ -7617,10 +7654,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
-        // Delete rival ALEX via kebab menu -> removes sent recommendation entry
-        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_menu_delete_ALEX").performClick()
+        // Delete rival ALEX via expanded header bin icon -> removes sent recommendation entry
+        composeTestRule.onNodeWithTag("rival_delete_button_ALEX").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("confirm_clear_rivalry_confirm").performClick()
         composeTestRule.waitForIdle()
@@ -7682,13 +7717,13 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
 
-        // 1. Both AwaitingCard and RivalCard start Expanded with "▴" chevron
+        // 1. Both AwaitingCard and RivalCard start Expanded with real chevron icons
         assertEquals(
             "Expanded",
             composeTestRule.onNodeWithTag("awaiting_card_AW3").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertIsDisplayed()
         composeTestRule.onNodeWithTag("paste_reply_awaiting_AW3").assertIsDisplayed()
 
         assertEquals(
@@ -7696,10 +7731,10 @@ class ExampleRobolectricTest {
             composeTestRule.onNodeWithTag("rival_card_ALEX").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").assertIsDisplayed()
 
-        // 2. First tap collapses both cards -> "Collapsed", "▾", inner buttons hidden
+        // 2. First tap collapses both cards -> "Collapsed", chevron remains visible, inner buttons hidden
         composeTestRule.onNodeWithTag("awaiting_card_AW3").performClick()
         composeTestRule.waitForIdle()
         assertEquals(
@@ -7707,7 +7742,7 @@ class ExampleRobolectricTest {
             composeTestRule.onNodeWithTag("awaiting_card_AW3").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertTextContains("▾")
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertIsDisplayed()
         composeTestRule.onNodeWithTag("paste_reply_awaiting_AW3").assertDoesNotExist()
 
         composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
@@ -7717,10 +7752,10 @@ class ExampleRobolectricTest {
             composeTestRule.onNodeWithTag("rival_card_ALEX").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertTextContains("▾")
+        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").assertDoesNotExist()
 
-        // 3. Second tap expands both cards again -> "Expanded", "▴", inner buttons visible
+        // 3. Second tap expands both cards again -> "Expanded", chevron visible, inner buttons visible
         composeTestRule.onNodeWithTag("awaiting_card_AW3").performClick()
         composeTestRule.waitForIdle()
         assertEquals(
@@ -7728,7 +7763,7 @@ class ExampleRobolectricTest {
             composeTestRule.onNodeWithTag("awaiting_card_AW3").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("awaiting_chevron_AW3").assertIsDisplayed()
         composeTestRule.onNodeWithTag("paste_reply_awaiting_AW3").assertIsDisplayed()
 
         composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
@@ -7738,7 +7773,7 @@ class ExampleRobolectricTest {
             composeTestRule.onNodeWithTag("rival_card_ALEX").fetchSemanticsNode()
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
-        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertTextContains("▴")
+        composeTestRule.onNodeWithTag("rival_chevron_ALEX").assertIsDisplayed()
         composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").assertIsDisplayed()
     }
 
@@ -8046,6 +8081,545 @@ class ExampleRobolectricTest {
             .assertTextContains("Hall of Fame")
         composeTestRule.onNodeWithContentDescription("Hall of Fame", useUnmergedTree = true)
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun rivalCard_expandedShowsBinButton_collapsedShowsKebabButton() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 5,
+                lastUserScore = 6,
+                lastStatus = "WON"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        val binNode = composeTestRule.onNodeWithTag("rival_delete_button_ALEX").assertIsDisplayed().fetchSemanticsNode()
+        assertEquals(androidx.compose.ui.semantics.Role.Button, binNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
+        assertEquals(listOf("Delete rival ALEX"), binNode.config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription])
+        assertTrue(binNode.boundsInRoot.width >= min48Px)
+        assertTrue(binNode.boundsInRoot.height >= min48Px)
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("rival_card_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_delete_button_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").assertIsDisplayed()
+    }
+
+    @Test
+    fun rivalCard_expandedBinButton_opensConfirmDialog_deletesAndUndoRestores() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 2,
+                losses = 1,
+                ties = 0,
+                matches = 3,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 7,
+                lastUserScore = 8,
+                lastStatus = "WON"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Tap bin -> cancel keeps ALEX
+        composeTestRule.onNodeWithTag("rival_delete_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_cancel").performClick()
+        composeTestRule.waitForIdle()
+        assertNotNull(ChallengeStorage.findRivalByName(context, "ALEX"))
+
+        // Tap bin -> confirm deletes ALEX -> Undo restores ALEX
+        composeTestRule.onNodeWithTag("rival_delete_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_clear_rivalry_confirm").performClick()
+        composeTestRule.waitForIdle()
+        assertNull(ChallengeStorage.findRivalByName(context, "ALEX"))
+
+        composeTestRule.onNodeWithText("Undo").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertNotNull(ChallengeStorage.findRivalByName(context, "ALEX"))
+    }
+
+    @Test
+    fun rivalCard_collapsedMenu_showsThreeItemsInOrder_matchesDynamicActionAndRuns() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "LOST_RIVAL",
+                wins = 0,
+                losses = 1,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 7,
+                lastUserScore = 5,
+                lastStatus = "LOST",
+                updatedAt = 5000L
+            )
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "TIED_RIVAL",
+                wins = 0,
+                losses = 0,
+                ties = 1,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 6,
+                lastUserScore = 6,
+                lastStatus = "TIED",
+                updatedAt = 4000L
+            )
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "WON_RIVAL",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 5,
+                lastUserScore = 7,
+                lastStatus = "WON",
+                updatedAt = 3000L
+            )
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "PROG_RIVAL",
+                wins = 0,
+                losses = 0,
+                ties = 0,
+                matches = 0,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 8,
+                lastUserScore = 3,
+                lastStatus = "IN_PROGRESS",
+                inProgressMaxTries = 3,
+                inProgressTriesLeft = 1,
+                updatedAt = 2000L
+            )
+        )
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = ChallengeSeed.formatChallengeCode("2x2", 8, 3, GameDifficulty.EASY, 55555, "PROG_RIVAL", "PRG"),
+                rivalName = "PROG_RIVAL",
+                gridSizeTag = "2x2",
+                targetScore = 8,
+                maxTries = 3,
+                attemptsLeft = 1,
+                bestScore = 3,
+                seed = 55555,
+                difficulty = GameDifficulty.EASY,
+                chainId = "PRG"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val expectedActions = listOf(
+            "LOST_RIVAL" to "⚡ Get Revenge",
+            "TIED_RIVAL" to "🤝 Tie-Breaker",
+            "WON_RIVAL" to "👑 Send Challenge",
+            "PROG_RIVAL" to "▶ Resume (1 left)"
+        )
+
+        for ((name, expectedLabel) in expectedActions) {
+            composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_$name"))
+            composeTestRule.onNodeWithTag("rival_dynamic_button_$name").assertTextContains(expectedLabel)
+            composeTestRule.onNodeWithTag("rival_chevron_$name").performClick()
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithTag("rival_menu_button_$name").performClick()
+            composeTestRule.waitForIdle()
+
+            val actionNode = composeTestRule.onNodeWithTag("rival_menu_action_$name").assertIsDisplayed()
+                .assertTextContains(expectedLabel).fetchSemanticsNode()
+            val pasteNode = composeTestRule.onNodeWithTag("rival_menu_paste_$name").assertIsDisplayed().fetchSemanticsNode()
+            val deleteNode = composeTestRule.onNodeWithTag("rival_menu_delete_$name").assertIsDisplayed().fetchSemanticsNode()
+            assertTrue("action before paste for $name", actionNode.boundsInRoot.top < pasteNode.boundsInRoot.top)
+            assertTrue("paste before delete for $name", pasteNode.boundsInRoot.top < deleteNode.boundsInRoot.top)
+
+            composeTestRule.onNodeWithTag("rival_menu_button_$name").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Tapping collapsed menu action triggers onDynamicAction(): PROG_RIVAL -> Challenge Ready Gate
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_PROG_RIVAL"))
+        composeTestRule.onNodeWithTag("rival_menu_button_PROG_RIVAL").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_action_PROG_RIVAL").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun targetedShareDialog_showsVectorInfoIconAndNoUnicodeGlyph() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putInt("best_2x2_classic_EASY", 10)
+            .putInt("best_seed_2x2_classic_EASY", 12345)
+            .commit()
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 5,
+                lastUserScore = 6,
+                lastStatus = "WON"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("targeted_share_note_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("targeted_share_info_icon", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("ℹ", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun awaitingCard_expandedShowsBinButton_noMenuButton() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            AwaitingChallenge(
+                chainId = "AW1",
+                code = "2x2-6-T3E-HERO-AW1-12345-A",
+                gridSizeTag = "2x2",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        val binNode = composeTestRule.onNodeWithTag("awaiting_cancel_button_AW1").assertIsDisplayed().fetchSemanticsNode()
+        assertEquals(androidx.compose.ui.semantics.Role.Button, binNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
+        assertEquals(listOf("Cancel challenge"), binNode.config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription])
+        assertTrue(binNode.boundsInRoot.width >= min48Px)
+        assertTrue(binNode.boundsInRoot.height >= min48Px)
+        composeTestRule.onNodeWithTag("awaiting_menu_button_AW1").assertDoesNotExist()
+    }
+
+    @Test
+    fun awaitingCard_expandedBinButton_noBackKeepsChallenge_confirmCancelsChallenge() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            AwaitingChallenge(
+                chainId = "AW1",
+                code = "2x2-6-T3E-HERO-AW1-12345-A",
+                gridSizeTag = "2x2",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Tap bin -> No/back keeps challenge untouched
+        composeTestRule.onNodeWithTag("awaiting_cancel_button_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_cancel").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).any { it.chainId == "AW1" })
+        composeTestRule.onNodeWithTag("awaiting_card_AW1").assertIsDisplayed()
+
+        // Tap bin -> Confirm cancels and removes challenge
+        composeTestRule.onNodeWithTag("awaiting_cancel_button_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_confirm").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).none { it.chainId == "AW1" })
+        composeTestRule.onNodeWithTag("awaiting_card_AW1").assertDoesNotExist()
+    }
+
+    @Test
+    fun awaitingCard_collapsedMenu_showsThreeItemsInOrderAndEachWorks() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        val code = "2x2-6-T3E-HERO-AW1-12345-A"
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            AwaitingChallenge(
+                chainId = "AW1",
+                code = code,
+                gridSizeTag = "2x2",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Collapse AwaitingCard -> shows ⋮ button with 3 ordered items
+        composeTestRule.onNodeWithTag("awaiting_card_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_cancel_button_AW1").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("awaiting_menu_button_AW1").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        val copyNode = composeTestRule.onNodeWithTag("awaiting_menu_copy_AW1").assertIsDisplayed().assertTextContains("Copy code again").fetchSemanticsNode()
+        val pasteNode = composeTestRule.onNodeWithTag("awaiting_menu_paste_AW1").assertIsDisplayed().assertTextContains("Paste reply").fetchSemanticsNode()
+        val cancelNode = composeTestRule.onNodeWithTag("awaiting_menu_cancel_AW1").assertIsDisplayed().assertTextContains("Cancel challenge").fetchSemanticsNode()
+        assertTrue("Copy before Paste", copyNode.boundsInRoot.top < pasteNode.boundsInRoot.top)
+        assertTrue("Paste before Cancel", pasteNode.boundsInRoot.top < cancelNode.boundsInRoot.top)
+
+        // 1. Copy code again copies to clipboard
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("clear", ""))
+        composeTestRule.onNodeWithTag("awaiting_menu_copy_AW1").performClick()
+        composeTestRule.waitForIdle()
+        val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        assertTrue("Clipboard should contain awaiting code", clipText.contains(code))
+
+        // 2. Paste reply opens Enter Challenge dialog
+        composeTestRule.onNodeWithTag("awaiting_menu_button_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_menu_paste_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("close_challenge_dialog_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3. Cancel challenge opens confirm dialog and removes AW1
+        composeTestRule.onNodeWithTag("awaiting_menu_button_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_menu_cancel_AW1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_confirm").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).none { it.chainId == "AW1" })
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp")
+    fun chevronTap_togglesExpandedState_and_360dpHeaderTruncatesLongRivalNameWithBadgeSafely() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        val longName = "ALEXANDER_MAXIMUS_CHALLENGER"
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            AwaitingChallenge(
+                chainId = "AWLONG",
+                code = "2x2-6-T3E-HERO-AWLONG-12345-A",
+                gridSizeTag = "2x2",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = longName,
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 6,
+                lastUserScore = 7,
+                lastStatus = "WON",
+                lastReplyCode = "2x2-7-T3E-HERO-RPL-12345-A",
+                isReplySent = false,
+                pendingOutbounds = listOf(
+                    PendingOutboundChallenge(
+                        gridTag = "2x2",
+                        difficulty = GameDifficulty.EASY,
+                        target = 7,
+                        tries = 3,
+                        code = "2x2-7-T3E-HERO-OB1-12345-A",
+                        rivalName = longName,
+                        seed = 12345,
+                        chainId = "OB1"
+                    )
+                )
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+        val min64Px = 64f * density - 0.5f
+
+        // Verify AwaitingCard 360dp header fit & chevron tap toggle (Expanded -> Collapsed -> Expanded)
+        val awCardBounds = composeTestRule.onNodeWithTag("awaiting_card_AWLONG").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val awChevronBounds = composeTestRule.onNodeWithTag("awaiting_chevron_AWLONG").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val awBinBounds = composeTestRule.onNodeWithTag("awaiting_cancel_button_AWLONG").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("awaiting_chevron_AWLONG >= 48dp", awChevronBounds.width >= min48Px)
+        assertTrue("awaiting chevron inside card", awChevronBounds.left >= awCardBounds.left && awChevronBounds.right <= awCardBounds.right + 0.5f)
+        assertTrue("awaiting bin inside card", awBinBounds.left >= awCardBounds.left && awBinBounds.right <= awCardBounds.right + 0.5f)
+        assertTrue("awaiting bin to right of chevron without overlap", awBinBounds.left >= awChevronBounds.right - 0.5f)
+
+        // Tap the awaiting chevron itself -> toggles Expanded -> Collapsed
+        composeTestRule.onNodeWithTag("awaiting_chevron_AWLONG").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Collapsed",
+            composeTestRule.onNodeWithTag("awaiting_card_AWLONG").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        val awMenuBounds = composeTestRule.onNodeWithTag("awaiting_menu_button_AWLONG").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("awaiting collapsed ⋮ inside card", awMenuBounds.right <= awCardBounds.right + 0.5f)
+
+        // Tap chevron again -> Collapsed -> Expanded
+        composeTestRule.onNodeWithTag("awaiting_chevron_AWLONG").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Expanded",
+            composeTestRule.onNodeWithTag("awaiting_card_AWLONG").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+
+        // Verify RivalCard 360dp header fit with long name + reply ready + waiting badges
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_$longName"))
+        val rivalCardBounds = composeTestRule.onNodeWithTag("rival_card_$longName").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val rivalNameNode = composeTestRule.onNodeWithTag("rival_card_name_$longName").assertIsDisplayed()
+        val rivalNameBounds = rivalNameNode.fetchSemanticsNode().boundsInRoot
+        val rivalChevronBounds = composeTestRule.onNodeWithTag("rival_chevron_$longName").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val rivalBinBounds = composeTestRule.onNodeWithTag("rival_delete_button_$longName").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+
+        assertTrue("Long rival name box should keep >= 64dp on 360dp phone (was ${rivalNameBounds.width / density}dp)", rivalNameBounds.width >= min64Px)
+        assertTrue("rival_chevron >= 48dp", rivalChevronBounds.width >= min48Px)
+        assertTrue("rival chevron inside card", rivalChevronBounds.left >= rivalCardBounds.left && rivalChevronBounds.right <= rivalCardBounds.right + 0.5f)
+        assertTrue("rival bin inside card", rivalBinBounds.left >= rivalCardBounds.left && rivalBinBounds.right <= rivalCardBounds.right + 0.5f)
+        assertTrue("rival bin after chevron without overlap", rivalBinBounds.left >= rivalChevronBounds.right - 0.5f)
+        assertTrue("rival name before chevron without overlap", rivalNameBounds.right <= rivalChevronBounds.left + 0.5f)
+
+        // Tap the rival chevron itself -> toggles Expanded -> Collapsed
+        composeTestRule.onNodeWithTag("rival_chevron_$longName").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Collapsed",
+            composeTestRule.onNodeWithTag("rival_card_$longName").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
+        val rivalMenuBounds = composeTestRule.onNodeWithTag("rival_menu_button_$longName").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("rival collapsed ⋮ inside card", rivalMenuBounds.right <= rivalCardBounds.right + 0.5f)
+
+        // Tap rival chevron again -> Collapsed -> Expanded
+        composeTestRule.onNodeWithTag("rival_chevron_$longName").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "Expanded",
+            composeTestRule.onNodeWithTag("rival_card_$longName").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        )
     }
 }
 

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,9 +48,13 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -100,6 +105,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -2147,11 +2153,24 @@ fun ShareTriesSelectorDialog(
                         ) {
                             Row(
                                 modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.Top
                             ) {
-                                Text(text = "ℹ", fontSize = 16.sp, color = Color(0xFF38BDF8))
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f), CircleShape)
+                                        .testTag("targeted_share_info_icon"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Info,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Column {
+                                Column(modifier = Modifier.padding(top = 4.dp)) {
                                     Text(
                                         text = "This code only works for $lockedRivalName.",
                                         color = Color.White,
@@ -4234,8 +4253,91 @@ fun EmptyRivalryState(
     }
 }
 
+private val CardMenuDropdownOffset = DpOffset(x = (-6).dp, y = (-12).dp)
+
+private data class RivalDynamicActionSpec(
+    val label: String,
+    val containerColor: Color,
+    val contentColor: Color
+)
+
+private fun rivalDynamicActionSpec(rival: RivalRecord): RivalDynamicActionSpec {
+    return when (rival.lastStatus) {
+        "IN_PROGRESS" -> {
+            val resumeText = if (rival.inProgressMaxTries == 0) {
+                "▶ Resume Challenge"
+            } else {
+                "▶ Resume (${rival.inProgressTriesLeft} left)"
+            }
+            RivalDynamicActionSpec(resumeText, Color(0xFF00E5FF), Color.Black)
+        }
+        "LOST" -> RivalDynamicActionSpec("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
+        "TIED" -> RivalDynamicActionSpec("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
+        else -> RivalDynamicActionSpec("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
+    }
+}
+
+@Composable
+private fun CardExpandChevron(
+    isExpanded: Boolean,
+    testTag: String
+) {
+    Box(
+        modifier = Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription = null,
+            tint = Color(0xFF94A3B8),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+@Composable
+private fun CardDeleteIconButton(
+    contentDescription: String,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(48.dp)
+            .testTag(testTag)
+            .semantics { role = Role.Button }
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Delete,
+            contentDescription = contentDescription,
+            tint = Color(0xFF94A3B8),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+@Composable
+private fun CardActionDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        offset = CardMenuDropdownOffset,
+        containerColor = Color(0xFF0F172A),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF334155)),
+        content = content
+    )
+}
+
 /**
- * Outbound Awaiting Card with default-collapsed layout, kebab menu, waiting pulse,
+ * Outbound Awaiting Card with default-expanded layout, bin/kebab header action, waiting pulse,
  * and side-by-side [Paste Reply Code | Copy Code Again] row when expanded.
  */
 @Composable
@@ -4447,79 +4549,87 @@ fun AwaitingCard(
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag("awaiting_card_title_${awaiting.chainId}")
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .testTag("awaiting_card_title_${awaiting.chainId}")
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (isExpanded) "▴" else "▾",
-                        color = Color(0xFF64748B),
-                        fontSize = 16.sp,
-                        modifier = Modifier.testTag("awaiting_chevron_${awaiting.chainId}")
+                    CardExpandChevron(
+                        isExpanded = isExpanded,
+                        testTag = "awaiting_chevron_${awaiting.chainId}"
                     )
-                    Box {
-                        IconButton(
-                            onClick = { showMenu = true },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("awaiting_menu_button_${awaiting.chainId}")
-                                .semantics { role = Role.Button }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More options for awaiting challenge",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false },
-                            containerColor = Color(0xFF0F172A)
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "Copy code again",
-                                        color = Color.White,
-                                        fontSize = 13.sp
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    onCopyAgain()
-                                },
-                                modifier = Modifier.testTag("awaiting_menu_copy_${awaiting.chainId}")
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "Paste reply",
-                                        color = Color.White,
-                                        fontSize = 13.sp
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    onPasteReply()
-                                },
-                                modifier = Modifier.testTag("awaiting_menu_paste_${awaiting.chainId}")
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "Cancel challenge",
-                                        color = Color(0xFFEF4444),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    showCancelConfirm = true
-                                },
-                                modifier = Modifier.testTag("awaiting_menu_cancel_${awaiting.chainId}")
-                            )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (isExpanded) {
+                        CardDeleteIconButton(
+                            contentDescription = "Cancel challenge",
+                            testTag = "awaiting_cancel_button_${awaiting.chainId}",
+                            onClick = { showCancelConfirm = true }
+                        )
+                    } else {
+                        Box {
+                            IconButton(
+                                onClick = { showMenu = true },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("awaiting_menu_button_${awaiting.chainId}")
+                                    .semantics { role = Role.Button }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More options for awaiting challenge",
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            CardActionDropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Copy code again",
+                                            color = Color.White,
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onCopyAgain()
+                                    },
+                                    modifier = Modifier.testTag("awaiting_menu_copy_${awaiting.chainId}")
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Paste reply",
+                                            color = Color.White,
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onPasteReply()
+                                    },
+                                    modifier = Modifier.testTag("awaiting_menu_paste_${awaiting.chainId}")
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Cancel challenge",
+                                            color = Color(0xFFEF4444),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        showCancelConfirm = true
+                                    },
+                                    modifier = Modifier.testTag("awaiting_menu_cancel_${awaiting.chainId}")
+                                )
+                            }
                         }
                     }
                 }
@@ -4918,80 +5028,102 @@ fun RivalCard(
                 ) {
                     Text(text = "⚔️", fontSize = 15.sp)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .testTag("rival_card_name_${rival.name}")
-                            .heightIn(min = 48.dp)
-                            .widthIn(min = 48.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(
-                                role = Role.Button,
-                                onClick = { onToggleExpand() }
-                            )
-                            .padding(end = 6.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Text(
-                            text = rival.name,
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                        val availableWidth = maxWidth
+                        val hasSignals = hasUnsentReply || hasPendingOutbound
+                        val reservedNameWidth = 72.dp.coerceAtMost(availableWidth)
+                        val maxSignalsWidth = (availableWidth - reservedNameWidth - 6.dp).coerceAtLeast(0.dp)
 
-                    if (hasUnsentReply || hasPendingOutbound) {
-                        Spacer(modifier = Modifier.width(6.dp))
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (hasUnsentReply) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .semantics(mergeDescendants = true) {}
-                                        .testTag("rival_signal_reply_ready_${rival.name}")
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF22C55E).copy(alpha = signalPulseAlpha))
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .widthIn(min = 64.dp.coerceAtMost(availableWidth))
+                                    .heightIn(min = 48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .testTag("rival_card_name_${rival.name}")
+                                    .clickable(
+                                        role = Role.Button,
+                                        onClick = { onToggleExpand() }
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "reply ready",
-                                        color = Color(0xFF22C55E).copy(alpha = signalPulseAlpha),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1
-                                    )
-                                }
+                                    .padding(end = 6.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = rival.name,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                            if (hasPendingOutbound) {
+
+                            if (hasSignals) {
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Row(
+                                    modifier = Modifier.widthIn(max = maxSignalsWidth),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .semantics(mergeDescendants = true) {}
-                                        .testTag("rival_signal_waiting_${rival.name}")
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFF59E0B).copy(alpha = signalPulseAlpha))
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "waiting",
-                                        color = Color(0xFFF59E0B).copy(alpha = signalPulseAlpha),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1
-                                    )
+                                    if (hasUnsentReply) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .then(
+                                                    if (hasPendingOutbound) Modifier.weight(1f, fill = false) else Modifier
+                                                )
+                                                .semantics(mergeDescendants = true) {}
+                                                .testTag("rival_signal_reply_ready_${rival.name}")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF22C55E).copy(alpha = signalPulseAlpha))
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "reply ready",
+                                                color = Color(0xFF22C55E).copy(alpha = signalPulseAlpha),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    if (hasPendingOutbound) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .then(
+                                                    if (hasUnsentReply) Modifier.weight(1f, fill = false) else Modifier
+                                                )
+                                                .semantics(mergeDescendants = true) {}
+                                                .testTag("rival_signal_waiting_${rival.name}")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFF59E0B).copy(alpha = signalPulseAlpha))
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "waiting",
+                                                color = Color(0xFFF59E0B).copy(alpha = signalPulseAlpha),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4999,66 +5131,88 @@ fun RivalCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (isExpanded) "▴" else "▾",
-                        color = Color(0xFF64748B),
-                        fontSize = 16.sp,
-                        modifier = Modifier.testTag("rival_chevron_${rival.name}")
+                    CardExpandChevron(
+                        isExpanded = isExpanded,
+                        testTag = "rival_chevron_${rival.name}"
                     )
-                    Box {
-                        IconButton(
-                            onClick = { showMenu = true },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("rival_menu_button_${rival.name}")
-                                .semantics { role = Role.Button }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More options for ${rival.name}",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false },
-                            containerColor = Color(0xFF0F172A)
-                        ) {
-                            val pasteMenuLabel = if (hasPendingOutbound) "Paste Reply" else "Paste Code"
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = pasteMenuLabel,
-                                        color = Color.White,
-                                        fontSize = 13.sp
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    if (hasPendingOutbound) {
-                                        (onPasteReplyCode ?: onPasteNewCode).invoke()
-                                    } else {
-                                        onPasteNewCode()
-                                    }
-                                },
-                                modifier = Modifier.testTag("rival_menu_paste_${rival.name}")
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "Delete Rival",
-                                        color = Color(0xFFEF4444),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    showClearConfirm = true
-                                },
-                                modifier = Modifier.testTag("rival_menu_delete_${rival.name}")
-                            )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (isExpanded) {
+                        CardDeleteIconButton(
+                            contentDescription = "Delete rival ${rival.name}",
+                            testTag = "rival_delete_button_${rival.name}",
+                            onClick = { showClearConfirm = true }
+                        )
+                    } else {
+                        Box {
+                            IconButton(
+                                onClick = { showMenu = true },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("rival_menu_button_${rival.name}")
+                                    .semantics { role = Role.Button }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More options for ${rival.name}",
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            CardActionDropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                val dynamicSpec = rivalDynamicActionSpec(rival)
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = dynamicSpec.label,
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onDynamicAction()
+                                    },
+                                    modifier = Modifier.testTag("rival_menu_action_${rival.name}")
+                                )
+                                val pasteMenuLabel = if (hasPendingOutbound) "Paste Reply" else "Paste Code"
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = pasteMenuLabel,
+                                            color = Color.White,
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        if (hasPendingOutbound) {
+                                            (onPasteReplyCode ?: onPasteNewCode).invoke()
+                                        } else {
+                                            onPasteNewCode()
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("rival_menu_paste_${rival.name}")
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Delete Rival",
+                                            color = Color(0xFFEF4444),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        showClearConfirm = true
+                                    },
+                                    modifier = Modifier.testTag("rival_menu_delete_${rival.name}")
+                                )
+                            }
                         }
                     }
                 }
@@ -5539,19 +5693,7 @@ fun RivalCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Dynamic Button
-                        val (buttonLabel, buttonColor, buttonTextColor) = when (rival.lastStatus) {
-                            "IN_PROGRESS" -> {
-                                val resumeText = if (rival.inProgressMaxTries == 0) {
-                                    "▶ Resume Challenge"
-                                } else {
-                                    "▶ Resume (${rival.inProgressTriesLeft} left)"
-                                }
-                                Triple(resumeText, Color(0xFF00E5FF), Color.Black)
-                            }
-                            "LOST" -> Triple("⚡ Get Revenge", Color(0xFFFF0055), Color.White)
-                            "TIED" -> Triple("🤝 Tie-Breaker", Color(0xFFFFD600), Color.Black)
-                            else -> Triple("👑 Send Challenge", Color(0xFF00E5FF), Color.Black)
-                        }
+                        val (buttonLabel, buttonColor, buttonTextColor) = rivalDynamicActionSpec(rival)
 
                         val dynamicInteraction = remember { MutableInteractionSource() }
                         Box(
