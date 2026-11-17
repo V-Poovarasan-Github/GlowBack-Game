@@ -825,7 +825,7 @@
         <button class="step" data-step="5" data-n="5" id="step-tab-5" role="tab" aria-controls="step-screen-5" aria-selected="false"><h3>Your rival plays it</h3><p>They paste the code and play the identical sequence, blind to your run.</p></button>
         <button class="step" data-step="6" data-n="6" id="step-tab-6" role="tab" aria-controls="step-screen-6" aria-selected="false"><h3>After the win</h3><p>Beat the target and the match closes out in your favor, there and then.</p></button>
         <button class="step" data-step="7" data-n="7" id="step-tab-7" role="tab" aria-controls="step-screen-7" aria-selected="false"><h3>Send a reply</h3><p>Their result becomes a reply code, sent back by text, chat, anything.</p></button>
-        <button class="step" data-step="8" data-n="8" id="step-tab-8" role="tab" aria-controls="step-screen-8" aria-selected="false"><h3>It's recorded</h3><p>The rival card updates — win, loss or tie — broken down per grid.</p></button>
+        <button class="step" data-step="8" data-n="8" id="step-tab-8" role="tab" aria-controls="step-screen-8" aria-selected="false"><h3>It's recorded</h3><p>Your Hall of Fame rival card updates with a W, L or T badge and your head-to-head totals. Tap to expand it.</p></button>
         <button class="step" data-step="9" data-n="9" id="step-tab-9" role="tab" aria-controls="step-screen-9" aria-selected="false"><h3>Personal Records</h3><p>Track solo high scores across every grid, pace, and difficulty — plus 2P–4P survival.</p></button>
       </div>
 
@@ -953,17 +953,22 @@
           <div class="screen" data-screen="4" id="step-screen-4" role="tabpanel" aria-labelledby="step-tab-4">
             <div class="app-status-line amber">Game Over · Score 6</div>
             <div class="app-modal-card">
-              <div class="app-modal-head">⚔️ Share Challenge</div>
-              <div style="font-size:9px;color:var(--dim);text-align:center;">4×4 Board · Target 6 · Easy · 3 Tries</div>
-              <div class="app-code-pill">4x4-6-T3E-ALEX-DG9A-Q579D-W</div>
+              <div class="app-modal-head">Share Challenge</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">Sending as: <b style="color:#E2E8F0;">ALEX</b></div>
+              <div style="font-size:9px;color:#E2E8F0;text-align:center;">4×4 Classic · Easy · Score 6</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">How many tries does your friend get?</div>
               <div class="rival-chip-scroll" style="justify-content:center;">
-                <span class="rival-gchip">1 Try</span>
-                <span class="rival-gchip on">3 Tries</span>
-                <span class="rival-gchip">5 Tries</span>
+                <span class="rival-gchip">1</span>
+                <span class="rival-gchip on">3</span>
+                <span class="rival-gchip">5</span>
+                <span class="rival-gchip">Free</span>
               </div>
-              <div class="app-cta cyan" style="margin-top:4px;">Share Challenge Card</div>
+              <div style="display:flex;gap:5px;margin-top:4px;">
+                <div class="app-cta cyan" style="flex:1;margin:0;">Generate Card</div>
+                <div class="app-cta outline" style="flex:1;margin:0;">Copy Code</div>
+              </div>
             </div>
-            <div class="step-progress-pill">STEP 4 OF 9 · MINT T-CODE</div>
+            <div class="step-progress-pill">STEP 4 OF 9 · SHARE CHALLENGE</div>
           </div>
 
           <!-- STEP 5: Your Rival Plays It -->
@@ -980,7 +985,7 @@
 
           <!-- STEP 6: After the Win -->
           <div class="screen" data-screen="6" id="step-screen-6" role="tabpanel" aria-labelledby="step-tab-6">
-            <div class="app-status-line green">🎉 Challenge Won!</div>
+            <div class="app-status-line green">Challenge Won! 🎉</div>
             <div class="app-modal-card" style="border-color:var(--green);">
               <div class="app-modal-head" style="color:var(--green-glow);">You Beat ALEX!</div>
               <div class="app-score-row" style="margin:2px 0;">
@@ -994,46 +999,51 @@
                 </div>
               </div>
               <div style="font-size:9px;color:var(--dim);text-align:center;">1 of 3 tries remaining · Match finalized</div>
-              <div class="app-cta">Send Result to ALEX</div>
+              <div class="app-cta">Copy Reply Code</div>
             </div>
             <div class="step-progress-pill">STEP 6 OF 9 · VICTORY</div>
           </div>
 
           <!-- STEP 7: Send a Reply -->
           <div class="screen" data-screen="7" id="step-screen-7" role="tabpanel" aria-labelledby="step-tab-7">
-            <div class="app-status-line">Reply Code Minted</div>
+            <div class="app-status-line">Reply Code Ready</div>
             <div class="app-modal-card" style="border-color:var(--cyan);">
-              <div class="app-modal-head">Send Reply to ALEX</div>
-              <div style="font-size:9px;color:var(--dim);text-align:center;">Encodes your winning score (7) on chain DG9A</div>
+              <div class="app-modal-head">Share reply code with ALEX</div>
+              <div style="font-size:9px;color:var(--dim);text-align:center;">Copied to your clipboard first · encodes your score (7)</div>
               <div class="app-code-pill">4x4-7-R3E-HERO-DG9A-Q579D-V</div>
-              <div class="app-cta cyan">✓ Reply Copied · Share Card</div>
+              <div class="app-cta cyan">✓ Copied!</div>
             </div>
-            <div class="step-progress-pill">STEP 7 OF 9 · REPLY R-CODE</div>
+            <div class="step-progress-pill">STEP 7 OF 9 · REPLY CODE</div>
           </div>
 
           <!-- STEP 8: It's Recorded (Rivalry Tab) -->
           <div class="screen" data-screen="8" id="step-screen-8" role="tabpanel" aria-labelledby="step-tab-8">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0 2px 4px;">
+              <span style="font-weight:900;font-size:12px;color:#fff;letter-spacing:.02em;">HALL OF FAME</span>
+              <span style="font-size:11px;color:var(--dim);" aria-hidden="true">🔍</span>
+            </div>
             <div class="hof-tabs">
               <span class="hof-tab on">⚔️ RIVALRY</span>
               <span class="hof-tab">🏆 RECORDS</span>
             </div>
             <div class="rival-card-ui">
               <div class="rival-head-row">
-                <span class="rival-callsign">ALEX</span>
-                <span class="rival-wlt">3W – 1L – 0T</span>
+                <span class="rival-callsign">⚔️ ALEX</span>
+                <span style="font-size:9px;color:var(--dim);">⌄ &nbsp;⋮</span>
               </div>
-              <div class="rival-chip-scroll">
-                <span class="rival-gchip">2×2: 1W-0L</span>
-                <span class="rival-gchip">3×3: 1W-0L</span>
-                <span class="rival-gchip on">4×4: 1W-1L</span>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span style="font-size:9px;color:#CBD5E1;font-weight:600;">3 Wins • 1 Loss • 0 Ties <span style="color:var(--dim);font-weight:400;">(4 matches)</span></span>
+                <span style="background:#052E16;border:1px solid rgba(34,197,94,.55);color:#22C55E;font-weight:800;font-size:9px;padding:1px 6px;border-radius:8px;">W</span>
               </div>
-              <div style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;">
-                <span>Last: 4×4 · Easy</span>
-                <span style="color:var(--green-glow);font-weight:700;">WON 7 vs 6</span>
-              </div>
-              <div class="app-cta outline" style="padding:5px;font-size:9.5px;">⚔️ New Challenge vs ALEX</div>
             </div>
-            <div class="step-progress-pill">STEP 8 OF 9 · RIVAL CARD UPDATED</div>
+            <div class="rival-card-ui">
+              <div class="rival-head-row">
+                <span class="rival-callsign">⚔️ MAYA <span style="font-size:9px;color:var(--amber-glow);font-weight:600;">● waiting</span></span>
+                <span style="font-size:9px;color:var(--dim);">⌄ &nbsp;⋮</span>
+              </div>
+              <div style="font-size:9px;color:#CBD5E1;font-weight:600;">1 Win • 1 Loss • 1 Tie <span style="color:var(--dim);font-weight:400;">(3 matches)</span></div>
+            </div>
+            <div class="step-progress-pill">STEP 8 OF 9 · HALL OF FAME</div>
           </div>
 
           <!-- STEP 9: Personal Records (Real RecordsTabContent UI: Mode Selector + Grid Chips + 4 Score Cards) -->
