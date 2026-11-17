@@ -1540,10 +1540,11 @@
       if(!document.startViewTransition||calm){ paint(next); return; }
       var r=btn.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
       var rad=Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y));
+      btn.animate({boxShadow:['0 0 0 0 rgba(0,229,255,.55)','0 0 0 14px rgba(0,229,255,0)']},{duration:700,easing:'ease-out'});
       var vt=document.startViewTransition(function(){ paint(next); });
       vt.ready.then(function(){
-        root.animate({clipPath:['circle(0px at '+x+'px '+y+'px)','circle('+rad+'px at '+x+'px '+y+'px)']},
-          {duration:750,easing:'cubic-bezier(.22,.7,.2,1)',pseudoElement:'::view-transition-new(root)'});
+        root.animate({clipPath:['circle(16px at '+x+'px '+y+'px)','circle('+rad+'px at '+x+'px '+y+'px)']},
+          {duration: 950, easing: 'cubic-bezier(.45,.05,.35,1)',pseudoElement:'::view-transition-new(root)'});
       }).catch(function(){});
     });
   })();
