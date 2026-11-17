@@ -709,6 +709,31 @@
   .foot-links a:hover{ color: var(--paper); }
   .foot-note{ color: var(--dim-2); font-size: 13px; margin-top: 18px; }
 
+  /* ---------- autoplay switch ---------- */
+  .autoplay-row{ display:flex; justify-content:center; margin-top: 14px; }
+  .autoplay-row.flow-row{ margin: -22px 0 30px; }
+  .autoplay-toggle{
+    display:inline-flex; align-items:center; gap:9px;
+    background: rgba(14,21,39,0.75); color: var(--dim);
+    border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 7px 13px 7px 9px;
+    font: 600 12.5px/1 var(--font-body);
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .autoplay-toggle:hover{ border-color: var(--dim); }
+  .autoplay-toggle .track{
+    position:relative; width: 30px; height: 18px; border-radius: 999px;
+    background: rgba(148,163,184,0.28); transition: background .15s ease; flex-shrink:0;
+  }
+  .autoplay-toggle .track::after{
+    content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%;
+    background:#CBD5E1; transition: transform .15s ease, background .15s ease;
+  }
+  .autoplay-toggle[aria-pressed="true"]{ color: var(--paper); border-color: rgba(0,229,255,0.45); }
+  .autoplay-toggle[aria-pressed="true"] .track{ background: var(--cyan); }
+  .autoplay-toggle[aria-pressed="true"] .track::after{ transform: translateX(12px); background:#04141A; }
+  .autoplay-toggle .ap-state{ min-width: 20px; text-align:left; }
+
   /* ---------- reduced motion ---------- */
   @media (prefers-reduced-motion: reduce){
     html{ scroll-behavior: auto; }
@@ -768,6 +793,7 @@
           <button type="button" class="pad c3" data-c="3" aria-label="Blue pad (diamond)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2.5 L21.5 12 L12 21.5 L2.5 12 Z"/></svg></button>
         </div>
         <p class="demo-caption" id="heroCaption">Round 1 of 9 — watch carefully…</p>
+        <div class="autoplay-row"><button type="button" class="autoplay-toggle js-autoplay" aria-pressed="true"><span class="track" aria-hidden="true"></span><span class="ap-label">Autoplay</span><span class="ap-state" aria-hidden="true">On</span></button></div>
       </div>
     </div>
   </section>
@@ -779,6 +805,8 @@
       <h2>Every challenge is nine small steps, all of them offline.</h2>
       <p>This is the actual path a rivalry takes in the app — from opening the game, to a reply code landing back in your Hall of Fame.</p>
     </div>
+
+    <div class="autoplay-row flow-row"><button type="button" class="autoplay-toggle js-autoplay" aria-pressed="true"><span class="track" aria-hidden="true"></span><span class="ap-label">Autoplay</span><span class="ap-state" aria-hidden="true">On</span></button></div>
 
     <div class="flow">
       <div class="steps" id="stepList" role="tablist" aria-label="Walkthrough steps">
@@ -1178,11 +1206,29 @@
 
 <script>
 (function(){
-  // Respect the OS "reduce motion" setting: no auto-play, click-driven only.
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var hasObserver = 'IntersectionObserver' in window;
 
-  // ---- 1. Standalone 2x2 Hero Pads: auto-runs while visible (unless reduced motion) ----
+  // ---- Autoplay preference ----
+  // Default is On, unless the OS asks for reduced motion. The visitor's own choice (the
+  // Autoplay switch) wins over that default and is remembered in this browser.
+  var STORE_KEY = 'glowback-autoplay';
+  var autoplay = !reduceMotion;
+  try {
+    var saved = window.localStorage.getItem(STORE_KEY);
+    if(saved === 'on') autoplay = true;
+    else if(saved === 'off') autoplay = false;
+  } catch(e){}
+  var toggles = Array.prototype.slice.call(document.querySelectorAll('.js-autoplay'));
+  function renderToggles(){
+    toggles.forEach(function(t){
+      t.setAttribute('aria-pressed', autoplay ? 'true' : 'false');
+      var st = t.querySelector('.ap-state');
+      if(st) st.textContent = autoplay ? 'On' : 'Off';
+    });
+  }
+
+  // ---- 1. Standalone 2x2 Hero Pads: auto-runs while visible and Autoplay is on ----
   var pads = Array.prototype.slice.call(document.querySelectorAll('#heroGrid .pad'));
   var caption = document.getElementById('heroCaption');
   var stepBadge = document.getElementById('heroStepBadge');
@@ -1205,28 +1251,33 @@
 
   var heroVisible = true;
   var heroActive = false;
+  var heroToken = 0; // bumped on stop so any in-flight timers from the old run bail out
 
   function playHeroRound(){
-    if(reduceMotion || !heroVisible){
+    if(!autoplay || !heroVisible){
       heroActive = false;
       return;
     }
     heroActive = true;
+    var token = heroToken;
     var seq = full.slice(0, currentStep);
     if(stepBadge) stepBadge.textContent = 'STEP ' + currentStep + ' / 9';
     if(caption) caption.textContent = 'Round ' + currentStep + ' of 9 — watch carefully…';
     var i = 0;
     var interval = 420;
     function tick(){
+      if(token !== heroToken) return;
       if(i > 0) lightPad(seq[i-1], false);
       if(i >= seq.length){
         currentStep = currentStep >= 9 ? 1 : currentStep + 1;
-        setTimeout(playHeroRound, 820);
+        setTimeout(function(){ if(token === heroToken) playHeroRound(); }, 820);
         return;
       }
-      lightPad(seq[i], true);
+      var cur = seq[i];
+      lightPad(cur, true);
       setTimeout(function(){
-        lightPad(seq[i], false);
+        if(token !== heroToken) return;
+        lightPad(cur, false);
         setTimeout(tick, 85);
       }, interval - 85);
       i++;
@@ -1234,19 +1285,29 @@
     tick();
   }
 
-  var heroStage = document.querySelector('.demo-stage');
-  if(reduceMotion){
-    if(caption) caption.textContent = 'Auto-play is off (reduced motion) — tap any pad to light it.';
-  } else if(hasObserver && heroStage){
-    new IntersectionObserver(function(entries){
-      heroVisible = entries[0].isIntersecting;
-      if(heroVisible && !heroActive) playHeroRound();
-    }, { threshold: 0.15 }).observe(heroStage);
-  } else {
-    playHeroRound();
+  function heroStart(){
+    if(autoplay && heroVisible && !heroActive) playHeroRound();
+  }
+  function heroStop(){
+    heroToken++;
+    heroActive = false;
+    pads.forEach(function(_, idx){ lightPad(idx, false); });
+  }
+  function setHeroIdleCaption(){
+    if(caption) caption.textContent = 'Autoplay is off — tap any pad to light it.';
   }
 
-  // ---- 2. How It Works (Steps 1 to 9 inside the Phone App UI Replica): auto-runs while visible ----
+  var heroStage = document.querySelector('.demo-stage');
+  if(hasObserver && heroStage){
+    new IntersectionObserver(function(entries){
+      heroVisible = entries[0].isIntersecting;
+      if(heroVisible) heroStart();
+    }, { threshold: 0.15 }).observe(heroStage);
+  } else {
+    heroStart();
+  }
+
+  // ---- 2. How It Works (Steps 1 to 9 inside the Phone App UI Replica): auto-runs while visible and Autoplay is on ----
   var stepBtns = Array.prototype.slice.call(document.querySelectorAll('.step'));
   var screens = Array.prototype.slice.call(document.querySelectorAll('.screen'));
   var bnavHome = document.getElementById('bnavHome');
@@ -1271,15 +1332,19 @@
 
   var flowVisible = true;
   var flowEl = document.querySelector('.flow');
-  if(!reduceMotion && hasObserver && flowEl){
+  if(hasObserver && flowEl){
     new IntersectionObserver(function(entries){
       flowVisible = entries[0].isIntersecting;
     }, { threshold: 0.1 }).observe(flowEl);
   }
 
-  function startAuto(){
-    if(reduceMotion) return;
+  function stopAuto(){
     clearInterval(autoTimer);
+    autoTimer = null;
+  }
+  function startAuto(){
+    stopAuto();
+    if(!autoplay) return;
     autoTimer = setInterval(function(){
       if(!flowVisible) return;
       var current = document.querySelector('.step.active');
@@ -1305,6 +1370,26 @@
     });
   });
 
+  // ---- Autoplay switch (both copies stay in sync) ----
+  function setAutoplay(on){
+    autoplay = on;
+    try { window.localStorage.setItem(STORE_KEY, on ? 'on' : 'off'); } catch(e){}
+    renderToggles();
+    if(on){
+      heroStart();
+      startAuto();
+    } else {
+      heroStop();
+      stopAuto();
+      setHeroIdleCaption();
+    }
+  }
+  toggles.forEach(function(t){
+    t.addEventListener('click', function(){ setAutoplay(!autoplay); });
+  });
+
+  renderToggles();
+  if(!autoplay) setHeroIdleCaption();
   startAuto();
 })();
 </script>
