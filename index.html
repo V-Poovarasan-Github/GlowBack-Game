@@ -183,7 +183,17 @@
     .wordmark{ font-size: 14px; min-width:0; }
     .wordmark .logo-img{ width:24px; height:24px; }
   }
-  @media (max-width: 400px){ .navcta a[href$="/GlowBack-Game"]{ display:none; } }
+  @media (max-width: 560px){
+    .navcta .btn-primary, .navcta a[href*="github.com"]{ display:none; }   /* phones: just logo, theme and home. Download is in the hero, Source in the footer */
+    .nav{ gap: 14px; }
+    .navcta .theme-btn{ width: 32px; height: 32px; flex-shrink: 0; }
+  }
+  @media (max-width: 360px){
+    .nav{ gap: 8px; }
+    .navcta{ gap: 5px; }
+    .navcta .btn-sm{ padding: 7px 8px; font-size: 11.5px; }
+    .wordmark{ font-size: 13px; }
+  }
 
   .btn{
     display:inline-flex; align-items:center; justify-content:center; gap:8px;

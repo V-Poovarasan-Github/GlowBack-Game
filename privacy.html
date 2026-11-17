@@ -92,7 +92,7 @@
   .backlink:hover{ color: var(--paper); }
   .nav-right{ display:flex; align-items:center; gap:18px; }
   .nav-right a{ display:inline-flex; align-items:center; white-space:nowrap; }
-  @media (max-width: 560px){ .nav-right{ gap:14px; } .backlink{ font-size:13px; } .hide-sm{ display:none !important; } }
+  @media (max-width: 560px){ .nav-right{ gap:14px; } .backlink{ font-size:13px; } .hide-sm{ display:none !important; } .nav-right a.backlink:not(:first-of-type){ display:none; } .nav-right{ gap:12px; } }
 
   main{ padding: 56px 0 72px; }
   h1{ font-family: var(--font-display); font-size: clamp(30px, 5vw, 42px); letter-spacing: -0.015em; margin: 0 0 6px; }
