@@ -4591,7 +4591,9 @@ fun AwaitingCard(
                                         Text(
                                             text = "Copy code again",
                                             color = Color.White,
-                                            fontSize = 13.sp
+                                            fontSize = 13.sp,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
@@ -4605,7 +4607,9 @@ fun AwaitingCard(
                                         Text(
                                             text = "Paste reply",
                                             color = Color.White,
-                                            fontSize = 13.sp
+                                            fontSize = 13.sp,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
@@ -4620,7 +4624,9 @@ fun AwaitingCard(
                                             text = "Cancel challenge",
                                             color = Color(0xFFEF4444),
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.SemiBold,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
@@ -5169,7 +5175,9 @@ fun RivalCard(
                                             text = dynamicSpec.label,
                                             color = Color.White,
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.SemiBold,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
@@ -5184,7 +5192,9 @@ fun RivalCard(
                                         Text(
                                             text = pasteMenuLabel,
                                             color = Color.White,
-                                            fontSize = 13.sp
+                                            fontSize = 13.sp,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
@@ -5203,7 +5213,9 @@ fun RivalCard(
                                             text = "Delete Rival",
                                             color = Color(0xFFEF4444),
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.SemiBold,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     onClick = {
