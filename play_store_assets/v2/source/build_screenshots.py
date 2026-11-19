@@ -32,7 +32,7 @@ def build_bands(item, tpl_b):
         if i:
             lines.append(f'<line x1="0" y1="{y+S}" x2="{W}" y2="{y-S}" stroke="#F4F7FB" stroke-width="7" stroke-linecap="round" style="filter:drop-shadow(0 0 14px rgba(0,229,255,.9))"/>')
         if pnl.get("label"):
-            ptop = (y + int(S * 0.93) - 30) if i else (y + S + 14)   # sits on the diagonal seam
+            ptop = (y + S + 4) if i else (y + 4)      # top-left corner of its band, in the slant gap
             pills.append(f'<div class="pill" style="top:{ptop}px;background:{pnl.get("color","#00E5FF")}">{pnl["label"]}</div>')
     return (tpl_b.replace("{{CAPTION}}", item["caption"]).replace("{{SUB}}", item["sub"])
             .replace("{{BANDS}}", "".join(bands)).replace("{{LINES}}", "".join(lines)).replace("{{PILLS}}", "".join(pills)))

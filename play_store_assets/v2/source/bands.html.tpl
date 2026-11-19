@@ -12,7 +12,7 @@ p{margin-top:26px;font-size:40px;font-weight:500;color:#94A3B8}
 .band{position:absolute;left:0;width:1080px;overflow:hidden;background:#0A1020}
 .band img{position:absolute;left:0;width:1080px;height:auto;display:block}
 svg.lines{position:absolute;left:0;top:0;width:1080px;height:1920px;pointer-events:none}
-.pill{position:absolute;left:44px;font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:34px;letter-spacing:1px;color:#05080F;padding:10px 26px;border-radius:999px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.pill{position:absolute;left:44px;font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:28px;letter-spacing:1px;color:#05080F;padding:7px 22px;border-radius:999px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
 </style></head><body><div class="stage">
 <div class="cap"><h1>{{CAPTION}}</h1><p>{{SUB}}</p></div>
 {{BANDS}}
