@@ -2309,38 +2309,52 @@ fun ShareTriesSelectorDialog(
                             itemsIndexed(boardOptions) { idx, opt ->
                                 val isChosen = selectedBoardIndex == idx
                                 val diffText = if (opt.difficulty == GameDifficulty.HARD) "Hard" else "Easy"
-                                Surface(
-                                    onClick = { selectedBoardIndex = idx },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (isChosen) Color(0xFF0284C7).copy(alpha = 0.45f) else Color(0xFF1E293B),
-                                    border = BorderStroke(1.dp, if (isChosen) Color(0xFF00E5FF) else Color(0xFF334155)),
+                                val chipInteraction = remember { MutableInteractionSource() }
+                                Box(
                                     modifier = Modifier
                                         .testTag("board_option_$idx")
                                         .minimumInteractiveComponentSize()
                                         .heightIn(min = 48.dp)
+                                        .clickable(
+                                            interactionSource = chipInteraction,
+                                            indication = null,
+                                            role = Role.RadioButton,
+                                            onClick = { selectedBoardIndex = idx }
+                                        )
                                         .semantics {
-                                            role = Role.RadioButton
                                             selected = isChosen
                                             stateDescription = if (isChosen) "Selected" else "Not selected"
-                                        }
+                                        },
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isChosen) Color(0xFF0284C7).copy(alpha = 0.45f) else Color(0xFF1E293B),
+                                        border = BorderStroke(1.dp, if (isChosen) Color(0xFF00E5FF) else Color(0xFF334155)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .indication(chipInteraction, ripple())
                                     ) {
-                                        Text(
-                                            text = "${opt.gridTag} ${opt.paceName} · $diffText",
-                                            color = if (isChosen) Color.White else Color(0xFF94A3B8),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            text = "${opt.score}",
-                                            color = Color(0xFFFFD600),
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.ExtraBold
-                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .heightIn(min = 36.dp)
+                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "${opt.gridTag} ${opt.paceName} · $diffText",
+                                                color = if (isChosen) Color.White else Color(0xFF94A3B8),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Text(
+                                                text = "${opt.score}",
+                                                color = Color(0xFFFFD600),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                        }
                                     }
                                 }
                             }
