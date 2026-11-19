@@ -3,42 +3,49 @@
     "file": "01_hero",
     "raw": "01_gameplay.png",
     "caption": "Watch the <em>glow.</em><br>Send it back.",
-    "sub": "Memorize the pattern. Repeat it perfectly."
+    "sub": "Memorize the pattern. Repeat it perfectly.",
+    "anchor": "top"
   },
   {
     "file": "02_difficulty",
-    "raw": "02_setup.png",
-    "caption": "Choose your <em>difficulty</em>",
-    "sub": "4 grid sizes · Easy or Hard"
+    "raw": "07_offline.png",
+    "caption": "Pick your grid.<br>Pick your <em>fight.</em>",
+    "sub": "4 grid sizes · Easy or Hard",
+    "anchor": "top"
   },
   {
     "file": "03_challenge",
     "raw": "03_share.png",
-    "caption": "Challenge a friend<br>with a <em>text code</em>",
-    "sub": "No accounts. No sign-up."
+    "caption": "<em>Dare</em> a friend<br>with one code.",
+    "sub": "No accounts. No sign-up.",
+    "anchor": "bottom"
   },
   {
     "file": "04_defend",
     "raw": "04_hall_of_fame.png",
-    "caption": "<em>Defend</em> your score",
-    "sub": "Track every rival, win and loss"
+    "caption": "<em>Defend</em> your score.",
+    "sub": "Every rival, every win, every loss",
+    "anchor": "top"
   },
   {
     "file": "05_revenge",
     "raw": "05_revenge.png",
-    "caption": "Lost a round?<br>Take your <em>revenge</em>",
-    "sub": "One tap to rematch"
+    "caption": "Lost a round?<br>Take <em>revenge.</em>",
+    "sub": "One tap to rematch",
+    "anchor": "top"
   },
   {
     "file": "06_records",
     "raw": "06_records.png",
-    "caption": "Chase your<br><em>personal best</em>",
-    "sub": "Records for every grid and mode"
+    "caption": "Beat your<br>own <em>best.</em>",
+    "sub": "A record for every grid and mode",
+    "anchor": "top"
   },
   {
     "file": "07_offline",
-    "raw": "07_offline.png",
-    "caption": "Fully <em>offline.</em><br>Zero ads.",
-    "sub": "No internet needed, ever"
+    "raw": "02_setup.png",
+    "caption": "No Wi-Fi?<br>No <em>problem.</em>",
+    "sub": "Fully offline · Zero ads",
+    "anchor": "top"
   }
 ]

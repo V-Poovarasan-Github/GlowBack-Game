@@ -14,10 +14,10 @@ html,body{width:1080px;height:1920px;overflow:hidden;background:#05080F}
 h1{font-size:104px;line-height:1.04;font-weight:700;color:#F4F7FB;letter-spacing:-2px}
 h1 em{font-style:normal;color:#00E5FF;text-shadow:0 0 38px rgba(0,229,255,.55)}
 p{margin-top:26px;font-size:40px;font-weight:500;color:#94A3B8;letter-spacing:.2px}
-.phone{position:absolute;left:50%;transform:translateX(-50%);bottom:{{BOTTOM}}px;height:{{PH}}px;width:{{PW}}px;border-radius:84px;padding:16px;
-  background:linear-gradient(160deg,#1b2540,#0a0f1d);border:2px solid rgba(148,163,184,.28);
-  box-shadow:0 50px 120px rgba(0,0,0,.65),0 0 140px rgba(0,229,255,.16)}
-.phone img{width:100%;height:100%;object-fit:cover;object-position:top;border-radius:68px;display:block;background:#0A1020}
+.phone{position:absolute;left:50%;transform:translateX(-50%);top:{{TOP}}px;height:{{PH}}px;width:{{PW}}px;border-radius:84px 84px 0 0;padding:16px 16px 0;
+  background:linear-gradient(160deg,#1b2540,#0a0f1d);border:2px solid rgba(148,163,184,.28);border-bottom:0;
+  box-shadow:0 -10px 120px rgba(0,229,255,.18),0 50px 120px rgba(0,0,0,.6)}
+.phone img{width:100%;height:100%;object-fit:cover;object-position:{{ANCHOR}};border-radius:68px 68px 0 0;display:block;background:#0A1020}
 </style></head><body><div class="stage">
 <div class="cap"><h1>{{CAPTION}}</h1><p>{{SUB}}</p></div>
 <div class="phone"><img src="{{IMG}}"></div></div></body></html>
