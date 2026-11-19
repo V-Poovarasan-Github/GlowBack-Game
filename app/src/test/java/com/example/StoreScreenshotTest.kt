@@ -12,13 +12,18 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ApplicationProvider
 import com.example.challenge.AwaitingChallenge
 import com.example.challenge.ChallengeSeed
@@ -935,5 +940,295 @@ class StoreScreenshotTest {
 
         val bitmap = captureActivityBitmap()
         saveAndVerifyPng(bitmap, "07_offline.png")
+    }
+
+    /**
+     * Launches a real incoming 3x3 Easy 1-try challenge from ARJUN (target 6, fixed seed)
+     * through the real Hall of Fame "Paste Code" -> EnterChallengeDialog flow, plays
+     * [roundsToClear] rounds cleanly at normal animation speed (ANIMATOR_DURATION_SCALE = 1.0f),
+     * handles VictoryDecisionDialog when beating the target, and intentionally misses on the
+     * following round so the app transitions naturally to the real Game Over screen.
+     */
+    private fun launchAndPlayIncomingArjunChallenge(
+        roundsToClear: Int,
+        expectVictoryDecisionAfterRound: Int? = null
+    ) {
+        val targetScore = 6
+        val fixedSeed = 2589247
+        val challengeCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = targetScore,
+            tries = 1,
+            difficulty = GameDifficulty.EASY,
+            seed = fixedSeed,
+            senderName = "ARJUN",
+            chainId = "A4K9",
+            isRevenge = false
+        )
+
+        // Keep ANIMATOR_DURATION_SCALE = 1.0f (normal animations) for gameplay result shots.
+        dismissOnboardingIfVisible()
+
+        // Navigate to Hall of Fame -> Paste Code -> EnterChallengeDialog.
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextReplacement(challengeCode)
+        composeTestRule.waitForIdle()
+
+        // Pause clock so we control the 150ms submit flash + challenge playback deterministically.
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(400L)
+
+        // Dismiss the Ready vs ARJUN gate to start Round 1 WATCHING.
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed().performClick()
+        composeTestRule.mainClock.advanceTimeBy(1400L) // Round 1 WATCHING (450 + 600 = 1050ms) -> PLAYING
+
+        val pads = padsForGridSize(GridSize.THREE_BY_THREE)
+        val failRound = roundsToClear + 1
+        val fullSequence = ChallengeSeed.generateSequenceForRound(
+            seed = fixedSeed,
+            padCount = pads.size,
+            difficulty = GameDifficulty.EASY,
+            round = failRound
+        )
+
+        for (round in 1..roundsToClear) {
+            composeTestRule.onNodeWithTag(pads[0].testTagId).assertIsEnabled()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads[fullSequence[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(200L)
+            }
+
+            if (expectVictoryDecisionAfterRound != null && round == expectVictoryDecisionAfterRound) {
+                // VictoryDecisionDialog opens immediately when beating targetScore; tap "Keep Playing"
+                // so the player finishes on the real Game Over screen showing "Challenge Won! 🎉".
+                composeTestRule.mainClock.advanceTimeBy(200L)
+                composeTestRule.onNodeWithTag("victory_decision_dialog").assertIsDisplayed()
+                composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+                // Advance past celebration (640ms) + next round WATCHING (450 + (round+1)*600).
+                val nextWatchingMs = 640L + 450L + (round + 1) * 600L + 350L
+                composeTestRule.mainClock.advanceTimeBy(nextWatchingMs)
+            } else {
+                val nextWatchingMs = 640L + 450L + (round + 1) * 600L + 250L
+                composeTestRule.mainClock.advanceTimeBy(nextWatchingMs)
+            }
+        }
+
+        // Now in failRound PLAYING: deliberately tap a wrong pad to conclude the 1-try duel.
+        composeTestRule.onNodeWithTag(pads[0].testTagId).assertIsEnabled()
+        val wrongPadIdx = (fullSequence[0] + 1) % pads.size
+        composeTestRule.onNodeWithTag(pads[wrongPadIdx].testTagId).performClick()
+
+        // Settle wrong-pad shake, red flash, and banner accent color transition completely.
+        repeat(80) {
+            composeTestRule.mainClock.advanceTimeBy(16L)
+        }
+    }
+
+    @Test
+    fun render_08_waiting() {
+        dismissOnboardingIfVisible()
+        enableReducedMotionForHallOfFame()
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Tap card to expand/collapse", substring = true)
+            .assertDoesNotExist()
+
+        // Keep "Unknown challenger" (AW9Q) expanded at the top; collapse all rival cards below.
+        for (name in listOf("ARJUN", "MEERA", "KABIR", "NISHA", "ROHAN", "ZARA")) {
+            collapseRivalCardIfExpanded(name)
+        }
+
+        // Scroll all the way to the top action row so AWAITING CHALLENGES (1) + expanded Unknown challenger
+        // sit cleanly framed in the upper half of the screen (matching captions.json y=520).
+        composeTestRule.onNodeWithTag("rivalry_tab_content")
+            .performScrollToNode(hasTestTag("rivalry_paste_button"))
+        composeTestRule.waitForIdle()
+
+        // Verify expanded awaiting card state and expected semantics before capture.
+        composeTestRule.onNodeWithText("Unknown challenger", substring = true).assertIsDisplayed()
+        assertTrue(
+            "Expected 'waiting' text in semantics tree",
+            composeTestRule.onAllNodesWithText("waiting", substring = true).fetchSemanticsNodes().isNotEmpty()
+        )
+        composeTestRule.onNodeWithText("Paste Reply Code", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Copy Code Again", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("awaiting_cancel_button_AW9Q").assertIsDisplayed()
+
+        val bitmap = captureActivityBitmap()
+        saveAndVerifyPng(bitmap, "08_waiting.png")
+    }
+
+    @Test
+    fun render_09_reply_ready() {
+        dismissOnboardingIfVisible()
+        enableReducedMotionForHallOfFame()
+
+        // Move NISHA to the top of RIVAL BATTLES for this shot only (no effect on 01-07).
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val nisha = requireNotNull(ChallengeStorage.findRivalByName(context, "NISHA")) {
+            "Expected seeded rival NISHA"
+        }
+        ChallengeStorage.saveRival(context, nisha.copy(updatedAt = System.currentTimeMillis() + 60_000L))
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Tap card to expand/collapse", substring = true)
+            .assertDoesNotExist()
+
+        // Collapse awaiting card and all other rivals, leaving NISHA expanded at #1.
+        collapseAwaitingCardIfExpanded("AW9Q")
+        for (name in listOf("ARJUN", "MEERA", "KABIR", "ROHAN", "ZARA")) {
+            collapseRivalCardIfExpanded(name)
+        }
+
+        // Scroll to the collapsed awaiting card, then perform a slow (zero-fling) drag so NISHA's
+        // expanded card sits right at the top of the Rivalry list under the tabs.
+        composeTestRule.onNodeWithTag("rivalry_tab_content")
+            .performScrollToNode(hasTestTag("awaiting_card_AW9Q"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performTouchInput {
+            swipeUp(startY = bottom * 0.70f, endY = bottom * 0.42f, durationMillis = 900L)
+        }
+        composeTestRule.waitForIdle()
+
+        // Ensure NISHA is expanded before asserting her unsent reply button.
+        val nishaState = composeTestRule.onNodeWithTag("rival_card_NISHA")
+            .fetchSemanticsNode()
+            .config
+            .getOrElseNullable(SemanticsProperties.StateDescription) { null }
+        if (nishaState == "Collapsed") {
+            composeTestRule.onNodeWithTag("rival_chevron_NISHA").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        composeTestRule.onNodeWithTag("rival_card_NISHA").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_delete_button_NISHA").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_send_reply_button_NISHA").assertIsDisplayed()
+        assertTrue(
+            "Expected 'reply ready' label in semantics tree",
+            composeTestRule.onAllNodesWithText("reply ready", substring = true).fetchSemanticsNodes().isNotEmpty()
+        )
+        composeTestRule.onNodeWithText("Copy Reply Code", substring = true).assertIsDisplayed()
+
+        val nishaBounds = composeTestRule.onNodeWithTag("rival_card_NISHA").getUnclippedBoundsInRoot()
+        println("STORE_SCREENSHOT_LAYOUT 09_reply_ready nishaTopDp=${nishaBounds.top.value} nishaBottomDp=${nishaBounds.bottom.value}")
+
+        val bitmap = captureActivityBitmap()
+        saveAndVerifyPng(bitmap, "09_reply_ready.png")
+    }
+
+    @Test
+    fun render_10_paste_code() {
+        dismissOnboardingIfVisible()
+        enableReducedMotionForHallOfFame()
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Keep Hall of Fame background clean (AW9Q collapsed, ARJUN expanded).
+        collapseAwaitingCardIfExpanded("AW9Q")
+        for (name in listOf("MEERA", "KABIR", "NISHA", "ROHAN", "ZARA")) {
+            collapseRivalCardIfExpanded(name)
+        }
+        composeTestRule.onNodeWithTag("rivalry_tab_content")
+            .performScrollToNode(hasTestTag("awaiting_card_AW9Q"))
+        composeTestRule.waitForIdle()
+
+        // Open the real "Enter challenge code" dialog (EnterChallengeDialog).
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Generate a genuine 7-segment challenge code via the app's own ChallengeSeed generator
+        // (3-char chain ID matching the dialog's format example so all 27 chars fit cleanly).
+        val meeraChallengeCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "3x3",
+            targetScore = 9,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = 2478131,
+            senderName = "MEERA",
+            chainId = "M7R",
+            isRevenge = false
+        )
+        assertTrue(
+            "Generated challenge code must parse cleanly",
+            ChallengeSeed.parseChallengeCode(meeraChallengeCode) != null
+        )
+
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextReplacement(meeraChallengeCode)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_title")
+            .assertTextContains("Enter challenge code", substring = true)
+        composeTestRule.onNodeWithTag("challenge_code_input")
+            .assertTextContains(meeraChallengeCode.uppercase(), substring = true)
+        composeTestRule.onNodeWithTag("submit_challenge_button").assertIsDisplayed()
+        println("STORE_SCREENSHOT_CODE 10_paste_code code=${meeraChallengeCode.uppercase()}")
+
+        val bitmap = captureActivityWithDialogOverlay("10_paste_code")
+        saveAndVerifyPng(bitmap, "10_paste_code.png")
+    }
+
+    @Test
+    fun render_11_result_won() {
+        launchAndPlayIncomingArjunChallenge(
+            roundsToClear = 7,
+            expectVictoryDecisionAfterRound = 7
+        )
+
+        composeTestRule.onNodeWithTag("status_header_text")
+            .assertIsDisplayed()
+            .assertTextContains("Challenge Won! 🎉", substring = true)
+        composeTestRule.onNodeWithTag("status_subtitle_text")
+            .assertIsDisplayed()
+            .assertTextContains("You beat ARJUN's target of 6 with score 7!", substring = true)
+
+        val bitmap = captureActivityBitmap()
+        saveAndVerifyPng(bitmap, "11_result_won.png")
+    }
+
+    @Test
+    fun render_12_result_lost() {
+        launchAndPlayIncomingArjunChallenge(
+            roundsToClear = 4,
+            expectVictoryDecisionAfterRound = null
+        )
+
+        composeTestRule.onNodeWithTag("status_header_text")
+            .assertIsDisplayed()
+            .assertTextContains("Challenge Lost", substring = true)
+        composeTestRule.onNodeWithTag("status_subtitle_text")
+            .assertIsDisplayed()
+            .assertTextContains("Out of tries! Target was 6 (Best: 4)", substring = true)
+
+        val bitmap = captureActivityBitmap()
+        saveAndVerifyPng(bitmap, "12_result_lost.png")
+    }
+
+    @Test
+    fun render_13_result_tied() {
+        launchAndPlayIncomingArjunChallenge(
+            roundsToClear = 6,
+            expectVictoryDecisionAfterRound = null
+        )
+
+        composeTestRule.onNodeWithTag("status_header_text")
+            .assertIsDisplayed()
+            .assertTextContains("Challenge Tied! 🤝", substring = true)
+        composeTestRule.onNodeWithTag("status_subtitle_text")
+            .assertIsDisplayed()
+            .assertTextContains("You matched ARJUN's target of 6!", substring = true)
+
+        val bitmap = captureActivityBitmap()
+        saveAndVerifyPng(bitmap, "13_result_tied.png")
     }
 }
