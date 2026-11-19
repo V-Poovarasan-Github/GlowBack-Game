@@ -1,6 +1,6 @@
 # Real screenshots go here
 
-Put **real phone screenshots** of the final v1.1 build in this folder, with exactly these names.
+Put **real screenshots** of the final v1.1 build (rendered from the app's own UI code with fictional demo data, or captured on a phone) in this folder, with exactly these names.
 The build script frames them with captions. It never draws or invents UI: a missing file is skipped.
 
 | File | Capture this screen | Caption it gets |
@@ -10,7 +10,8 @@ The build script frames them with captions. It never draws or invents UI: a miss
 | `03_share.png` | "Share Challenge to <rival>" dialog (use a believable rival name) | Challenge a friend with a text code |
 | `04_hall_of_fame.png` | Hall of Fame, Rivalry tab, 2 to 3 rivals with mixed wins and losses | Defend your score |
 | `05_revenge.png` | A rival card that shows the **Get Revenge** button | Lost a round? Take your revenge |
-| `06_offline.png` | Any main screen, taken with **airplane mode on** (the status bar shows it) | Fully offline. Zero ads. |
+| `06_records.png` | Hall of Fame, Records tab, filled in | Chase your personal best |
+| `07_offline.png` | Home screen (a phone capture in airplane mode shows it in the status bar) | Fully offline. Zero ads. |
 
 Tips: full battery, no notifications in the status bar, dark theme, PNG, do not crop or edit.
 Then run: `python3 ../source/build_screenshots.py` and check `../screenshots/`.
