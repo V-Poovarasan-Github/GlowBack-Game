@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:"Space Grotesk";font-weight:700;src:url("../../../fonts/space-grotesk-latin-700-normal.woff2") format("woff2");}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url("../../../fonts/space-grotesk-latin-500-normal.woff2") format("woff2");}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1024px;height:500px;overflow:hidden;background:#05080F;font-family:"Space Grotesk",sans-serif}
+.g{position:relative;width:1024px;height:500px;overflow:hidden;
+ background:radial-gradient(520px 420px at 82% 50%, rgba(0,229,255,.16), transparent 65%),
+            radial-gradient(420px 360px at 8% 8%, rgba(16,185,129,.14), transparent 65%),
+            radial-gradient(380px 300px at 98% 100%, rgba(239,68,68,.12), transparent 65%),#05080F}
+.g::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(148,163,184,.12) 1.2px,transparent 1.3px);background-size:32px 32px;mask-image:linear-gradient(90deg,#000,transparent 75%);-webkit-mask-image:linear-gradient(90deg,#000,transparent 75%)}
+.txt{position:absolute;left:64px;top:0;bottom:0;width:520px;display:flex;flex-direction:column;justify-content:center}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:22px;letter-spacing:4px;color:#94A3B8;margin-bottom:22px}
+.brand img{width:42px;height:42px;border-radius:10px}
+h1{font-size:68px;line-height:1.02;font-weight:700;color:#F4F7FB;letter-spacing:-1.5px}
+h1 em{font-style:normal;color:#00E5FF;text-shadow:0 0 30px rgba(0,229,255,.6)}
+.chips{display:flex;gap:10px;margin-top:28px}
+.chips span{font-weight:500;font-size:19px;color:#CBD5E1;padding:9px 16px;border-radius:999px;border:1px solid rgba(148,163,184,.3);background:rgba(15,23,42,.6)}
+.pads{position:absolute;right:56px;top:50%;transform:translateY(-50%) rotate(-6deg);display:grid;grid-template-columns:150px 150px;gap:26px}
+.pad{width:150px;height:150px;border-radius:34px;display:flex;align-items:center;justify-content:center;background:linear-gradient(150deg,rgba(255,255,255,.06),rgba(255,255,255,.01));border:5px solid var(--c);box-shadow:0 0 28px var(--c),inset 0 0 26px color-mix(in srgb,var(--c) 45%,transparent)}
+.pad svg{width:74px;height:74px;fill:none;stroke:var(--c);stroke-width:6;stroke-linejoin:round;filter:drop-shadow(0 0 8px var(--c))}
+</style></head><body><div class="g">
+<div class="txt">
+ <div class="brand"><img src="../../../logo.png">GLOWBACK</div>
+ <h1>Watch the <em>glow.</em><br>Send it back.</h1>
+ <div class="chips"><span>100% offline</span><span>Zero ads</span><span>Duel friends</span></div>
+</div>
+<div class="pads">
+ <div class="pad" style="--c:#22E58A"><svg viewBox="0 0 74 74"><path d="M37 11 L65 61 H9 Z"/></svg></div>
+ <div class="pad" style="--c:#FF3B6B"><svg viewBox="0 0 74 74"><circle cx="37" cy="37" r="25"/></svg></div>
+ <div class="pad" style="--c:#FFD21F"><svg viewBox="0 0 74 74"><rect x="12" y="12" width="50" height="50" rx="3"/></svg></div>
+ <div class="pad" style="--c:#19D6FF"><svg viewBox="0 0 74 74"><path d="M37 8 L66 37 L37 66 L8 37 Z"/></svg></div>
+</div></div></body></html>

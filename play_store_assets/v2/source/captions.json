@@ -1,0 +1,8 @@
+[
+  {"file":"01_hero",       "raw":"01_gameplay.png",   "caption":"Watch the <em>glow.</em><br>Send it back.", "sub":"Memorize the pattern. Repeat it perfectly."},
+  {"file":"02_difficulty", "raw":"02_setup.png",      "caption":"Choose your <em>difficulty</em>",            "sub":"4 grid sizes · Easy or Hard"},
+  {"file":"03_challenge",  "raw":"03_share.png",      "caption":"Challenge a friend<br>with a <em>text code</em>", "sub":"No accounts. No sign-up."},
+  {"file":"04_defend",     "raw":"04_hall_of_fame.png","caption":"<em>Defend</em> your score",               "sub":"Track every rival, win and loss"},
+  {"file":"05_revenge",    "raw":"05_revenge.png",    "caption":"Lost a round?<br>Take your <em>revenge</em>", "sub":"One tap to rematch"},
+  {"file":"06_offline",    "raw":"06_offline.png",    "caption":"Fully <em>offline.</em><br>Zero ads.",      "sub":"No internet needed, ever"}
+]
