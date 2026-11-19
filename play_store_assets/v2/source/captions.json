@@ -14,38 +14,81 @@
     "anchor": "top"
   },
   {
-    "file": "03_challenge",
-    "raw": "03_share.png",
-    "caption": "<em>Dare</em> a friend<br>with one code.",
-    "sub": "No accounts. No sign-up.",
+    "file": "03_send_wait_reply",
+    "caption": "Send it. Wait.<br><em>Get the reply.</em>",
+    "sub": "Duels by text code. No accounts.",
+    "panels": [
+      {
+        "raw": "03_share.png",
+        "y": 690,
+        "label": "SEND",
+        "color": "#00E5FF"
+      },
+      {
+        "raw": "08_waiting.png",
+        "y": 520,
+        "label": "WAITING",
+        "color": "#F59E0B"
+      },
+      {
+        "raw": "09_reply_ready.png",
+        "y": 520,
+        "label": "REPLY READY",
+        "color": "#22C55E"
+      }
+    ]
+  },
+  {
+    "file": "04_paste",
+    "raw": "10_paste_code.png",
+    "caption": "Got a code?<br><em>Paste</em> and play.",
+    "sub": "Duel starts in one tap",
     "anchor": "bottom"
   },
   {
-    "file": "04_defend",
+    "file": "05_win_lose_tie",
+    "caption": "Win. Lose. Tie.<br><em>Settle it.</em>",
+    "sub": "Every duel is scored",
+    "panels": [
+      {
+        "raw": "11_result_won.png",
+        "y": 380,
+        "label": "VICTORY",
+        "color": "#22C55E"
+      },
+      {
+        "raw": "12_result_lost.png",
+        "y": 380,
+        "label": "DEFEAT",
+        "color": "#EF4444"
+      },
+      {
+        "raw": "13_result_tied.png",
+        "y": 380,
+        "label": "TIE",
+        "color": "#FFD600"
+      }
+    ]
+  },
+  {
+    "file": "06_defend",
     "raw": "04_hall_of_fame.png",
     "caption": "<em>Defend</em> your score.",
     "sub": "Every rival, every win, every loss",
     "anchor": "top"
   },
   {
-    "file": "05_revenge",
+    "file": "07_revenge",
     "raw": "05_revenge.png",
     "caption": "Lost a round?<br>Take <em>revenge.</em>",
     "sub": "One tap to rematch",
     "anchor": "top"
   },
   {
-    "file": "06_records",
+    "file": "08_records",
     "raw": "06_records.png",
     "caption": "Beat your<br>own <em>best.</em>",
     "sub": "A record for every grid and mode",
-    "anchor": "top"
-  },
-  {
-    "file": "07_offline",
-    "raw": "02_setup.png",
-    "caption": "No Wi-Fi?<br>No <em>problem.</em>",
-    "sub": "Fully offline · Zero ads",
     "anchor": "top"
   }
 ]
