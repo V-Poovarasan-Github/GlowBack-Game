@@ -506,13 +506,18 @@ class StoreScreenshotTest {
     }
 
     private fun resolveRawOutputDir(): File {
-        val userDir = File(System.getProperty("user.dir") ?: ".")
-        val candidates = listOf(
-            File(userDir, "../play_store_assets/v2/raw"),
-            File(userDir, "play_store_assets/v2/raw")
-        )
-        val existingParent = candidates.firstOrNull { it.parentFile?.parentFile?.exists() == true }
-        val targetDir = (existingParent ?: candidates.first()).canonicalFile
+        val overrideDir = System.getenv("STORE_SCREENSHOTS_OUT_DIR")?.takeIf { it.isNotBlank() }
+        val targetDir = if (overrideDir != null) {
+            File(overrideDir).canonicalFile
+        } else {
+            val userDir = File(System.getProperty("user.dir") ?: ".")
+            val candidates = listOf(
+                File(userDir, "../play_store_assets/v2/raw"),
+                File(userDir, "play_store_assets/v2/raw")
+            )
+            val existingParent = candidates.firstOrNull { it.parentFile?.parentFile?.exists() == true }
+            (existingParent ?: candidates.first()).canonicalFile
+        }
         if (!targetDir.exists()) {
             assertTrue("Failed to create raw screenshots directory: $targetDir", targetDir.mkdirs())
         }

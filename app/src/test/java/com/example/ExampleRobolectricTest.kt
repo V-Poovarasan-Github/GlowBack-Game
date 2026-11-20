@@ -8621,6 +8621,335 @@ class ExampleRobolectricTest {
                 .config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         )
     }
+
+    private fun startAndTieChallengeOnGameOver(
+        context: Context,
+        seed: Int,
+        tries: Int,
+        chainId: String,
+        rivalName: String = "HERO"
+    ) {
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = tries,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = rivalName,
+            chainId = chainId,
+            isRevenge = false
+        )
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val round2Seq = ChallengeSeed.generateSequenceForRound(
+            seed = seed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 2
+        )
+        val firstPad = pads2x2[round2Seq[0]]
+        val wrongPad = pads2x2.first { it.id != firstPad.id }
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        if (composeTestRule.onAllNodes(hasTestTag("rivalry_paste_button")).fetchSemanticsNodes().isNotEmpty()) {
+            composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        } else {
+            composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+
+        // Round 1 correct -> score becomes 1 (matches targetScore = 1)
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(2800L)
+        composeTestRule.waitForIdle()
+
+        // Round 2 wrong tap -> Game Over tied at score 1
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun tieWithTriesLeft_showsConfirmDialog_keepPlayingPreservesTries_andSendTieFinalizes() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 96001
+        val chainId = "TF1"
+        startAndTieChallengeOnGameOver(context = context, seed = seed, tries = 3, chainId = chainId)
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        // 1. Tied with 2 tries left -> button reads "Send Tie" (not "Copy Reply Code")
+        composeTestRule.onNodeWithTag("challenge_retry_button")
+            .assertIsDisplayed()
+            .assertTextContains("2 tries left", substring = true)
+        composeTestRule.onNodeWithTag("challenge_reply_button")
+            .assertIsDisplayed()
+            .assertTextContains("Send Tie")
+
+        // 2. Tap "Send Tie" -> opens confirm dialog; attemptsLeft remains 2, rival has 0 recorded matches
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertIsDisplayed()
+        val headingNode = composeTestRule.onNodeWithText("Send this tie?").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "Tie confirm dialog title must be marked as a heading",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in headingNode.config
+        )
+        composeTestRule.onNodeWithText(
+            "You'll give up your 2 remaining tries. Your friend will see a tie."
+        ).assertIsDisplayed()
+
+        val cancelBounds = composeTestRule.onNodeWithTag("tie_forfeit_cancel_button")
+            .assertIsDisplayed()
+            .assertTextContains("Keep Playing")
+            .fetchSemanticsNode().boundsInRoot
+        val confirmBounds = composeTestRule.onNodeWithTag("tie_forfeit_confirm_button")
+            .assertIsDisplayed()
+            .assertTextContains("Send Tie")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Keep Playing button height >= 48dp", cancelBounds.height >= min48Px)
+        assertTrue("Send Tie confirm button height >= 48dp", confirmBounds.height >= min48Px)
+
+        val storedBeforeConfirm = ChallengeStorage.loadChallenges(context).first { it.chainId == chainId }
+        assertEquals("Opening dialog must not decrement attemptsLeft", 2, storedBeforeConfirm.attemptsLeft)
+        assertEquals("Opening dialog must not record match outcome", 0, ChallengeStorage.findRivalByName(context, "HERO")?.matches ?: 0)
+
+        // 3. Tap "Keep Playing" -> dismisses dialog, state untouched
+        composeTestRule.onNodeWithTag("tie_forfeit_cancel_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        assertEquals(2, ChallengeStorage.loadChallenges(context).first { it.chainId == chainId }.attemptsLeft)
+        assertEquals(0, ChallengeStorage.findRivalByName(context, "HERO")?.matches ?: 0)
+
+        // 4. Burn Try 2 (wrong tap on Round 1 -> bestScore stays 1, still tied with 1 try remaining)
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val round1Seq = ChallengeSeed.generateSequenceForRound(
+            seed = seed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 1
+        )
+        val wrongPad = pads2x2.first { it.id != pads2x2[round1Seq[0]].id }
+
+        composeTestRule.onNodeWithTag("challenge_retry_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed().performClick()
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        // Tap "Send Tie" with 1 try remaining -> verifies singular "1 remaining try"
+        composeTestRule.onNodeWithTag("challenge_reply_button")
+            .assertIsDisplayed()
+            .assertTextContains("Send Tie")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "You'll give up your 1 remaining try. Your friend will see a tie."
+        ).assertIsDisplayed()
+        assertEquals(1, ChallengeStorage.loadChallenges(context).first { it.chainId == chainId }.attemptsLeft)
+
+        // 5. Confirm "Send Tie" -> forfeits remaining try, records tie, copies reply code, flashes "✓ Copied!"
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("clear", ""))
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        while (shadowApp.nextStartedActivity != null) { /* drain prior intents */ }
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_button").performClick()
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("challenge_reply_button").assertTextContains("✓ Copied!")
+
+        val copiedReply = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        val parsedReply = ChallengeSeed.parseChallengeCode(copiedReply)
+        assertNotNull("Confirming Send Tie must copy a valid reply code", parsedReply)
+        assertTrue("Copied code must be a reply (R-code)", parsedReply!!.isRevenge)
+        assertEquals(1, parsedReply.targetScore)
+
+        val rivalAfter = ChallengeStorage.findRivalByName(context, "HERO")
+        assertNotNull(rivalAfter)
+        assertEquals(1, rivalAfter!!.ties)
+        assertEquals(1, rivalAfter.matches)
+        assertEquals(0, ChallengeStorage.loadChallenges(context).firstOrNull { it.chainId == chainId }?.attemptsLeft ?: 0)
+
+        // Drain async share chooser and let flash finish cleanly
+        composeTestRule.mainClock.autoAdvance = true
+        val deadline = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        shadowApp.nextStartedActivity
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun tieWithTriesLeft_backPressAndOutsideDismissKeepPlayingWithoutChangingState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val chainId = "TF2"
+        startAndTieChallengeOnGameOver(context = context, seed = 96002, tries = 3, chainId = chainId)
+
+        // Open tie confirmation dialog and press Back on the dialog
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertIsDisplayed()
+
+        composeTestRule.runOnUiThread {
+            val latestDialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            assertNotNull("Tie confirm dialog window must be active", latestDialog)
+            (latestDialog as androidx.activity.ComponentDialog).onBackPressedDispatcher.onBackPressed()
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        assertEquals("Back press must keep attemptsLeft unchanged", 2, ChallengeStorage.loadChallenges(context).first { it.chainId == chainId }.attemptsLeft)
+        assertEquals("Back press must not record tie", 0, ChallengeStorage.findRivalByName(context, "HERO")?.matches ?: 0)
+        composeTestRule.onNodeWithTag("challenge_retry_button").assertIsDisplayed()
+
+        // Re-open dialog and simulate outside-tap dismissal (touch well beyond scaledWindowTouchSlop)
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertIsDisplayed()
+
+        composeTestRule.runOnUiThread {
+            val latestDialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            assertNotNull("Tie confirm dialog window must be active for outside dismiss", latestDialog)
+            val down = android.view.MotionEvent.obtain(0L, 0L, android.view.MotionEvent.ACTION_DOWN, -500f, -500f, 0)
+            val up = android.view.MotionEvent.obtain(0L, 10L, android.view.MotionEvent.ACTION_UP, -500f, -500f, 0)
+            try {
+                latestDialog.onTouchEvent(down)
+                latestDialog.onTouchEvent(up)
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        assertEquals("Outside dismiss must keep attemptsLeft unchanged", 2, ChallengeStorage.loadChallenges(context).first { it.chainId == chainId }.attemptsLeft)
+        assertEquals("Outside dismiss must not record tie", 0, ChallengeStorage.findRivalByName(context, "HERO")?.matches ?: 0)
+    }
+
+    @Test
+    fun tieWithZeroTriesOrFreeTries_sendsImmediatelyWithNoConfirmDialog() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+
+        // Case A: 0 tries left (1-try challenge tied on Try 1) -> "Copy Reply Code", sends immediately, no dialog
+        startAndTieChallengeOnGameOver(context = context, seed = 96003, tries = 1, chainId = "TF3", rivalName = "RIVAL0")
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("clear", ""))
+        while (shadowApp.nextStartedActivity != null) { /* drain */ }
+
+        composeTestRule.onNodeWithTag("challenge_reply_button")
+            .assertIsDisplayed()
+            .assertTextContains("Copy Reply Code")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        val zeroTriesReply = ChallengeSeed.parseChallengeCode(clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty())
+        assertNotNull("0-tries tie must copy reply code immediately without dialog", zeroTriesReply)
+        assertTrue(zeroTriesReply!!.isRevenge)
+
+        val deadlineA = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadlineA) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        shadowApp.nextStartedActivity
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+
+        // Exit back to Rivalry before Case B
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Case B: Free-tries challenge (tries = 0) tied on Try 1 -> "Copy Reply Code", sends immediately, no dialog
+        startAndTieChallengeOnGameOver(context = context, seed = 96004, tries = 0, chainId = "TF4", rivalName = "RIVALF")
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("clear", ""))
+        while (shadowApp.nextStartedActivity != null) { /* drain */ }
+
+        composeTestRule.onNodeWithTag("challenge_reply_button")
+            .assertIsDisplayed()
+            .assertTextContains("Copy Reply Code")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tie_forfeit_confirm_dialog").assertDoesNotExist()
+        val freeTriesReply = ChallengeSeed.parseChallengeCode(clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty())
+        assertNotNull("Free-tries tie must copy reply code immediately without dialog", freeTriesReply)
+        assertTrue(freeTriesReply!!.isRevenge)
+
+        val deadlineB = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadlineB) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        shadowApp.nextStartedActivity
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+    }
 }
+
 
 

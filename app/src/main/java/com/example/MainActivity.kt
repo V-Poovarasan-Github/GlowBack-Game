@@ -7051,6 +7051,10 @@ private fun BottomActionSection(
 
     if (activeChallenge != null && gameState == GameState.GAME_OVER) {
         var isReplyFlashing by remember { mutableStateOf(false) }
+        var showTieForfeitConfirm by remember(activeChallenge, challengeAttemptsLeft, isChallengeTied) {
+            mutableStateOf(false)
+        }
+        val needsTieForfeitConfirm = challengeAttemptsLeft > 0 && !activeChallenge.isFreeTries
         val triggerReplyWithFlash: (() -> Unit) -> Unit = { callback ->
             if (!isReplyFlashing) {
                 isReplyFlashing = true
@@ -7083,7 +7087,7 @@ private fun BottomActionSection(
                 }
 
                 // PASS 5.19 Part 2 Bug 3 & Clarifying Answer #3:
-                // - When tied on Try 1 with tries remaining: Show Secondary "Copy Reply Code" + Tertiary "Exit Challenge"
+                // - When tied on Try 1 with tries remaining: Show Secondary "Send Tie" (confirmed) + Tertiary "Exit Challenge"
                 // - When failed (< targetScore) with tries remaining: HIDE "Share Score", show ONLY "Exit Challenge"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -7092,7 +7096,13 @@ private fun BottomActionSection(
                     if (isChallengeTied) {
                         val tieColor = if (hasSentChallengeReply || isReplyFlashing) Color(0xFF10B981) else Color(0xFFFFD600)
                         OutlinedButton(
-                            onClick = { triggerReplyWithFlash(onSendTieEarly) },
+                            onClick = {
+                                if (needsTieForfeitConfirm) {
+                                    showTieForfeitConfirm = true
+                                } else {
+                                    triggerReplyWithFlash(onSendTieEarly)
+                                }
+                            },
                             enabled = true,
                             modifier = Modifier
                                 .weight(1f)
@@ -7108,7 +7118,11 @@ private fun BottomActionSection(
                             )
                         ) {
                             Text(
-                                text = if (isReplyFlashing) "✓ Copied!" else "Copy Reply Code",
+                                text = when {
+                                    isReplyFlashing -> "✓ Copied!"
+                                    needsTieForfeitConfirm -> "Send Tie"
+                                    else -> "Copy Reply Code"
+                                },
                                 color = if (isReplyFlashing || hasSentChallengeReply) Color(0xFF34D399) else tieColor,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -7168,6 +7182,91 @@ private fun BottomActionSection(
                     border = BorderStroke(1.dp, Color(0xFF64748B))
                 ) {
                     Text(text = "Exit Challenge", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
+        if (showTieForfeitConfirm && isChallengeTied && needsTieForfeitConfirm) {
+            val triesUnit = if (challengeAttemptsLeft == 1) "try" else "tries"
+            val tieAccent = Color(0xFFFFD600)
+            Dialog(
+                onDismissRequest = { showTieForfeitConfirm = false },
+                properties = DialogProperties(
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true,
+                    usePlatformDefaultWidth = false
+                )
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .widthIn(max = 420.dp)
+                        .testTag("tie_forfeit_confirm_dialog"),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    border = BorderStroke(1.5.dp, tieAccent.copy(alpha = 0.75f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = "Send this tie?",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.semantics { heading() }
+                        )
+
+                        Text(
+                            text = "You'll give up your $challengeAttemptsLeft remaining $triesUnit. Your friend will see a tie.",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Button(
+                            onClick = { showTieForfeitConfirm = false },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("tie_forfeit_cancel_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF10B981),
+                                contentColor = Color(0xFF090D16)
+                            )
+                        ) {
+                            Text("Keep Playing", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                showTieForfeitConfirm = false
+                                triggerReplyWithFlash(onSendTieEarly)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("tie_forfeit_confirm_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.5.dp, tieAccent),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color(0xFF0F172A),
+                                contentColor = tieAccent
+                            )
+                        ) {
+                            Text("Send Tie", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
                 }
             }
         }
