@@ -273,6 +273,8 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("reset_wins_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("reset_wins_button").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_button").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("settings_done_button").performClick()
         composeTestRule.waitForIdle()
 
@@ -797,6 +799,8 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("Reset all saved Pass & Play wins and survival records (P1-P4)").assertIsDisplayed()
         composeTestRule.onNodeWithTag("reset_wins_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_button").performClick()
         composeTestRule.waitForIdle()
 
         // Verify multiplayer wins AND survival records are reset, but solo scores are 100% untouched
@@ -8379,7 +8383,7 @@ class ExampleRobolectricTest {
 
         val binNode = composeTestRule.onNodeWithTag("awaiting_cancel_button_AW1").assertIsDisplayed().fetchSemanticsNode()
         assertEquals(androidx.compose.ui.semantics.Role.Button, binNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role])
-        assertEquals(listOf("Cancel challenge"), binNode.config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription])
+        assertEquals(listOf("Remove challenge"), binNode.config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription])
         assertTrue(binNode.boundsInRoot.width >= min48Px)
         assertTrue(binNode.boundsInRoot.height >= min48Px)
         composeTestRule.onNodeWithTag("awaiting_menu_button_AW1").assertDoesNotExist()
@@ -8465,7 +8469,7 @@ class ExampleRobolectricTest {
 
         val copyNode = composeTestRule.onNodeWithTag("awaiting_menu_copy_AW1").assertIsDisplayed().assertTextContains("Copy code again").fetchSemanticsNode()
         val pasteNode = composeTestRule.onNodeWithTag("awaiting_menu_paste_AW1").assertIsDisplayed().assertTextContains("Paste reply").fetchSemanticsNode()
-        val cancelNode = composeTestRule.onNodeWithTag("awaiting_menu_cancel_AW1").assertIsDisplayed().assertTextContains("Cancel challenge").fetchSemanticsNode()
+        val cancelNode = composeTestRule.onNodeWithTag("awaiting_menu_cancel_AW1").assertIsDisplayed().assertTextContains("Remove challenge").fetchSemanticsNode()
         assertTrue("Copy before Paste", copyNode.boundsInRoot.top < pasteNode.boundsInRoot.top)
         assertTrue("Paste before Cancel", pasteNode.boundsInRoot.top < cancelNode.boundsInRoot.top)
 
@@ -8949,7 +8953,376 @@ class ExampleRobolectricTest {
         composeTestRule.mainClock.advanceTimeBy(700L)
         composeTestRule.waitForIdle()
     }
+
+    @Test
+    fun exitChallengeTieDialog_showsGiveUpSentence_singularAndPlural_andHeadingSemantics() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val seed = 97001
+        val tCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 1,
+            tries = 3,
+            difficulty = GameDifficulty.EASY,
+            seed = seed,
+            senderName = "HERO",
+            chainId = "TL1",
+            isRevenge = false
+        )
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val round2Seq = ChallengeSeed.generateSequenceForRound(
+            seed = seed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = 2
+        )
+        val firstPad = pads2x2[round2Seq[0]]
+        val wrongPad = pads2x2.first { it.id != firstPad.id }
+
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(tCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Try 1: tie mid-round with 2 remaining tries (plural)
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val exitTitleNode = composeTestRule.onNodeWithTag("exit_challenge_dialog_title")
+            .assertIsDisplayed()
+            .fetchSemanticsNode()
+        assertTrue(
+            "ExitChallengeConfirmDialog title must have heading semantics",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in exitTitleNode.config
+        )
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body").assertTextContains(
+            "You've tied the target (1)! If you exit now, you can lock in your TIE or forfeit this try and keep 2 tries for later. Locking the tie ends the match and gives up your 2 remaining tries."
+        )
+
+        // Keep Playing -> finish Try 1 on Round 2 wrong tap -> Game Over (2 tries left)
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.mainClock.advanceTimeBy(2800L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        // Retry Try 2 -> tie mid-round with 1 remaining try (singular)
+        composeTestRule.onNodeWithTag("challenge_retry_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed().performClick()
+        composeTestRule.mainClock.advanceTimeBy(1600L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(firstPad.testTagId).performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("exit_challenge_dialog_body").assertTextContains(
+            "You've tied the target (1)! If you exit now, you can lock in your TIE or forfeit this try and keep 1 try for later. Locking the tie ends the match and gives up your 1 remaining try."
+        )
+
+        // Keep Playing -> fail Round 2 -> Game Over shows singular "Retry Turn (1 try left)"
+        composeTestRule.onNodeWithTag("exit_challenge_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.mainClock.advanceTimeBy(2800L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("challenge_retry_button")
+            .assertIsDisplayed()
+            .assertTextContains("Retry Turn (1 try left)")
+    }
+
+    @Test
+    fun awaitingCard_removeWording_dialogBodyButtonsHeadingAndSnackbar() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveAwaitingChallenge(
+            context,
+            AwaitingChallenge(
+                chainId = "RM1",
+                code = "2x2-6-T3E-HERO-RM1-12345-A",
+                gridSizeTag = "2x2",
+                targetScore = 6,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = null
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // Expanded bin has "Remove challenge" contentDescription
+        val binNode = composeTestRule.onNodeWithTag("awaiting_cancel_button_RM1").assertIsDisplayed().fetchSemanticsNode()
+        assertEquals(listOf("Remove challenge"), binNode.config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription])
+
+        // Collapsed dropdown has "Remove challenge"
+        composeTestRule.onNodeWithTag("awaiting_card_RM1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_menu_button_RM1").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("awaiting_menu_cancel_RM1")
+            .assertIsDisplayed()
+            .assertTextContains("Remove challenge")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirm dialog shows "Remove Challenge?" (heading), note about friend's code, "Keep" and "Remove"
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_dialog").assertIsDisplayed()
+        val titleNode = composeTestRule.onNodeWithText("Remove Challenge?").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "Remove Challenge? title must be marked as a heading",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in titleNode.config
+        )
+        composeTestRule.onNodeWithText("This only removes it from your list. Your friend's code isn't affected.").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_cancel").assertTextContains("Keep")
+        composeTestRule.onNodeWithTag("confirm_cancel_awaiting_confirm")
+            .assertTextContains("Remove")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Snackbar says "Challenge removed"
+        composeTestRule.onNodeWithText("Challenge removed").assertIsDisplayed()
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).none { it.chainId == "RM1" })
+    }
+
+    @Test
+    fun exitAndRestartDialogs_titlesHaveHeadingSemantics() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "RIVALH",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "3x3",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 6,
+                lastUserScore = 7,
+                lastStatus = "WON"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_RIVALH").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_grid_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_start_custom_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val runSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val rng = java.util.Random(runSeed.toLong())
+        val seq = List(6) { CLASSIC_2X2_PADS[rng.nextInt(CLASSIC_2X2_PADS.size)] }
+
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        for (round in 1..5) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(seq[step].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+
+        // VictoryDecisionDialog title has heading semantics
+        val victoryTitleNode = composeTestRule.onNodeWithTag("victory_decision_title").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "VictoryDecisionDialog title must have heading semantics",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in victoryTitleNode.config
+        )
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // RivalRestartConfirmDialog title has heading semantics
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_restart_button").performClick()
+        composeTestRule.waitForIdle()
+        val restartTitleNode = composeTestRule.onNodeWithTag("rival_restart_dialog_title").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "RivalRestartConfirmDialog title must have heading semantics",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in restartTitleNode.config
+        )
+        composeTestRule.onNodeWithTag("rival_restart_keep_playing_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // OutboundRivalExitConfirmDialog title has heading semantics
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_quit_home_button").performClick()
+        composeTestRule.waitForIdle()
+        val outboundExitTitleNode = composeTestRule.onNodeWithTag("exit_challenge_dialog_title").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "OutboundRivalExitConfirmDialog title must have heading semantics",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in outboundExitTitleNode.config
+        )
+    }
+
+    @Test
+    fun resetRecordsDialog_keepAndBackPreserveRecords_resetClearsThem() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("glowback_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putInt("best_2x2_classic", 9)
+            .putInt("wins_P1", 5)
+            .putInt("longest_survival_2p", 7)
+            .putInt("longest_survival_3p", 4)
+            .putInt("longest_survival_4p", 6)
+            .commit()
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+
+        // Open Settings -> button reads "Reset Records"
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_button")
+            .assertIsDisplayed()
+            .assertTextContains("Reset Records")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirm dialog opens with heading title, body, >=48dp buttons; records still untouched
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertIsDisplayed()
+        val headingNode = composeTestRule.onNodeWithText("Reset all Pass & Play records?").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "Reset Records dialog title must be marked as a heading",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in headingNode.config
+        )
+        composeTestRule.onNodeWithText(
+            "This erases all saved wins and survival records for players 1-4. It can't be undone."
+        ).assertIsDisplayed()
+
+        val cancelBounds = composeTestRule.onNodeWithTag("reset_wins_cancel_button")
+            .assertIsDisplayed()
+            .assertTextContains("Keep Records")
+            .fetchSemanticsNode().boundsInRoot
+        val confirmBounds = composeTestRule.onNodeWithTag("reset_wins_confirm_button")
+            .assertIsDisplayed()
+            .assertTextContains("Reset")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Keep Records button height >= 48dp", cancelBounds.height >= min48Px)
+        assertTrue("Reset confirm button height >= 48dp", confirmBounds.height >= min48Px)
+        assertEquals(5, prefs.getInt("wins_P1", -1))
+
+        // 1. Tap "Keep Records" -> dismisses, records untouched
+        composeTestRule.onNodeWithTag("reset_wins_cancel_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertDoesNotExist()
+        assertEquals(5, prefs.getInt("wins_P1", -1))
+        assertEquals(7, prefs.getInt("longest_survival_2p", -1))
+
+        // 2. Re-open and press Back -> dismisses, records untouched
+        composeTestRule.onNodeWithTag("reset_wins_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertIsDisplayed()
+        composeTestRule.runOnUiThread {
+            val latestDialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            assertNotNull("Reset confirm dialog window must be active", latestDialog)
+            (latestDialog as androidx.activity.ComponentDialog).onBackPressedDispatcher.onBackPressed()
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertDoesNotExist()
+        assertEquals(5, prefs.getInt("wins_P1", -1))
+        assertEquals(7, prefs.getInt("longest_survival_2p", -1))
+
+        // 3. Re-open and tap outside -> dismisses, records untouched
+        composeTestRule.onNodeWithTag("reset_wins_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertIsDisplayed()
+        composeTestRule.runOnUiThread {
+            val latestDialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            assertNotNull("Reset confirm dialog window must be active for outside tap", latestDialog)
+            val down = android.view.MotionEvent.obtain(0L, 0L, android.view.MotionEvent.ACTION_DOWN, -500f, -500f, 0)
+            val up = android.view.MotionEvent.obtain(0L, 10L, android.view.MotionEvent.ACTION_UP, -500f, -500f, 0)
+            try {
+                latestDialog.onTouchEvent(down)
+                latestDialog.onTouchEvent(up)
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertDoesNotExist()
+        assertEquals(5, prefs.getInt("wins_P1", -1))
+        assertEquals(7, prefs.getInt("longest_survival_2p", -1))
+
+        // 4. Re-open and confirm "Reset" -> clears multiplayer wins & survival records, keeps solo best
+        composeTestRule.onNodeWithTag("reset_wins_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reset_wins_confirm_dialog").assertDoesNotExist()
+        assertEquals(0, prefs.getInt("wins_P1", -1))
+        assertEquals(0, prefs.getInt("longest_survival_2p", -1))
+        assertEquals(0, prefs.getInt("longest_survival_3p", -1))
+        assertEquals(0, prefs.getInt("longest_survival_4p", -1))
+        assertEquals(9, prefs.getInt("best_2x2_classic", -1))
+    }
 }
+
 
 
 

@@ -1470,7 +1470,9 @@ fun LegacyCodeNameCardContent(
                 color = Color.White,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.testTag("legacy_dialog_title")
+                modifier = Modifier
+                    .testTag("legacy_dialog_title")
+                    .semantics { heading() }
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -1592,7 +1594,9 @@ fun DidYouShareCardContent(
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.testTag("did_you_share_title")
+                modifier = Modifier
+                    .testTag("did_you_share_title")
+                    .semantics { heading() }
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -2646,7 +2650,9 @@ fun FirstTimeShareGateDialog(
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.testTag("first_time_share_title")
+                    modifier = Modifier
+                        .testTag("first_time_share_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -3518,7 +3524,7 @@ fun HallOfFameScreen(
                         scope.launch {
                             snackbarHostState.currentSnackbarData?.dismiss()
                             val result = snackbarHostState.showSnackbar(
-                                message = "Challenge cancelled",
+                                message = "Challenge removed",
                                 actionLabel = "Undo",
                                 duration = SnackbarDuration.Long
                             )
@@ -4389,10 +4395,11 @@ fun AwaitingCard(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Cancel Challenge?",
+                        text = "Remove Challenge?",
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.semantics { heading() }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     val displayGrid = awaiting.gridSizeTag.replace('x', '×')
@@ -4402,6 +4409,14 @@ fun AwaitingCard(
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "This only removes it from your list. Your friend's code isn't affected.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 17.sp
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(
@@ -4486,7 +4501,7 @@ fun AwaitingCard(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "Cancel",
+                                        text = "Remove",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         textAlign = TextAlign.Center,
@@ -4576,7 +4591,7 @@ fun AwaitingCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     if (isExpanded) {
                         CardDeleteIconButton(
-                            contentDescription = "Cancel challenge",
+                            contentDescription = "Remove challenge",
                             testTag = "awaiting_cancel_button_${awaiting.chainId}",
                             onClick = { showCancelConfirm = true }
                         )
@@ -4635,7 +4650,7 @@ fun AwaitingCard(
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            text = "Cancel challenge",
+                                            text = "Remove challenge",
                                             color = Color(0xFFEF4444),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold,
@@ -4871,7 +4886,8 @@ fun RivalCard(
                         text = "Clear Rivalry?",
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.semantics { heading() }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     val totalMatches = maxOf(rival.matches, rival.wins + rival.losses + rival.ties)

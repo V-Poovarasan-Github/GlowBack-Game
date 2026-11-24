@@ -3578,7 +3578,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 }
                 AlertDialog(
                     onDismissRequest = { activeDialog = ActiveDialog.NONE },
-                    title = { Text(text = "Abandon Active Match?", color = Color.White, fontWeight = FontWeight.Bold) },
+                    title = { Text(text = "Abandon Active Match?", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() }) },
                     text = {
                         Text(
                             text = "You have an unfinished $modeLabel match (Round ${activeRunState!!.round}). Starting a new match will discard this progress.",
@@ -5171,7 +5171,7 @@ private fun SettingsSheetDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = if (isMidRun) "Game Paused" else "Settings", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(text = if (isMidRun) "Game Paused" else "Settings", color = Color(0xFFF8FAFC), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.semantics { heading() })
                     IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_close_button")) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = if (isMidRun) "Close Pause Menu" else "Close Settings", tint = Color(0xFF94A3B8))
                     }
@@ -5450,6 +5450,7 @@ private fun SettingsSheetDialog(
 
                     val settingsScope = rememberCoroutineScope()
                     var isResetFlashing by remember { mutableStateOf(false) }
+                    var showResetWinsConfirm by remember { mutableStateOf(false) }
                     var isDoneFlashing by remember { mutableStateOf(false) }
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -5465,12 +5466,7 @@ private fun SettingsSheetDialog(
                             OutlinedButton(
                                 onClick = {
                                     if (isResetFlashing) return@OutlinedButton
-                                    onResetMultiplayerWins()
-                                    isResetFlashing = true
-                                    settingsScope.launch {
-                                        flashDelayMs(600L)
-                                        isResetFlashing = false
-                                    }
+                                    showResetWinsConfirm = true
                                 },
                                 shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(
@@ -5484,11 +5480,100 @@ private fun SettingsSheetDialog(
                                 modifier = Modifier.testTag("reset_wins_button")
                             ) {
                                 Text(
-                                    text = if (isResetFlashing) "✓ Reset!" else "Reset Wins",
+                                    text = if (isResetFlashing) "✓ Reset!" else "Reset Records",
                                     color = if (isResetFlashing) Color(0xFF34D399) else Color(0xFFEF4444),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                        }
+                    }
+
+                    if (showResetWinsConfirm) {
+                        val resetAccent = Color(0xFFEF4444)
+                        Dialog(
+                            onDismissRequest = { showResetWinsConfirm = false },
+                            properties = DialogProperties(
+                                dismissOnBackPress = true,
+                                dismissOnClickOutside = true,
+                                usePlatformDefaultWidth = false
+                            )
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp)
+                                    .widthIn(max = 420.dp)
+                                    .testTag("reset_wins_confirm_dialog"),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                                border = BorderStroke(1.5.dp, resetAccent.copy(alpha = 0.75f))
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Text(
+                                        text = "Reset all Pass & Play records?",
+                                        color = Color.White,
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.semantics { heading() }
+                                    )
+
+                                    Text(
+                                        text = "This erases all saved wins and survival records for players 1-4. It can't be undone.",
+                                        color = Color(0xFFCBD5E1),
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    Button(
+                                        onClick = { showResetWinsConfirm = false },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("reset_wins_cancel_button"),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF10B981),
+                                            contentColor = Color(0xFF090D16)
+                                        )
+                                    ) {
+                                        Text("Keep Records", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            showResetWinsConfirm = false
+                                            onResetMultiplayerWins()
+                                            isResetFlashing = true
+                                            settingsScope.launch {
+                                                flashDelayMs(600L)
+                                                isResetFlashing = false
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("reset_wins_confirm_button"),
+                                        shape = RoundedCornerShape(14.dp),
+                                        border = BorderStroke(1.5.dp, resetAccent),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = Color(0xFF0F172A),
+                                            contentColor = resetAccent
+                                        )
+                                    ) {
+                                        Text("Reset", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    }
+                                }
                             }
                         }
                     }
@@ -5572,7 +5657,8 @@ private fun NotificationPermissionDialog(
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { heading() }
                 )
 
                 Text(
@@ -5648,7 +5734,7 @@ private fun ExitChallengeConfirmDialog(
             when {
                 challenge.isFreeTries -> "Leaving now will forfeit your current attempt. You have Free (unlimited) tries when you resume."
                 isFinalTryForfeit -> "Leaving now will forfeit your final attempt and end the challenge as a LOSS (Best: $effectiveBestScore)."
-                else -> "Leaving now will forfeit your current attempt. You will have $remainingAfterForfeit tries remaining when you resume."
+                else -> "Leaving now will forfeit your current attempt. You will have $remainingAfterForfeit ${if (remainingAfterForfeit == 1) "try" else "tries"} remaining when you resume."
             }
         }
         isBeat -> {
@@ -5663,7 +5749,10 @@ private fun ExitChallengeConfirmDialog(
             // PASS 5.20 Rule 5 + PASS 5.35 Fix 2 (TIED):
             when {
                 challenge.isFreeTries -> "You've tied the target ($effectiveBestScore)! If you exit now, you can lock in your TIE or forfeit this try and keep Free tries for later."
-                remainingTriesForTie > 0 -> "You've tied the target ($effectiveBestScore)! If you exit now, you can lock in your TIE or forfeit this try and keep $remainingTriesForTie tries for later."
+                remainingTriesForTie > 0 -> {
+                    val tieTriesUnit = if (remainingTriesForTie == 1) "try" else "tries"
+                    "You've tied the target ($effectiveBestScore)! If you exit now, you can lock in your TIE or forfeit this try and keep $remainingTriesForTie $tieTriesUnit for later. Locking the tie ends the match and gives up your $remainingTriesForTie remaining $tieTriesUnit."
+                }
                 else -> "You've tied the target ($effectiveBestScore)! This is your final try — lock in your TIE now, or keep playing to push for a higher score?"
             }
         }
@@ -5702,7 +5791,9 @@ private fun ExitChallengeConfirmDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("exit_challenge_dialog_title")
+                    modifier = Modifier
+                        .testTag("exit_challenge_dialog_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -5868,7 +5959,9 @@ private fun OutboundRivalExitConfirmDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("exit_challenge_dialog_title")
+                    modifier = Modifier
+                        .testTag("exit_challenge_dialog_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -5969,7 +6062,9 @@ private fun RivalRestartConfirmDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("rival_restart_dialog_title")
+                    modifier = Modifier
+                        .testTag("rival_restart_dialog_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -6051,7 +6146,9 @@ private fun UnsharedRivalExitConfirmDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("unshared_rival_exit_title")
+                    modifier = Modifier
+                        .testTag("unshared_rival_exit_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -6145,7 +6242,9 @@ private fun VictoryDecisionDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("victory_decision_title")
+                    modifier = Modifier
+                        .testTag("victory_decision_title")
+                        .semantics { heading() }
                 )
 
                 Text(
@@ -6236,7 +6335,8 @@ private fun FirstNameSetupDialog(
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { heading() }
                 )
 
                 Text(
@@ -6372,7 +6472,9 @@ private fun OnboardingPopupDialog(onDismiss: () -> Unit) {
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Black,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("onboarding_title_text")
+                    modifier = Modifier
+                        .testTag("onboarding_title_text")
+                        .semantics { heading() }
                 )
 
                 Column(
@@ -6603,10 +6705,11 @@ private fun StatusBanner(
         }
         activeChallenge != null && isChallengeLost -> "Out of tries! Target was ${activeChallenge.targetScore} (Best: ${activeChallenge.bestScore})"
         activeChallenge != null && gameState == GameState.GAME_OVER -> {
+            val triesUnit = if (challengeAttemptsLeft == 1) "try" else "tries"
             if (failedStepNumber > 0) {
-                "Missed step $failedStepNumber of Round $sequenceSize (Score: $currentScore vs Target: ${activeChallenge.targetScore}) • $challengeAttemptsLeft tries left"
+                "Missed step $failedStepNumber of Round $sequenceSize (Score: $currentScore vs Target: ${activeChallenge.targetScore}) • $challengeAttemptsLeft $triesUnit left"
             } else {
-                "$challengeAttemptsLeft tries remaining to beat target of ${activeChallenge.targetScore}"
+                "$challengeAttemptsLeft $triesUnit remaining to beat target of ${activeChallenge.targetScore}"
             }
         }
         eliminatedBannerText != null -> eliminatedBannerText
@@ -7083,7 +7186,7 @@ private fun BottomActionSection(
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Retry Turn ($challengeAttemptsLeft tries left)", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "Retry Turn ($challengeAttemptsLeft ${if (challengeAttemptsLeft == 1) "try" else "tries"} left)", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
 
                 // PASS 5.19 Part 2 Bug 3 & Clarifying Answer #3:
