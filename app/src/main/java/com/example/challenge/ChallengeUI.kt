@@ -1608,6 +1608,15 @@ fun DidYouShareCardContent(
                 lineHeight = 18.sp,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Tap Track if you sent it. If not, nothing is saved.",
+                color = Color(0xFFCBD5E1),
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
             if (awaiting.code.isNotBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(
@@ -1703,7 +1712,7 @@ fun DidYouShareCardContent(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Cancel", color = Color(0xFF94A3B8))
+                    Text("I didn't share", color = Color(0xFF94A3B8), fontSize = 13.sp, maxLines = 1)
                 }
                 Button(
                     onClick = {

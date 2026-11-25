@@ -333,7 +333,53 @@ object ChallengeStorage {
     // PENDING SHARE (Process Death Survival)
     // ==========================================
 
-    fun savePendingShare(context: Context, awaiting: AwaitingChallenge) {
+    data class PendingShareRollbackSnapshot(
+        val prevLastSharedRival: String? = null,
+        val hadSentRecommendationBefore: Boolean = false,
+        val overwrittenPendingOutbound: PendingOutboundChallenge? = null,
+        val prevHasSharedCurrentRivalRun: Boolean = false
+    )
+
+    fun capturePendingShareRollbackSnapshot(
+        context: Context,
+        rivalName: String?,
+        gridTag: String,
+        difficulty: GameDifficulty,
+        seed: Int,
+        chainId: String,
+        prevHasSharedCurrentRivalRun: Boolean
+    ): PendingShareRollbackSnapshot {
+        val prevLastShared = getLastSharedRivalName(context)
+        if (rivalName.isNullOrBlank()) {
+            return PendingShareRollbackSnapshot(
+                prevLastSharedRival = prevLastShared,
+                hadSentRecommendationBefore = false,
+                overwrittenPendingOutbound = null,
+                prevHasSharedCurrentRivalRun = prevHasSharedCurrentRivalRun
+            )
+        }
+        val cleanRival = ChallengeSeed.sanitizePlayerName(rivalName)
+        val boardKey = buildRecommendationKey(gridTag, difficulty, seed)
+        val hadRec = getSentRecommendationsForRival(context, cleanRival).any {
+            it.equals(boardKey, ignoreCase = true)
+        }
+        val existingRival = findRivalByName(context, cleanRival)
+        val overwritten = existingRival?.pendingOutbounds?.firstOrNull {
+            chainId.isNotEmpty() && it.chainId.equals(chainId, ignoreCase = true)
+        }
+        return PendingShareRollbackSnapshot(
+            prevLastSharedRival = prevLastShared,
+            hadSentRecommendationBefore = hadRec,
+            overwrittenPendingOutbound = overwritten,
+            prevHasSharedCurrentRivalRun = prevHasSharedCurrentRivalRun
+        )
+    }
+
+    fun savePendingShare(
+        context: Context,
+        awaiting: AwaitingChallenge,
+        rollbackSnapshot: PendingShareRollbackSnapshot? = null
+    ) {
         val parsed = ChallengeSeed.parseChallengeCode(awaiting.code)
         saveOutboundChainTarget(
             context = context,
@@ -354,6 +400,27 @@ object ChallengeStorage {
             put("createdAt", awaiting.createdAt)
             if (awaiting.rivalName != null) {
                 put("rivalName", awaiting.rivalName)
+            }
+            if (rollbackSnapshot != null) {
+                put("hasRollbackSnapshot", true)
+                put("prevLastSharedRival", rollbackSnapshot.prevLastSharedRival ?: "")
+                put("hadSentRecommendationBefore", rollbackSnapshot.hadSentRecommendationBefore)
+                put("prevHasSharedCurrentRivalRun", rollbackSnapshot.prevHasSharedCurrentRivalRun)
+                val overwritten = rollbackSnapshot.overwrittenPendingOutbound
+                if (overwritten != null) {
+                    val oObj = JSONObject().apply {
+                        put("gridTag", overwritten.gridTag)
+                        put("difficulty", overwritten.difficulty.name)
+                        put("target", overwritten.target)
+                        put("tries", overwritten.tries)
+                        put("code", overwritten.code)
+                        put("mintedAt", overwritten.mintedAt)
+                        put("rivalName", overwritten.rivalName)
+                        put("seed", overwritten.seed)
+                        put("chainId", overwritten.chainId)
+                    }
+                    put("overwrittenPendingOutbound", oObj)
+                }
             }
         }
         prefs.edit().putString(KEY_PENDING_SHARE, obj.toString()).apply()
@@ -388,6 +455,79 @@ object ChallengeStorage {
             .edit()
             .remove(KEY_PENDING_SHARE)
             .apply()
+    }
+
+    /**
+     * Rolls back rival mutations performed before "Did you share it?" was cancelled or dismissed,
+     * and clears KEY_PENDING_SHARE. If the pending share was saved by an older build without
+     * snapshot fields (or is already cleared), skips the rollback and clears KEY_PENDING_SHARE.
+     * Returns the restored value for hasSharedCurrentRivalRun.
+     */
+    fun rollbackAndClearPendingShare(
+        context: Context,
+        currentHasSharedRivalRun: Boolean = false
+    ): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_PENDING_SHARE, null) ?: return currentHasSharedRivalRun
+        return try {
+            val obj = JSONObject(raw)
+            if (!obj.optBoolean("hasRollbackSnapshot", false)) {
+                clearPendingShare(context)
+                return currentHasSharedRivalRun
+            }
+            val rivalName = obj.optString("rivalName", "").trim()
+            val code = obj.optString("code", "").trim()
+            val chainId = obj.optString("chainId", "").trim()
+            val gridSizeTag = obj.optString("gridSizeTag", "2x2")
+            val diffName = obj.optString("difficulty", "EASY")
+            val difficulty = try { GameDifficulty.valueOf(diffName) } catch (_: Exception) { GameDifficulty.EASY }
+            val seed = ChallengeSeed.parseChallengeCode(code)?.seedInt ?: 0
+            val prevLastShared = obj.optString("prevLastSharedRival", "").trim().ifEmpty { null }
+            val hadRecBefore = obj.optBoolean("hadSentRecommendationBefore", false)
+            val restoredHasShared = obj.optBoolean("prevHasSharedCurrentRivalRun", currentHasSharedRivalRun)
+
+            val overwrittenObj = obj.optJSONObject("overwrittenPendingOutbound")
+            val overwrittenPending = if (overwrittenObj != null) {
+                val oDiffName = overwrittenObj.optString("difficulty", "EASY")
+                val oDiff = try { GameDifficulty.valueOf(oDiffName) } catch (_: Exception) { GameDifficulty.EASY }
+                PendingOutboundChallenge(
+                    gridTag = overwrittenObj.optString("gridTag", "2x2"),
+                    difficulty = oDiff,
+                    target = overwrittenObj.optInt("target", 5),
+                    tries = overwrittenObj.optInt("tries", 3),
+                    code = overwrittenObj.optString("code", ""),
+                    mintedAt = overwrittenObj.optLong("mintedAt", System.currentTimeMillis()),
+                    rivalName = overwrittenObj.optString("rivalName", rivalName),
+                    seed = overwrittenObj.optInt("seed", 0),
+                    chainId = overwrittenObj.optString("chainId", chainId)
+                )
+            } else null
+
+            if (rivalName.isNotEmpty()) {
+                rollbackRivalPendingOutbound(
+                    context = context,
+                    rivalName = rivalName,
+                    chainId = chainId,
+                    code = code,
+                    overwrittenEntry = overwrittenPending
+                )
+                if (!hadRecBefore && seed > 0) {
+                    removeSentRecommendation(
+                        context = context,
+                        rivalName = rivalName,
+                        gridTag = gridSizeTag,
+                        difficulty = difficulty,
+                        seed = seed
+                    )
+                }
+                setLastSharedRivalName(context, prevLastShared)
+            }
+            clearPendingShare(context)
+            restoredHasShared
+        } catch (_: Exception) {
+            clearPendingShare(context)
+            currentHasSharedRivalRun
+        }
     }
 
     // ==========================================
@@ -1240,6 +1380,43 @@ object ChallengeStorage {
             matchesChain || matchesSeed
         }
         if (updatedList.size != record.pendingOutbounds.size) {
+            rivals[index] = record.copy(pendingOutbounds = updatedList)
+            persistRivals(context, rivals)
+        }
+    }
+
+    /**
+     * Dedicated rollback helper for a cancelled/dismissed pending share:
+     * Removes the newly added PendingOutboundChallenge (matched by chainId and code)
+     * and restores only the one entry that the new share overwrote (if any),
+     * without replacing the rival's other pendingOutbounds or modifying updatedAt.
+     */
+    fun rollbackRivalPendingOutbound(
+        context: Context,
+        rivalName: String,
+        chainId: String,
+        code: String,
+        overwrittenEntry: PendingOutboundChallenge? = null
+    ) {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        if (cleanName.isEmpty()) return
+        val rivals = loadRivals(context).toMutableList()
+        val index = rivals.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
+        if (index < 0) return
+        val record = rivals[index]
+        val updatedList = record.pendingOutbounds.filterNot { item ->
+            val matchesChain = chainId.isNotEmpty() && item.chainId.equals(chainId, ignoreCase = true)
+            val matchesCode = code.isNotEmpty() && item.code.equals(code, ignoreCase = true)
+            if (chainId.isNotEmpty() && code.isNotEmpty()) {
+                matchesChain && matchesCode
+            } else {
+                matchesChain || matchesCode
+            }
+        }.toMutableList()
+        if (overwrittenEntry != null && updatedList.none { it.code.equals(overwrittenEntry.code, ignoreCase = true) }) {
+            updatedList.add(0, overwrittenEntry)
+        }
+        if (updatedList != record.pendingOutbounds) {
             rivals[index] = record.copy(pendingOutbounds = updatedList)
             persistRivals(context, rivals)
         }

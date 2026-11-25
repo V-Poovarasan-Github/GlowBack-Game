@@ -2950,6 +2950,20 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                 Toast.makeText(context, "Reach a score of 5 to unlock challenge sharing!", Toast.LENGTH_SHORT).show()
                                 return@BottomActionSection
                             }
+                            val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
+                            val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
+                            val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
+                            val gridTag = gridSize.keyPrefix
+                            val resolvedSeed = parsed?.seedInt ?: currentRunSeed
+                            val rollbackSnapshot = ChallengeStorage.capturePendingShareRollbackSnapshot(
+                                context = context,
+                                rivalName = shareRival,
+                                gridTag = gridTag,
+                                difficulty = difficultyMode,
+                                seed = resolvedSeed,
+                                chainId = chainId,
+                                prevHasSharedCurrentRivalRun = hasSharedCurrentRivalRun
+                            )
                             hasSharedCurrentRivalRun = true
                             ChallengeStorage.recordCreatedCode(context, generatedCode)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -2957,12 +2971,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Challenge code copied: $generatedCode", Toast.LENGTH_SHORT).show()
 
-                            val parsed = ChallengeSeed.parseChallengeCode(generatedCode)
-                            val chainId = parsed?.chainId?.ifEmpty { ChallengeSeed.generateChainId() } ?: ChallengeSeed.generateChainId()
-                            ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore, seedInt = parsed?.seedInt ?: currentRunSeed)
-                            val shareRival = activeChallenge?.rivalName ?: currentRivalNameForShare
-                            val gridTag = gridSize.keyPrefix
-                            val resolvedSeed = parsed?.seedInt ?: currentRunSeed
+                            ChallengeStorage.saveOutboundChainTarget(context, chainId, currentScore, seedInt = resolvedSeed)
                             if (!shareRival.isNullOrBlank()) {
                                 ChallengeStorage.setLastSharedRivalName(context, shareRival)
                                 ChallengeStorage.recordSentRecommendation(
@@ -2998,7 +3007,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                                 tries = selectedShareTries,
                                 rivalName = shareRival?.ifBlank { null }
                             )
-                            ChallengeStorage.savePendingShare(context, awaiting)
+                            ChallengeStorage.savePendingShare(context, awaiting, rollbackSnapshot)
                             awaitingChallengeForDialog = awaiting
                         },
                         onCopyFlashFinished = {
@@ -3246,7 +3255,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     activeDialog = ActiveDialog.NONE
                 },
                 onDismissDidYouShare = {
-                    ChallengeStorage.clearPendingShare(context)
+                    hasSharedCurrentRivalRun = ChallengeStorage.rollbackAndClearPendingShare(
+                        context = context,
+                        currentHasSharedRivalRun = hasSharedCurrentRivalRun
+                    )
                     awaitingChallengeForDialog = null
                     activeDialog = ActiveDialog.NONE
                 },
@@ -3292,13 +3304,22 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         chainId = chainId,
                         isRevenge = false
                     )
-                    hasSharedCurrentRivalRun = true
-                    ChallengeStorage.recordCreatedCode(context, code)
-                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
                     val shareRival = runSnapshot?.lockedRivalName
                         ?: rivalRecSource?.rivalName
                         ?: activeChallenge?.rivalName
                         ?: currentRivalNameForShare
+                    val rollbackSnapshot = ChallengeStorage.capturePendingShareRollbackSnapshot(
+                        context = context,
+                        rivalName = shareRival,
+                        gridTag = gridTag,
+                        difficulty = chosenDiff,
+                        seed = seedToUse,
+                        chainId = chainId,
+                        prevHasSharedCurrentRivalRun = hasSharedCurrentRivalRun
+                    )
+                    hasSharedCurrentRivalRun = true
+                    ChallengeStorage.recordCreatedCode(context, code)
+                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
                     if (!shareRival.isNullOrBlank()) {
                         ChallengeStorage.setLastSharedRivalName(context, shareRival)
                         ChallengeStorage.recordSentRecommendation(
@@ -3339,7 +3360,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         tries = chosenTries,
                         rivalName = shareRival?.ifBlank { null }
                     )
-                    ChallengeStorage.savePendingShare(context, awaiting)
+                    ChallengeStorage.savePendingShare(context, awaiting, rollbackSnapshot)
                     awaitingChallengeForDialog = awaiting
                     activeDialog = ActiveDialog.DID_YOU_SHARE
                 },
@@ -3382,13 +3403,22 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         chainId = chainId,
                         isRevenge = false
                     )
-                    hasSharedCurrentRivalRun = true
-                    ChallengeStorage.recordCreatedCode(context, code)
-                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
                     val shareRival = runSnapshot?.lockedRivalName
                         ?: rivalRecSource?.rivalName
                         ?: activeChallenge?.rivalName
                         ?: currentRivalNameForShare
+                    val rollbackSnapshot = ChallengeStorage.capturePendingShareRollbackSnapshot(
+                        context = context,
+                        rivalName = shareRival,
+                        gridTag = gridTag,
+                        difficulty = chosenDiff,
+                        seed = seedToUse,
+                        chainId = chainId,
+                        prevHasSharedCurrentRivalRun = hasSharedCurrentRivalRun
+                    )
+                    hasSharedCurrentRivalRun = true
+                    ChallengeStorage.recordCreatedCode(context, code)
+                    ChallengeStorage.saveOutboundChainTarget(context, chainId, scoreToShare, seedInt = seedToUse)
                     if (!shareRival.isNullOrBlank()) {
                         ChallengeStorage.setLastSharedRivalName(context, shareRival)
                         ChallengeStorage.recordSentRecommendation(
@@ -3424,7 +3454,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         tries = chosenTries,
                         rivalName = shareRival?.ifBlank { null }
                     )
-                    ChallengeStorage.savePendingShare(context, awaiting)
+                    ChallengeStorage.savePendingShare(context, awaiting, rollbackSnapshot)
                     // Requirement 2: Close dialog so NOTHING renders while system share sheet is open.
                     // "Did you share it?" will trigger on ON_RESUME after user returns from the chooser.
                     awaitingChallengeForDialog = null
@@ -3664,7 +3694,10 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 DidYouShareDialog(
                     awaiting = awaiting,
                     onDismiss = {
-                        ChallengeStorage.clearPendingShare(context)
+                        hasSharedCurrentRivalRun = ChallengeStorage.rollbackAndClearPendingShare(
+                            context = context,
+                            currentHasSharedRivalRun = hasSharedCurrentRivalRun
+                        )
                         awaitingChallengeForDialog = null
                         activeDialog = ActiveDialog.NONE
                     },

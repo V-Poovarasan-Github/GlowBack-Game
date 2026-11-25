@@ -9832,7 +9832,324 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
         assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
     }
+
+    @Test
+    fun cancelledRivalShare_copyCode_generateCard_andBackDismiss_rollsBackAllRivalState_andRestoresOverwrittenOutbound() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.setLastSharedRivalName(context, "OTHER")
+
+        // Seed a qualifying Classic score (2x2 Classic Easy = 11, seed = 22211) and Rival ALEX
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 11, seed = 22211)
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 6,
+            targetScore = 8,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "ALX"
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Navigate to Rivalry tab -> tap ALEX's dynamic button -> tap recommendation chip -> Copy Code -> "I didn't share"
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // Verify new wording on "Did you share it?" dialog
+        composeTestRule.onNodeWithText("Tap Track if you sent it. If not, nothing is saved.").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("did_you_share_no_button")
+            .assertIsDisplayed()
+            .assertTextContains("I didn't share")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // 1. After "I didn't share" on Copy Code: no pending outbound, no awaiting banner, no recommendation recorded, lastSharedRival restored
+        assertNull(ChallengeStorage.getPendingShare(context))
+        val alexAfterCopyCancel = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        assertTrue("Rival pendingOutbounds must be empty after cancelling Copy Code", alexAfterCopyCancel.pendingOutbounds.isEmpty())
+        assertFalse(
+            "Cancelled recommendation must be removed from sent-recommendations ledger",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22211")
+        )
+        assertEquals("OTHER", ChallengeStorage.getLastSharedRivalName(context))
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").assertDoesNotExist()
+
+        // 2. Same for Generate Card -> ON_RESUME -> "I didn't share"
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("generate_card_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // Simulate returning from system share sheet via ON_RESUME
+        composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("did_you_share_no_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        assertNull(ChallengeStorage.getPendingShare(context))
+        val alexAfterGenCancel = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        assertTrue("Rival pendingOutbounds must be empty after cancelling Generate Card", alexAfterGenCancel.pendingOutbounds.isEmpty())
+        assertFalse(
+            "Cancelled Generate Card recommendation must be removed",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22211")
+        )
+        assertEquals("OTHER", ChallengeStorage.getLastSharedRivalName(context))
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").assertDoesNotExist()
+
+        // 3. Same for Back / outside dismissal
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("did_you_share_dialog").assertIsDisplayed()
+        composeTestRule.runOnUiThread {
+            val latestDialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            assertNotNull("Did you share dialog window must be active", latestDialog)
+            (latestDialog as androidx.activity.ComponentDialog).onBackPressedDispatcher.onBackPressed()
+        }
+        composeTestRule.waitForIdle()
+
+        assertNull(ChallengeStorage.getPendingShare(context))
+        val alexAfterBackCancel = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        assertTrue("Rival pendingOutbounds must be empty after Back dismissal", alexAfterBackCancel.pendingOutbounds.isEmpty())
+        assertFalse(
+            "Back-dismissed recommendation must be removed",
+            ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22211")
+        )
+        assertEquals("OTHER", ChallengeStorage.getLastSharedRivalName(context))
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").assertDoesNotExist()
+
+        // 4. Refinement 1 & 2 verification:
+        //    - Restores ONLY the single pendingOutbound entry overwritten by chainId (leaving other entries and updatedAt intact)
+        //    - Restores prevHasSharedCurrentRivalRun (both true and false)
+        //    - Legacy pending share without snapshot fields skips rollback and clears cleanly
+        val priorSameChain = com.example.challenge.PendingOutboundChallenge(
+            gridTag = "3x3",
+            difficulty = GameDifficulty.EASY,
+            target = 9,
+            tries = 3,
+            code = "3X3-9-T3E-HERO-ALX-33309-Z",
+            mintedAt = 1000L,
+            rivalName = "ALEX",
+            seed = 33309,
+            chainId = "ALX"
+        )
+        val priorOtherChain = com.example.challenge.PendingOutboundChallenge(
+            gridTag = "4x4",
+            difficulty = GameDifficulty.HARD,
+            target = 10,
+            tries = 3,
+            code = "4X4-10-T3H-HERO-AL2-44410-Z",
+            mintedAt = 900L,
+            rivalName = "ALEX",
+            seed = 44410,
+            chainId = "AL2"
+        )
+        ChallengeStorage.addRivalPendingOutbound(context, "ALEX", priorOtherChain)
+        ChallengeStorage.addRivalPendingOutbound(context, "ALEX", priorSameChain)
+
+        val snap = ChallengeStorage.capturePendingShareRollbackSnapshot(
+            context = context,
+            rivalName = "ALEX",
+            gridTag = "2x2",
+            difficulty = GameDifficulty.EASY,
+            seed = 22211,
+            chainId = "ALX",
+            prevHasSharedCurrentRivalRun = true
+        )
+        val newCode = ChallengeSeed.formatChallengeCode("2x2", 11, 3, GameDifficulty.EASY, 22211, "HERO", "ALX", false)
+        ChallengeStorage.setLastSharedRivalName(context, "ALEX")
+        ChallengeStorage.recordSentRecommendation(context, "ALEX", "2x2", GameDifficulty.EASY, 22211)
+        ChallengeStorage.addRivalPendingOutbound(
+            context,
+            "ALEX",
+            com.example.challenge.PendingOutboundChallenge("2x2", GameDifficulty.EASY, 11, 3, newCode, 2000L, "ALEX", 22211, "ALX")
+        )
+        val updatedAtAfterAdd = ChallengeStorage.findRivalByName(context, "ALEX")!!.updatedAt
+        ChallengeStorage.savePendingShare(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "ALX",
+                code = newCode,
+                gridSizeTag = "2x2",
+                targetScore = 11,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = "ALEX"
+            ),
+            snap
+        )
+
+        val restoredHasShared = ChallengeStorage.rollbackAndClearPendingShare(context, currentHasSharedRivalRun = false)
+        assertTrue("rollbackAndClearPendingShare must restore prevHasSharedCurrentRivalRun = true", restoredHasShared)
+        // Calling rollback a second time (double-cancel) must be a no-op
+        assertTrue(ChallengeStorage.rollbackAndClearPendingShare(context, currentHasSharedRivalRun = true))
+
+        val alexAfterRestore = ChallengeStorage.findRivalByName(context, "ALEX")!!
+        assertEquals("rollback must not modify rival updatedAt", updatedAtAfterAdd, alexAfterRestore.updatedAt)
+        assertEquals(2, alexAfterRestore.pendingOutbounds.size)
+        assertTrue("Overwritten ALX entry must be restored", alexAfterRestore.pendingOutbounds.any { it.code == priorSameChain.code })
+        assertTrue("Unrelated AL2 entry must remain untouched", alexAfterRestore.pendingOutbounds.any { it.code == priorOtherChain.code })
+        assertFalse("Cancelled new entry must be removed", alexAfterRestore.pendingOutbounds.any { it.code == newCode })
+
+        // Legacy pending share saved without snapshot fields: skips rollback and clears pending share
+        ChallengeStorage.savePendingShare(
+            context,
+            com.example.challenge.AwaitingChallenge(
+                chainId = "ALX",
+                code = priorSameChain.code,
+                gridSizeTag = "3x3",
+                targetScore = 9,
+                difficulty = GameDifficulty.EASY,
+                paceName = "Classic",
+                tries = 3,
+                rivalName = "ALEX"
+            ),
+            rollbackSnapshot = null
+        )
+        ChallengeStorage.rollbackAndClearPendingShare(context, currentHasSharedRivalRun = false)
+        assertNull(ChallengeStorage.getPendingShare(context))
+        assertEquals(
+            "Legacy pending share without snapshot fields must not alter rival pendingOutbounds",
+            2,
+            ChallengeStorage.findRivalByName(context, "ALEX")!!.pendingOutbounds.size
+        )
+    }
+
+    @Test
+    fun cancelledRivalShare_thenShareAgainToSameRival_andConfirm_worksCleanly() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 11, seed = 22211)
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "ALEX",
+            userScore = 6,
+            targetScore = 8,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "ALX"
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. First attempt: start rival share -> Copy Code -> tap "I didn't share" (cancel)
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("did_you_share_no_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Second attempt to the SAME rival: recommendation chip 2x2 Easy 11 is still available (not blocked by leftover state)
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_recommendation_chip_2x2_easy").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        // Confirm "Track It" -> awaiting challenge saved, rival shows "⏳ AWAITING REPLY", recommendation recorded
+        composeTestRule.onNodeWithTag("did_you_share_yes_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).any { it.rivalName.equals("ALEX", ignoreCase = true) })
+        assertEquals(1, ChallengeStorage.findRivalByName(context, "ALEX")!!.pendingOutbounds.size)
+        assertTrue(ChallengeStorage.getSentRecommendationsForRival(context, "ALEX").contains("2x2:easy:22211"))
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_ALEX").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun soloShareNoRival_cancel_behavesAsToday() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+        ChallengeStorage.setLastSharedRivalName(context, "KEEP_ME")
+        writeBestScore(prefs, GridSize.TWO_BY_TWO, PaceMode.CLASSIC, GameDifficulty.EASY, score = 9, seed = 22209)
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Open Share to Everyone (no rival) from Rivalry tab -> Copy Code -> "I didn't share"
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("empty_share_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tries_selector_copy_code_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(250L)
+        composeTestRule.waitForIdle()
+
+        assertNotNull(ChallengeStorage.getPendingShare(context))
+        composeTestRule.onNodeWithTag("did_you_share_no_button")
+            .assertIsDisplayed()
+            .assertTextContains("I didn't share")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        assertNull(ChallengeStorage.getPendingShare(context))
+        assertTrue(ChallengeStorage.loadAwaitingChallenges(context).isEmpty())
+        assertEquals("KEEP_ME", ChallengeStorage.getLastSharedRivalName(context))
+    }
 }
+
 
 
 
