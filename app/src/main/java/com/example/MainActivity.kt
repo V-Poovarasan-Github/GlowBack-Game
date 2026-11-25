@@ -2199,6 +2199,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                 } else {
                     showReplyHint = false
                     val isNormalSoloScore5 = gameMode == GameMode.SOLO &&
+                        paceMode == PaceMode.CLASSIC &&
                         !isOutboundRivalRun &&
                         !isRevengeRun &&
                         currentScore >= 5 &&
@@ -2919,7 +2920,6 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         isOutboundRivalRun = isOutboundRivalRun,
                         revengeTargetScore = revengeTargetScore,
                         showChallengeNudge = showChallengeNudge,
-                        onDismissChallengeNudge = { showChallengeNudge = false },
                         onReplyCopied = {
                             sharedPrefs.edit().putBoolean(KEY_REPLY_HINT_DONE, true).apply()
                             showReplyHint = false
@@ -3529,6 +3529,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     activeDialog = ActiveDialog.NONE
                     showReplyHint = false
                     val isNormalSoloScore5 = gameMode == GameMode.SOLO &&
+                        paceMode == PaceMode.CLASSIC &&
                         activeChallenge == null &&
                         !isOutboundRivalRun &&
                         !isRevengeRun &&
@@ -7180,7 +7181,6 @@ private fun BottomActionSection(
     isOutboundRivalRun: Boolean = false,
     revengeTargetScore: Int = 0,
     showChallengeNudge: Boolean = false,
-    onDismissChallengeNudge: () -> Unit = {},
     onReplyCopied: () -> Unit = {},
     onStartOrRetry: () -> Unit,
     onResumeSavedRun: () -> Unit = {},
@@ -7527,76 +7527,35 @@ private fun BottomActionSection(
             }
 
             if (showChallengeNudge && activeChallenge == null && !isOutboundRivalRun && !isRevengeRun && currentScore >= 5) {
-                Card(
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {}
                         .testTag("score5_nudge_card"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f))
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF0F172A).copy(alpha = 0.92f),
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "You hit 5! 🎉",
-                            color = Color(0xFFF8FAFC),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.semantics { heading() }
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "Challenge a friend with this score, or keep playing.",
+                            text = "You hit 5! 🎉 Tap Share Challenge to dare a friend with this score, or keep playing.",
                             color = Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = FontWeight.Medium
                         )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Button(
-                                onClick = onShareChallenge,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp)
-                                    .testTag("score5_nudge_share_button"),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF00E5FF),
-                                    contentColor = Color(0xFF090D16)
-                                )
-                            ) {
-                                Text(
-                                    text = "Challenge a Friend",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1
-                                )
-                            }
-                            TextButton(
-                                onClick = onDismissChallengeNudge,
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("score5_nudge_dismiss_button"),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = "Not now",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                            }
-                        }
                     }
                 }
             }

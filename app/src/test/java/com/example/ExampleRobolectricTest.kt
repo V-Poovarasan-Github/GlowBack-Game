@@ -9574,47 +9574,71 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
         assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
 
-        // 2. Solo Game Over at score 5 -> Hint B fires once, marks KEY_SCORE5_NUDGE_SEEN = true
+        // 2. Solo Game Over at score 5 -> compact text-only Hint B fires once, marks KEY_SCORE5_NUDGE_SEEN = true
         playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
-        composeTestRule.onNodeWithTag("score5_nudge_card").assertIsDisplayed()
-        val headingNode = composeTestRule.onNodeWithText("You hit 5! 🎉").assertIsDisplayed().fetchSemanticsNode()
-        assertTrue(
-            "Score-5 nudge title must have heading semantics",
-            androidx.compose.ui.semantics.SemanticsProperties.Heading in headingNode.config
-        )
-        composeTestRule.onNodeWithText("Challenge a friend with this score, or keep playing.").assertIsDisplayed()
-
-        val density = composeTestRule.density.density
-        val min48Px = 48f * density - 0.5f
-        val shareBounds = composeTestRule.onNodeWithTag("score5_nudge_share_button")
+        composeTestRule.onNodeWithTag("score5_nudge_card")
             .assertIsDisplayed()
-            .assertTextContains("Challenge a Friend")
-            .fetchSemanticsNode().boundsInRoot
-        val dismissBounds = composeTestRule.onNodeWithTag("score5_nudge_dismiss_button")
-            .assertIsDisplayed()
-            .assertTextContains("Not now")
-            .fetchSemanticsNode().boundsInRoot
-        assertTrue("Challenge a Friend button height >= 48dp", shareBounds.height >= min48Px)
-        assertTrue("Not now button height >= 48dp", dismissBounds.height >= min48Px)
+            .assertTextContains("You hit 5! 🎉 Tap Share Challenge to dare a friend with this score, or keep playing.")
+        composeTestRule.onNodeWithTag("score5_nudge_share_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("score5_nudge_dismiss_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
         assertTrue(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
 
-        // 3. Tap "Not now" -> hides the card on this screen
-        composeTestRule.onNodeWithTag("score5_nudge_dismiss_button").performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
-
-        // 4. Play again to score 5 -> never shows again once KEY_SCORE5_NUDGE_SEEN is true
+        // 3. Play again to score 5 -> never shows again once KEY_SCORE5_NUDGE_SEEN is true
         playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
         composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
 
-        // 5. Reset KEY_SCORE5_NUDGE_SEEN to test "Challenge a Friend" opens the exact same share flow
+        // 4. Reset KEY_SCORE5_NUDGE_SEEN to test tapping the sole Share Challenge button resets showChallengeNudge and opens the share sheet
         prefs.edit().putBoolean(KEY_SCORE5_NUDGE_SEEN, false).commit()
         playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
         composeTestRule.onNodeWithTag("score5_nudge_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("score5_nudge_share_button").performClick()
+        composeTestRule.onNodeWithTag("share_challenge_button").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
         composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+    }
+
+    @Test
+    fun hintB_score5Nudge_doesNotFireOnProgressiveScore5_andDoesNotSetSeenFlag() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Switch pace to Progressive via Settings sheet
+        composeTestRule.onNodeWithTag("config_pill_grid").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pace_mode_progressive").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_close_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 1. Progressive Solo Game Over at score 5 -> must NOT show Hint B and must NOT set KEY_SCORE5_NUDGE_SEEN
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+
+        // 2. Switch back to Classic pace -> first Classic score 5+ still gets Hint B once
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("config_pill_grid").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pace_mode_classic").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_close_button").performClick()
+        composeTestRule.waitForIdle()
+
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
+        composeTestRule.onNodeWithTag("score5_nudge_card")
+            .assertIsDisplayed()
+            .assertTextContains("You hit 5! 🎉 Tap Share Challenge to dare a friend with this score, or keep playing.")
+        assertTrue(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
     }
 
     @Test
