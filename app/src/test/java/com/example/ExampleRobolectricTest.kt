@@ -2086,9 +2086,10 @@ class ExampleRobolectricTest {
             .assertIsDisplayed()
             .assertTextContains("In Progress: 2 tries left", substring = true)
 
-        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX")
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_ALEX")
             .assertIsDisplayed()
-            .assertTextContains("Resume (2 left)", substring = true)
+            .assertTextContains("▶ Resume Challenge", substring = true)
+            .assertTextContains("2 tries left", substring = true)
             .performClick()
         composeTestRule.waitForIdle()
 
@@ -2691,8 +2692,8 @@ class ExampleRobolectricTest {
         assertNotNull(alexAfterReadyExit)
         assertEquals("Rule 4: Exiting on Ready gate must preserve all 3 tries", 3, alexAfterReadyExit!!.inProgressTriesLeft)
 
-        // 3. Resume ALEX's challenge from Rivalry tab ("Resume (3 left)")
-        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").performClick()
+        // 3. Resume ALEX's challenge from Rivalry tab ("Resume Challenge - 3 tries left")
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_ALEX").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
 
@@ -2795,7 +2796,7 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_dynamic_button_WIN_RIVAL").performClick()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_WIN_RIVAL").performClick()
         composeTestRule.waitForIdle()
 
         // Dismiss Ready gate so we are mid-round with effectiveBest (6) > target (5)
@@ -2958,7 +2959,7 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("rival_dynamic_button_LOCK21").performClick()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_LOCK21").performClick()
         composeTestRule.waitForIdle()
 
         // Dismiss Ready gate and play Round 1 + Round 2 so currentScore reaches 2 (> targetScore 1), while ch.bestScore is 4
@@ -8284,7 +8285,12 @@ class ExampleRobolectricTest {
 
         for ((name, expectedLabel) in expectedActions) {
             composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_$name"))
-            composeTestRule.onNodeWithTag("rival_dynamic_button_$name").assertTextContains(expectedLabel)
+            if (name == "PROG_RIVAL") {
+                composeTestRule.onNodeWithTag("rival_resume_challenge_entry_$name").assertIsDisplayed()
+                composeTestRule.onNodeWithTag("rival_dynamic_button_$name").assertDoesNotExist()
+            } else {
+                composeTestRule.onNodeWithTag("rival_dynamic_button_$name").assertTextContains(expectedLabel)
+            }
             composeTestRule.onNodeWithTag("rival_chevron_$name").performClick()
             composeTestRule.waitForIdle()
             composeTestRule.onNodeWithTag("rival_menu_button_$name").performClick()
@@ -10148,10 +10154,238 @@ class ExampleRobolectricTest {
         assertTrue(ChallengeStorage.loadAwaitingChallenges(context).isEmpty())
         assertEquals("KEEP_ME", ChallengeStorage.getLastSharedRivalName(context))
     }
+
+    @Test
+    fun inProgressRivalCard_expandedShowsSingleResumeEntry_collapsedMenuKeepsResume_andNonInProgressKeepDynamicButton() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val progCode = ChallengeSeed.formatChallengeCode("3x3", 8, 3, GameDifficulty.HARD, 33308, "ALEX", "ALX", false)
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "ALEX",
+                wins = 0,
+                losses = 0,
+                ties = 0,
+                matches = 0,
+                lastGrid = "3x3",
+                lastDifficulty = GameDifficulty.HARD,
+                lastTarget = 8,
+                lastUserScore = 5,
+                lastStatus = "IN_PROGRESS",
+                inProgressMaxTries = 3,
+                inProgressTriesLeft = 2,
+                updatedAt = 5000L
+            )
+        )
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = progCode,
+                rivalName = "ALEX",
+                gridSizeTag = "3x3",
+                targetScore = 8,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 5,
+                seed = 33308,
+                difficulty = GameDifficulty.HARD,
+                chainId = "ALX"
+            )
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "LOST_RIV",
+            userScore = 4,
+            targetScore = 9,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "LST"
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "TIED_RIV",
+            userScore = 7,
+            targetScore = 7,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "TID"
+        )
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "WON_RIV",
+            userScore = 10,
+            targetScore = 6,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "WON"
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // 1. Expanded IN_PROGRESS card without pendingOutbounds:
+        //    shows rival_resume_challenge_entry_ALEX (Role.Button, >= 48dp height, full text)
+        //    and does NOT render rival_dynamic_button_ALEX. Paste Code button remains displayed.
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ALEX"))
+        val entryInteraction = composeTestRule.onNodeWithTag("rival_resume_challenge_entry_ALEX")
+            .assertIsDisplayed()
+            .assertTextContains("▶ Resume Challenge", substring = true)
+            .assertTextContains("2 tries left - 3×3 Hard", substring = true)
+        val entryNode = entryInteraction.fetchSemanticsNode()
+        assertEquals(
+            androidx.compose.ui.semantics.Role.Button,
+            entryNode.config[androidx.compose.ui.semantics.SemanticsProperties.Role]
+        )
+        val density = composeTestRule.density.density
+        val entryHeightDp = (entryNode.boundsInRoot.bottom - entryNode.boundsInRoot.top) / density
+        assertTrue(
+            "Resume entry height must be at least 48dp (was $entryHeightDp)",
+            entryHeightDp >= 47.5f
+        )
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_paste_button_ALEX").assertIsDisplayed()
+
+        // 2. Non-IN_PROGRESS expanded cards (LOST, TIED, WON) still show rival_dynamic_button_...
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_LOST_RIV"))
+        composeTestRule.onNodeWithTag("rival_dynamic_button_LOST_RIV")
+            .assertIsDisplayed()
+            .assertTextContains("⚡ Get Revenge")
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_LOST_RIV").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_TIED_RIV"))
+        composeTestRule.onNodeWithTag("rival_dynamic_button_TIED_RIV")
+            .assertIsDisplayed()
+            .assertTextContains("🤝 Tie-Breaker")
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_TIED_RIV").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_WON_RIV"))
+        composeTestRule.onNodeWithTag("rival_dynamic_button_WON_RIV")
+            .assertIsDisplayed()
+            .assertTextContains("👑 Send Challenge")
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_WON_RIV").assertDoesNotExist()
+
+        // 3. Collapsed IN_PROGRESS card still has Resume in its dropdown menu
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ALEX"))
+        composeTestRule.onNodeWithTag("rival_chevron_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_ALEX").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_ALEX").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_menu_action_ALEX")
+            .assertIsDisplayed()
+            .assertTextContains("▶ Resume (2 left)")
+        composeTestRule.onNodeWithTag("rival_menu_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+
+        // Re-expand ALEX and tap the single Resume entry -> resumes the challenge on the Ready gate
+        composeTestRule.onNodeWithTag("rival_chevron_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun inProgressRivalCard_withPendingOutbound_showsDynamicResumeButton_andNeverZeroOrTwoResumeButtons() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        val progCode = ChallengeSeed.formatChallengeCode("2x2", 9, 3, GameDifficulty.EASY, 22209, "BLAKE", "BLK", false)
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "BLAKE",
+                wins = 0,
+                losses = 0,
+                ties = 0,
+                matches = 0,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 9,
+                lastUserScore = 4,
+                lastStatus = "IN_PROGRESS",
+                inProgressMaxTries = 3,
+                inProgressTriesLeft = 2,
+                updatedAt = 5000L
+            )
+        )
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = progCode,
+                rivalName = "BLAKE",
+                gridSizeTag = "2x2",
+                targetScore = 9,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 4,
+                seed = 22209,
+                difficulty = GameDifficulty.EASY,
+                chainId = "BLK"
+            )
+        )
+        // Add a pending outbound challenge to BLAKE while BLAKE is also IN_PROGRESS
+        val outboundCode = ChallengeSeed.formatChallengeCode("2x2", 11, 3, GameDifficulty.EASY, 22211, "HERO", "BLK", false)
+        ChallengeStorage.addRivalPendingOutbound(
+            context,
+            "BLAKE",
+            com.example.challenge.PendingOutboundChallenge(
+                gridTag = "2x2",
+                difficulty = GameDifficulty.EASY,
+                target = 11,
+                tries = 3,
+                code = outboundCode,
+                mintedAt = System.currentTimeMillis(),
+                rivalName = "BLAKE",
+                seed = 22211,
+                chainId = "BLK"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // When pendingOutbounds is non-empty, rival_resume_challenge_entry_BLAKE is not rendered,
+        // so rival_dynamic_button_BLAKE ("▶ Resume (2 left)") MUST be shown (exactly 1 Resume button, never 0 or 2).
+        composeTestRule.onNodeWithTag("rival_awaiting_banner_BLAKE").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("rival_resume_challenge_entry_BLAKE").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("rival_dynamic_button_BLAKE")
+            .assertIsDisplayed()
+            .assertTextContains("▶ Resume (2 left)")
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        // Tapping the dynamic Resume button resumes the challenge on the Ready gate
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
 }
-
-
-
-
 
 

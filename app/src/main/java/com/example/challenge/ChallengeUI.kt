@@ -5800,6 +5800,7 @@ fun RivalCard(
                     }
 
                     // Dynamic Action Button & Secondary Button
+                    val hasResumeEntry = rival.lastStatus == "IN_PROGRESS" && rival.pendingOutbounds.isEmpty()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -5807,41 +5808,43 @@ fun RivalCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Dynamic Button
-                        val (buttonLabel, buttonColor, buttonTextColor) = rivalDynamicActionSpec(rival)
+                        if (!hasResumeEntry) {
+                            // Dynamic Button
+                            val (buttonLabel, buttonColor, buttonTextColor) = rivalDynamicActionSpec(rival)
 
-                        val dynamicInteraction = remember { MutableInteractionSource() }
-                        Box(
-                            modifier = Modifier
-                                .weight(1.2f)
-                                .heightIn(min = 48.dp)
-                                .testTag("rival_dynamic_button_${rival.name}")
-                                .clickable(
-                                    interactionSource = dynamicInteraction,
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = onDynamicAction
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Surface(
+                            val dynamicInteraction = remember { MutableInteractionSource() }
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(38.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .indication(dynamicInteraction, ripple())
-                                    .testTag("rival_dynamic_visual_${rival.name}"),
-                                shape = RoundedCornerShape(10.dp),
-                                color = buttonColor,
-                                contentColor = buttonTextColor
+                                    .weight(1.2f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("rival_dynamic_button_${rival.name}")
+                                    .clickable(
+                                        interactionSource = dynamicInteraction,
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = onDynamicAction
+                                    ),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
+                                Surface(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 8.dp),
-                                    contentAlignment = Alignment.Center
+                                        .fillMaxWidth()
+                                        .height(38.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .indication(dynamicInteraction, ripple())
+                                        .testTag("rival_dynamic_visual_${rival.name}"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = buttonColor,
+                                    contentColor = buttonTextColor
                                 ) {
-                                    Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
                             }
                         }
@@ -5879,6 +5882,53 @@ fun RivalCard(
                                 ) {
                                     Text(text = "Paste Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
+                            }
+                        }
+                    }
+                }
+                if (rival.lastStatus == "IN_PROGRESS" && rival.pendingOutbounds.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val (buttonLabel, buttonColor, buttonTextColor) = rivalDynamicActionSpec(rival)
+                    val dynamicInteraction = remember { MutableInteractionSource() }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .heightIn(min = 48.dp)
+                                .testTag("rival_dynamic_button_${rival.name}")
+                                .clickable(
+                                    interactionSource = dynamicInteraction,
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onDynamicAction
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .indication(dynamicInteraction, ripple())
+                                    .testTag("rival_dynamic_visual_${rival.name}"),
+                                shape = RoundedCornerShape(10.dp),
+                                color = buttonColor,
+                                contentColor = buttonTextColor
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = buttonLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                             }
                         }
                     }
