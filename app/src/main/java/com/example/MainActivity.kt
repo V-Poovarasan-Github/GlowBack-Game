@@ -599,6 +599,9 @@ internal const val PREFS_NAME = "glowback_prefs"
 internal const val KEY_BEST_SCORE = "best_high_score"
 internal const val KEY_INSTRUMENT_INVITE_DISMISSED = "glowback_instrument_invite_dismissed_v1"
 internal const val KEY_CHALLENGE_NUDGE_SEEN = "glowback_challenge_nudge_v1"
+internal const val KEY_REPLY_HINT_DONE = "glowback_reply_hint_done_v1"
+internal const val KEY_REPLY_HINT_SHOWN = "glowback_reply_hint_shown_v1"
+internal const val KEY_SCORE5_NUDGE_SEEN = "glowback_score5_nudge_v1"
 internal const val KEY_AUDIO_VOLUME = "audio_volume"
 internal const val KEY_VIBRATE_ENABLED = "vibrate_enabled"
 internal const val KEY_FEEDBACK_MODE = "feedback_mode"
@@ -1016,10 +1019,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
     var hasDismissedInstrumentInvite by remember {
         mutableStateOf(sharedPrefs.getBoolean(KEY_INSTRUMENT_INVITE_DISMISSED, false))
     }
-    var hasSeenChallengeNudge by remember {
-        mutableStateOf(sharedPrefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
-    }
     var showChallengeNudge by remember { mutableStateOf(false) }
+    var showReplyHint by remember { mutableStateOf(false) }
     var activeRunState by remember {
         mutableStateOf(RunStateStorage.loadRunState(context)?.takeIf { it.modeName != GameMode.SOLO.name })
     }
@@ -1373,6 +1374,7 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
         isRedemptionTurnActive = false
         eliminatedBannerText = null
         showChallengeNudge = false
+        showReplyHint = false
     }
 
     fun saveActiveRun() {
@@ -2181,10 +2183,32 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         savedChallenges = ChallengeStorage.loadChallenges(context)
                     }
                     showChallengeNudge = false
-                } else if (!hasSeenChallengeNudge) {
-                    showChallengeNudge = true
-                    hasSeenChallengeNudge = true
-                    sharedPrefs.edit().putBoolean(KEY_CHALLENGE_NUDGE_SEEN, true).apply()
+                    val isFinishedChallengeBranch = !(challengeAttemptsLeft > 0 && !isChallengeWon)
+                    if (isFinishedChallengeBranch) {
+                        val replyDone = sharedPrefs.getBoolean(KEY_REPLY_HINT_DONE, false)
+                        val shownCount = sharedPrefs.getInt(KEY_REPLY_HINT_SHOWN, 0)
+                        if (!replyDone && shownCount < 3) {
+                            showReplyHint = true
+                            sharedPrefs.edit().putInt(KEY_REPLY_HINT_SHOWN, shownCount + 1).apply()
+                        } else {
+                            showReplyHint = false
+                        }
+                    } else {
+                        showReplyHint = false
+                    }
+                } else {
+                    showReplyHint = false
+                    val isNormalSoloScore5 = gameMode == GameMode.SOLO &&
+                        !isOutboundRivalRun &&
+                        !isRevengeRun &&
+                        currentScore >= 5 &&
+                        !sharedPrefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false)
+                    if (isNormalSoloScore5) {
+                        showChallengeNudge = true
+                        sharedPrefs.edit().putBoolean(KEY_SCORE5_NUDGE_SEEN, true).apply()
+                    } else {
+                        showChallengeNudge = false
+                    }
                 }
                 gameState = GameState.GAME_OVER
                 if (activeChallenge == null && !isOutboundRivalRun && !isRevengeRun) {
@@ -2890,10 +2914,16 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                         isChallengeTied = isChallengeTied,
                         isChallengeLost = isChallengeLost,
                         hasSentChallengeReply = hasSentChallengeReply,
+                        showReplyHint = showReplyHint,
                         isRevengeRun = isRevengeRun,
                         isOutboundRivalRun = isOutboundRivalRun,
                         revengeTargetScore = revengeTargetScore,
                         showChallengeNudge = showChallengeNudge,
+                        onDismissChallengeNudge = { showChallengeNudge = false },
+                        onReplyCopied = {
+                            sharedPrefs.edit().putBoolean(KEY_REPLY_HINT_DONE, true).apply()
+                            showReplyHint = false
+                        },
                         onResumeSavedRun = {
                             if (activeRunState != null) {
                                 resumeActiveRun(activeRunState!!)
@@ -2995,6 +3025,8 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                             isChallengeLost = false
                             hasRecordedChallengeOutcome = false
                             hasSentChallengeReply = false
+                            showReplyHint = false
+                            showChallengeNudge = false
                             cachedChallengeReplyCode = null
                             recordedChallengeReplyCode = null
                             isReplyShareInFlight = false
@@ -3495,6 +3527,19 @@ fun GlowbackGameScreen(modifier: Modifier = Modifier, launchCount: Int = 1, isSp
                     resumedBannerNote = null
                     discardActiveRun()
                     activeDialog = ActiveDialog.NONE
+                    showReplyHint = false
+                    val isNormalSoloScore5 = gameMode == GameMode.SOLO &&
+                        activeChallenge == null &&
+                        !isOutboundRivalRun &&
+                        !isRevengeRun &&
+                        currentScore >= 5 &&
+                        !sharedPrefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false)
+                    if (isNormalSoloScore5) {
+                        showChallengeNudge = true
+                        sharedPrefs.edit().putBoolean(KEY_SCORE5_NUDGE_SEEN, true).apply()
+                    } else {
+                        showChallengeNudge = false
+                    }
                     gameState = GameState.GAME_OVER
                 },
                 onQuitToHome = {
@@ -7130,10 +7175,13 @@ private fun BottomActionSection(
     isChallengeTied: Boolean = false,
     isChallengeLost: Boolean = false,
     hasSentChallengeReply: Boolean = false,
+    showReplyHint: Boolean = false,
     isRevengeRun: Boolean = false,
     isOutboundRivalRun: Boolean = false,
     revengeTargetScore: Int = 0,
     showChallengeNudge: Boolean = false,
+    onDismissChallengeNudge: () -> Unit = {},
+    onReplyCopied: () -> Unit = {},
     onStartOrRetry: () -> Unit,
     onResumeSavedRun: () -> Unit = {},
     onShareChallenge: () -> Unit = {},
@@ -7161,6 +7209,7 @@ private fun BottomActionSection(
         val triggerReplyWithFlash: (() -> Unit) -> Unit = { callback ->
             if (!isReplyFlashing) {
                 isReplyFlashing = true
+                onReplyCopied()
                 callback()
                 actionScope.launch {
                     flashDelayMs(600L)
@@ -7246,6 +7295,49 @@ private fun BottomActionSection(
                 }
             } else {
                 // Challenge is FINISHED (Won, Tied with 0 tries left, or Lost with 0 tries left)
+                if (showReplyHint && !hasSentChallengeReply) {
+                    val rawRivalName = activeChallenge.rivalName.trim()
+                    val displayRival = if (
+                        rawRivalName.isBlank() ||
+                        rawRivalName.equals("Unknown challenger", ignoreCase = true) ||
+                        rawRivalName.equals("UNKNOWN_CH", ignoreCase = true)
+                    ) {
+                        "your friend"
+                    } else {
+                        rawRivalName
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics(mergeDescendants = true) {}
+                            .testTag("reply_hint_card"),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF0F172A).copy(alpha = 0.92f),
+                        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Copy the reply code and send it to $displayRival, or they won't see your result.",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
                 val primaryColor = when {
                     hasSentChallengeReply || isReplyFlashing -> Color(0xFF10B981)
                     isChallengeWon -> Color(0xFF00E676)
@@ -7431,6 +7523,81 @@ private fun BottomActionSection(
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
                     )
+                }
+            }
+
+            if (showChallengeNudge && activeChallenge == null && !isOutboundRivalRun && !isRevengeRun && currentScore >= 5) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("score5_nudge_card"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "You hit 5! 🎉",
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.semantics { heading() }
+                        )
+                        Text(
+                            text = "Challenge a friend with this score, or keep playing.",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = onShareChallenge,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("score5_nudge_share_button"),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00E5FF),
+                                    contentColor = Color(0xFF090D16)
+                                )
+                            ) {
+                                Text(
+                                    text = "Challenge a Friend",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1
+                                )
+                            }
+                            TextButton(
+                                onClick = onDismissChallengeNudge,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("score5_nudge_dismiss_button"),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = "Not now",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

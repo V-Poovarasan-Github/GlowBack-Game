@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import com.example.KEY_REPLY_HINT_DONE
+import com.example.PREFS_NAME
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -3204,6 +3206,9 @@ fun HallOfFameScreen(
         mutableStateOf(ChallengeStorage.loadRivals(context))
     }
     var awaitingChallenges by remember(refreshTrigger) { mutableStateOf(ChallengeStorage.loadAwaitingChallenges(context)) }
+    var isReplyHintDone by remember(refreshTrigger) {
+        mutableStateOf(sharedPrefs.getBoolean(KEY_REPLY_HINT_DONE, false))
+    }
     var rivalForPasteCode by remember { mutableStateOf<RivalRecord?>(null) }
     var rivalForSetup by remember { mutableStateOf<RivalRecord?>(null) }
 
@@ -3212,6 +3217,7 @@ fun HallOfFameScreen(
         ChallengeStorage.sweepExpiredLastReplies(context)
         rivals = ChallengeStorage.loadRivals(context)
         awaitingChallenges = ChallengeStorage.loadAwaitingChallenges(context)
+        isReplyHintDone = sharedPrefs.getBoolean(KEY_REPLY_HINT_DONE, false)
     }
 
     // Back arrow / system back exits search first, then navigates back
@@ -3534,7 +3540,10 @@ fun HallOfFameScreen(
                             }
                         }
                     },
+                    isReplyHintDone = isReplyHintDone,
                     onSendReply = { _ ->
+                        sharedPrefs.edit().putBoolean(KEY_REPLY_HINT_DONE, true).apply()
+                        isReplyHintDone = true
                         refreshData()
                     },
                     onDismissExpandTooltip = {
@@ -3664,6 +3673,7 @@ fun RivalryTabContent(
     onPasteNewCode: (RivalRecord) -> Unit,
     onDeleteRival: (RivalRecord) -> Unit,
     onDeleteAwaiting: (AwaitingChallenge) -> Unit,
+    isReplyHintDone: Boolean? = null,
     onSendReply: (RivalRecord) -> Unit = {},
     onDismissExpandTooltip: () -> Unit = {},
     onShareCode: () -> Unit,
@@ -4034,6 +4044,7 @@ fun RivalryTabContent(
                                 clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Challenge Code", pending.code))
                                 Toast.makeText(context, "Challenge code re-copied: ${pending.code}", Toast.LENGTH_SHORT).show()
                             },
+                            isReplyHintDone = isReplyHintDone,
                             onSendReply = {
                                 onSendReply(rival)
                             },
@@ -4847,6 +4858,7 @@ fun RivalCard(
     onToggleExpand: () -> Unit = {},
     onDynamicAction: () -> Unit,
     onPasteNewCode: () -> Unit,
+    isReplyHintDone: Boolean? = null,
     onSendReply: () -> Unit = {},
     onPasteReplyCode: (() -> Unit)? = null,
     onRecopyCode: ((PendingOutboundChallenge) -> Unit)? = null,
@@ -4854,6 +4866,13 @@ fun RivalCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var localReplyHintDone by remember(rival.name) {
+        mutableStateOf(
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_REPLY_HINT_DONE, false)
+        )
+    }
+    val effectiveReplyHintDone = isReplyHintDone ?: localReplyHintDone
     val isReducedMotion = rememberIsReducedMotionEnabled()
     var showClearConfirm by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
@@ -5632,6 +5651,11 @@ fun RivalCard(
                                                 clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
                                             }
                                             ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                                .edit()
+                                                .putBoolean(KEY_REPLY_HINT_DONE, true)
+                                                .apply()
+                                            localReplyHintDone = true
                                             Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
                                             onSendReply()
                                         }
@@ -5670,6 +5694,41 @@ fun RivalCard(
                                     }
                                 }
                             }
+                            if (!effectiveReplyHintDone) {
+                                val rawRival = rival.name.trim()
+                                val displayRival = if (
+                                    rawRival.isBlank() ||
+                                    rawRival.equals("Unknown challenger", ignoreCase = true) ||
+                                    rawRival.equals("UNKNOWN_CH", ignoreCase = true)
+                                ) {
+                                    "your friend"
+                                } else {
+                                    rawRival
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(end = 10.dp, top = 2.dp, bottom = 2.dp)
+                                        .semantics(mergeDescendants = true) {}
+                                        .testTag("reply_hint_card_${rival.name}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Info,
+                                        contentDescription = null,
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = "Send this to $displayRival, or they won't see your result.",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        lineHeight = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
                         } else {
                             val ageStr = formatTimeAgo(selectedReply.copiedAt!!)
                             val replySentInteraction = remember { MutableInteractionSource() }
@@ -5689,6 +5748,11 @@ fun RivalCard(
                                                 clipboard?.setPrimaryClip(ClipData.newPlainText("Glowback Reply Code", replyCodeToCopy))
                                             }
                                             ChallengeStorage.markReplySent(context, rival.name, replyCodeToCopy)
+                                            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                                .edit()
+                                                .putBoolean(KEY_REPLY_HINT_DONE, true)
+                                                .apply()
+                                            localReplyHintDone = true
                                             Toast.makeText(context, "Reply code copied", Toast.LENGTH_SHORT).show()
                                             onSendReply()
                                         }

@@ -135,6 +135,8 @@ class StoreScreenshotTest {
         prefs.edit()
             .putBoolean(KEY_INSTRUMENT_INVITE_DISMISSED, true)
             .putBoolean(KEY_CHALLENGE_NUDGE_SEEN, true)
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
             .putBoolean(KEY_SCORES_MIGRATED_V2, true)
             .putInt(KEY_LAUNCH_COUNT, 12)
             .putInt("longest_survival_2p", 12)

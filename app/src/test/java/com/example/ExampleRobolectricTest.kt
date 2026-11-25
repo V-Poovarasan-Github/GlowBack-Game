@@ -508,29 +508,30 @@ class ExampleRobolectricTest {
 
         // 5. Trigger first Solo Game Over and verify 2x2 Game Over grid (PASS 2J Item 1)
         composeTestRule.mainClock.autoAdvance = false
-        assertFalse(prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
         composeTestRule.onNodeWithTag("start_game_button").performClick()
         composeTestRule.mainClock.advanceTimeBy(1300)
         // Intentionally miss on Round 1 by tapping wrong pad among the 4 pads
         for (tag in listOf("pad_green", "pad_red", "pad_yellow", "pad_blue")) {
             composeTestRule.onNodeWithTag(tag).performClick()
             composeTestRule.mainClock.advanceTimeBy(100)
-            if (prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false)) break
+            if (composeTestRule.onAllNodes(hasTestTag("game_over_home_button")).fetchSemanticsNodes().isNotEmpty()) break
         }
         composeTestRule.mainClock.advanceTimeBy(2500)
-        if (!prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false)) {
+        if (composeTestRule.onAllNodes(hasTestTag("game_over_home_button")).fetchSemanticsNodes().isEmpty()) {
             for (tag in listOf("pad_red", "pad_yellow", "pad_blue", "pad_green")) {
                 composeTestRule.onNodeWithTag(tag).performClick()
                 composeTestRule.mainClock.advanceTimeBy(100)
-                if (prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false)) break
+                if (composeTestRule.onAllNodes(hasTestTag("game_over_home_button")).fetchSemanticsNodes().isNotEmpty()) break
             }
         }
         composeTestRule.mainClock.advanceTimeBy(400)
-        assertTrue(prefs.getBoolean(KEY_CHALLENGE_NUDGE_SEEN, false))
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
 
         // 6. PASS 2H, PASS 2J & PASS 5.19 Stage A #2: Verify Solo Game Over buttons (Play Again, Home, Share Challenge; standalone Copy Challenge removed)
         composeTestRule.mainClock.autoAdvance = true
         composeTestRule.onNodeWithTag("challenge_nudge_chip").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
         composeTestRule.onNodeWithTag("start_game_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("game_over_home_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("share_challenge_button").assertIsDisplayed()
@@ -9321,7 +9322,494 @@ class ExampleRobolectricTest {
         assertEquals(0, prefs.getInt("longest_survival_4p", -1))
         assertEquals(9, prefs.getInt("best_2x2_classic", -1))
     }
+
+    private fun playSolo2x2EasyToExactScoreAndFail(targetScore: Int) {
+        composeTestRule.onNodeWithTag("start_game_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val runSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+        val seq = ChallengeSeed.generateSequenceForRound(
+            seed = runSeed,
+            padCount = pads2x2.size,
+            difficulty = GameDifficulty.EASY,
+            round = targetScore + 1
+        )
+        for (round in 1..targetScore) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[seq[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+        composeTestRule.mainClock.advanceTimeBy(450L + (targetScore + 1) * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val wrongPad = pads2x2.first { it.id != pads2x2[seq[0]].id }
+        composeTestRule.onNodeWithTag(wrongPad.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(500L)
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun hintA_finishedChallengeShowsRivalName_absentOnTieWithTries_andHidesAfterCopyOnce() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Tie with tries left (3-try challenge tied on Try 1 -> 2 tries left): hint A MUST NOT show or increment counter
+        startAndTieChallengeOnGameOver(context = context, seed = 98001, tries = 3, chainId = "HA1", rivalName = "MAYA")
+        composeTestRule.onNodeWithTag("reply_hint_card").assertDoesNotExist()
+        assertEquals(0, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+        assertFalse(prefs.getBoolean(KEY_REPLY_HINT_DONE, false))
+
+        // Exit challenge without copying reply (on a tied try with remaining tries, dialog offers "Forfeit This Try")
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("exit_challenge_forfeit_tie_try_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Finished challenge result (1-try challenge tied with 0 tries left): hint A shows with rival name
+        startAndTieChallengeOnGameOver(context = context, seed = 98002, tries = 1, chainId = "HA2", rivalName = "MAYA")
+        composeTestRule.onNodeWithTag("reply_hint_card")
+            .assertIsDisplayed()
+            .assertTextContains("Copy the reply code and send it to MAYA, or they won't see your result.")
+        assertEquals(1, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+
+        // 3. Copy reply code once -> sets KEY_REPLY_HINT_DONE = true and hides card immediately
+        val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        while (shadowApp.nextStartedActivity != null) { /* drain */ }
+        composeTestRule.onNodeWithTag("challenge_reply_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(prefs.getBoolean(KEY_REPLY_HINT_DONE, false))
+        composeTestRule.onNodeWithTag("reply_hint_card").assertDoesNotExist()
+
+        val deadline = System.currentTimeMillis() + 5000L
+        while (shadowApp.peekNextStartedActivity() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+            composeTestRule.waitForIdle()
+        }
+        shadowApp.nextStartedActivity
+        composeTestRule.mainClock.advanceTimeBy(700L)
+        composeTestRule.waitForIdle()
+
+        // Exit and play another finished challenge -> hint A must stay permanently hidden
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        startAndTieChallengeOnGameOver(context = context, seed = 98003, tries = 1, chainId = "HA3", rivalName = "KAI")
+        composeTestRule.onNodeWithTag("reply_hint_card").assertDoesNotExist()
+        assertEquals(1, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+    }
+
+    @Test
+    fun hintA_hidesAfterThreeShows_andUsesYourFriendFallback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Show 1: "Unknown challenger" -> displays "your friend"
+        startAndTieChallengeOnGameOver(context = context, seed = 98010, tries = 1, chainId = "HAF1", rivalName = "Unknown challenger")
+        composeTestRule.onNodeWithTag("reply_hint_card")
+            .assertIsDisplayed()
+            .assertTextContains("Copy the reply code and send it to your friend, or they won't see your result.")
+        assertEquals(1, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Show 2: rival ZARA -> shown = 2
+        startAndTieChallengeOnGameOver(context = context, seed = 98011, tries = 1, chainId = "HAF2", rivalName = "ZARA")
+        composeTestRule.onNodeWithTag("reply_hint_card")
+            .assertIsDisplayed()
+            .assertTextContains("Copy the reply code and send it to ZARA, or they won't see your result.")
+        assertEquals(2, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Show 3: rival OMAR -> shown = 3
+        startAndTieChallengeOnGameOver(context = context, seed = 98012, tries = 1, chainId = "HAF3", rivalName = "OMAR")
+        composeTestRule.onNodeWithTag("reply_hint_card")
+            .assertIsDisplayed()
+            .assertTextContains("Copy the reply code and send it to OMAR, or they won't see your result.")
+        assertEquals(3, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Show 4: rival LUNA -> hidden because shown limit (3) reached
+        startAndTieChallengeOnGameOver(context = context, seed = 98013, tries = 1, chainId = "HAF4", rivalName = "LUNA")
+        composeTestRule.onNodeWithTag("reply_hint_card").assertDoesNotExist()
+        assertEquals(3, prefs.getInt(KEY_REPLY_HINT_SHOWN, 0))
+        assertFalse(prefs.getBoolean(KEY_REPLY_HINT_DONE, false))
+    }
+
+    @Test
+    fun hintA_rivalryCardReplyReady_showsCaptionUntilDone_andSetsDoneOnCopy() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        // Seed two reply-ready rival cards: named rival "MAYA" and "Unknown challenger"
+        // Use ChallengeStorage.recordMatchOutcome so lastReplies and isReplySent are populated identically to real matches,
+        // and manually insert "Unknown challenger" without sanitizePlayerName stripping the space.
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "MAYA",
+            userScore = 7,
+            targetScore = 5,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "RC1",
+            maxTries = 3,
+            seed = 111111
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "Unknown challenger",
+                wins = 0,
+                losses = 1,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 6,
+                lastUserScore = 4,
+                lastStatus = "LOST",
+                isReplySent = false,
+                lastReplyCode = "2X2-4-R3E-ALEX-RC2-22222-X",
+                gridStats = mapOf(
+                    "2x2" to com.example.challenge.GridStat(
+                        wins = 0,
+                        losses = 1,
+                        ties = 0,
+                        lastTarget = 6,
+                        lastDifficulty = GameDifficulty.EASY,
+                        lastStatus = "LOST",
+                        lastPlayedAt = System.currentTimeMillis()
+                    )
+                ),
+                lastReplies = mapOf(
+                    "2x2" to com.example.challenge.StoredReply(
+                        code = "2X2-4-R3E-ALEX-RC2-22222-X",
+                        mintedAt = System.currentTimeMillis(),
+                        copiedAt = null
+                    )
+                )
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // Open Rivalry tab -> both reply-ready cards show their captions while KEY_REPLY_HINT_DONE is false
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("rivalry_tab_content")
+            .performScrollToNode(hasTestTag("rival_card_Unknown challenger"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reply_hint_card_Unknown challenger")
+            .assertIsDisplayed()
+            .assertTextContains("Send this to your friend, or they won't see your result.")
+
+        composeTestRule.onNodeWithTag("rivalry_tab_content")
+            .performScrollToNode(hasTestTag("rival_card_MAYA"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reply_hint_card_MAYA")
+            .assertIsDisplayed()
+            .assertTextContains("Send this to MAYA, or they won't see your result.")
+
+        // Tap Copy Reply Code on MAYA -> sets KEY_REPLY_HINT_DONE = true and hides captions across ALL cards
+        composeTestRule.onNodeWithTag("rival_send_reply_button_MAYA").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(prefs.getBoolean(KEY_REPLY_HINT_DONE, false))
+        composeTestRule.onNodeWithTag("reply_hint_card_MAYA").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("reply_hint_card_Unknown challenger").assertDoesNotExist()
+    }
+
+    @Test
+    fun hintB_score5Nudge_firesOnceAtScore5_notAt4_dismissAndShareWork() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            // Verify upgrader path: legacy KEY_CHALLENGE_NUDGE_SEEN = true must NOT suppress the new score-5 hint!
+            .putBoolean(KEY_CHALLENGE_NUDGE_SEEN, true)
+            .commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        // 1. Solo Game Over at score 4 -> Hint B must NOT fire
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 4)
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+
+        // 2. Solo Game Over at score 5 -> Hint B fires once, marks KEY_SCORE5_NUDGE_SEEN = true
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertIsDisplayed()
+        val headingNode = composeTestRule.onNodeWithText("You hit 5! 🎉").assertIsDisplayed().fetchSemanticsNode()
+        assertTrue(
+            "Score-5 nudge title must have heading semantics",
+            androidx.compose.ui.semantics.SemanticsProperties.Heading in headingNode.config
+        )
+        composeTestRule.onNodeWithText("Challenge a friend with this score, or keep playing.").assertIsDisplayed()
+
+        val density = composeTestRule.density.density
+        val min48Px = 48f * density - 0.5f
+        val shareBounds = composeTestRule.onNodeWithTag("score5_nudge_share_button")
+            .assertIsDisplayed()
+            .assertTextContains("Challenge a Friend")
+            .fetchSemanticsNode().boundsInRoot
+        val dismissBounds = composeTestRule.onNodeWithTag("score5_nudge_dismiss_button")
+            .assertIsDisplayed()
+            .assertTextContains("Not now")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Challenge a Friend button height >= 48dp", shareBounds.height >= min48Px)
+        assertTrue("Not now button height >= 48dp", dismissBounds.height >= min48Px)
+        assertTrue(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+
+        // 3. Tap "Not now" -> hides the card on this screen
+        composeTestRule.onNodeWithTag("score5_nudge_dismiss_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+
+        // 4. Play again to score 5 -> never shows again once KEY_SCORE5_NUDGE_SEEN is true
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+
+        // 5. Reset KEY_SCORE5_NUDGE_SEEN to test "Challenge a Friend" opens the exact same share flow
+        prefs.edit().putBoolean(KEY_SCORE5_NUDGE_SEEN, false).commit()
+        playSolo2x2EasyToExactScoreAndFail(targetScore = 5)
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("score5_nudge_share_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("tries_selector_sheet").assertIsDisplayed()
+    }
+
+    @Test
+    fun hintB_score5Nudge_doesNotFireInChallengeOutboundRivalOrRevengeRuns() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        ChallengeStorage.setMyName(context, "ALEX")
+
+        // Seed one WON rival (launches Outbound Rival run) and one LOST rival (launches Revenge run)
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "RIVALOUT",
+                wins = 1,
+                losses = 0,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 5,
+                lastUserScore = 6,
+                lastStatus = "WON"
+            )
+        )
+        ChallengeStorage.saveRival(
+            context,
+            RivalRecord(
+                name = "RIVALREV",
+                wins = 0,
+                losses = 1,
+                ties = 0,
+                matches = 1,
+                lastGrid = "2x2",
+                lastDifficulty = GameDifficulty.EASY,
+                lastTarget = 4,
+                lastUserScore = 3,
+                lastStatus = "LOST",
+                gridStats = mapOf(
+                    "2x2" to com.example.challenge.GridStat(
+                        wins = 0,
+                        losses = 1,
+                        ties = 0,
+                        lastTarget = 4,
+                        lastDifficulty = GameDifficulty.EASY,
+                        lastStatus = "LOST"
+                    )
+                )
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+
+        val pads2x2 = padsForGridSize(GridSize.TWO_BY_TWO)
+
+        // 1. Incoming Challenge run reaching score 5 -> Hint B must NOT fire
+        val chSeed = 98020
+        val chCode = ChallengeSeed.formatChallengeCode(
+            gridTag = "2x2",
+            targetScore = 6,
+            tries = 1,
+            difficulty = GameDifficulty.EASY,
+            seed = chSeed,
+            senderName = "CHALL",
+            chainId = "HB1",
+            isRevenge = false
+        )
+        val chSeq = ChallengeSeed.generateSequenceForRound(chSeed, pads2x2.size, GameDifficulty.EASY, 6)
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(chCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        for (round in 1..5) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[chSeq[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+        composeTestRule.mainClock.advanceTimeBy(450L + 6 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val chWrong = pads2x2.first { it.id != pads2x2[chSeq[0]].id }
+        composeTestRule.onNodeWithTag(chWrong.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+        composeTestRule.onNodeWithTag("exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Outbound Rival run reaching score 5 -> Hint B must NOT fire
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_RIVALOUT"))
+        composeTestRule.waitForIdle()
+        if (composeTestRule.onAllNodes(hasTestTag("rival_dynamic_button_RIVALOUT")).fetchSemanticsNodes().isEmpty()) {
+            composeTestRule.onNodeWithTag("rival_card_name_RIVALOUT").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("rival_dynamic_button_RIVALOUT").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_grid_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_start_custom_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val outSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val outSeq = ChallengeSeed.generateSequenceForRound(outSeed, pads2x2.size, GameDifficulty.EASY, 6)
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        for (round in 1..5) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[outSeq[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+        // Dismiss VictoryDecisionDialog ("Keep Playing") then miss round 6 -> Game Over at score 5
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(450L + 6 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val outWrong = pads2x2.first { it.id != pads2x2[outSeq[0]].id }
+        composeTestRule.onNodeWithTag(outWrong.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+
+        // Exit outbound rival run back to Rivalry
+        composeTestRule.onNodeWithTag("game_over_home_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("unshared_rival_leave_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3. Revenge run reaching score 5 -> Hint B must NOT fire
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_RIVALREV"))
+        composeTestRule.waitForIdle()
+        if (composeTestRule.onAllNodes(hasTestTag("rival_dynamic_button_RIVALREV")).fetchSemanticsNodes().isEmpty()) {
+            composeTestRule.onNodeWithTag("rival_card_name_RIVALREV").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("rival_dynamic_button_RIVALREV").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_grid_2x2").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("rival_setup_start_custom_button").performClick()
+        composeTestRule.waitForIdle()
+
+        val revSeed = ChallengeSeed.lastGeneratedRandomSeed
+        val revSeq = ChallengeSeed.generateSequenceForRound(revSeed, pads2x2.size, GameDifficulty.EASY, 6)
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
+        for (round in 1..5) {
+            composeTestRule.mainClock.advanceTimeBy(450L + round * 650L + 500L)
+            composeTestRule.waitForIdle()
+            for (step in 0 until round) {
+                composeTestRule.onNodeWithTag(pads2x2[revSeq[step]].testTagId).performClick()
+                composeTestRule.mainClock.advanceTimeBy(100L)
+                composeTestRule.waitForIdle()
+            }
+        }
+        composeTestRule.onNodeWithTag("victory_decision_keep_playing_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(450L + 6 * 650L + 700L)
+        composeTestRule.waitForIdle()
+        val revWrong = pads2x2.first { it.id != pads2x2[revSeq[0]].id }
+        composeTestRule.onNodeWithTag(revWrong.testTagId).performClick()
+        composeTestRule.mainClock.advanceTimeBy(900L)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("score5_nudge_card").assertDoesNotExist()
+        assertFalse(prefs.getBoolean(KEY_SCORE5_NUDGE_SEEN, false))
+    }
 }
+
 
 
 
