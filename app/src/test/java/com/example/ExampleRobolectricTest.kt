@@ -8672,6 +8672,10 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
         composeTestRule.waitForIdle()
+        if (composeTestRule.onAllNodes(hasTestTag("replace_unfinished_confirm_button")).fetchSemanticsNodes().isNotEmpty()) {
+            composeTestRule.onNodeWithTag("replace_unfinished_confirm_button").performClick()
+            composeTestRule.waitForIdle()
+        }
 
         composeTestRule.mainClock.autoAdvance = false
         composeTestRule.onNodeWithTag("challenge_ready_gate_button").performClick()
@@ -10386,6 +10390,356 @@ class ExampleRobolectricTest {
         // Tapping the dynamic Resume button resumes the challenge on the Ready gate
         composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
     }
+
+    @Test
+    fun replaceUnfinishedChallenge_enterDialog_and_rivalPasteDialog_keepCurrent_back_and_replaceWork() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // Seed ALEX with an unfinished challenge: 2 tries left, best 4
+        val oldCodeAlex = ChallengeSeed.formatChallengeCode("2x2", 8, 3, GameDifficulty.EASY, 11101, "ALEX", "ALX", false)
+        val newCodeAlex = ChallengeSeed.formatChallengeCode("3x3", 10, 3, GameDifficulty.HARD, 22202, "ALEX", "ALX", false)
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = oldCodeAlex,
+                rivalName = "ALEX",
+                gridSizeTag = "2x2",
+                targetScore = 8,
+                maxTries = 3,
+                attemptsLeft = 2,
+                bestScore = 4,
+                seed = 11101,
+                difficulty = GameDifficulty.EASY,
+                chainId = "ALX"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // --- PATH 1: Main EnterChallengeDialog ---
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(newCodeAlex)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirmation card appears with heading, plural "2 tries left, best 4", and >= 48dp buttons
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        val titleNode = composeTestRule.onNodeWithTag("replace_unfinished_confirm_title")
+            .assertIsDisplayed()
+            .assertTextContains("Replace unfinished challenge?")
+            .fetchSemanticsNode()
+        assertTrue(
+            "Title must have heading() semantics",
+            titleNode.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Heading)
+        )
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_body")
+            .assertIsDisplayed()
+            .assertTextContains("You have an unfinished challenge from ALEX (2 tries left, best 4). Starting this new one will discard it.")
+
+        val density = composeTestRule.density.density
+        val keepBounds = composeTestRule.onNodeWithTag("replace_unfinished_keep_button").fetchSemanticsNode().boundsInRoot
+        val replaceBounds = composeTestRule.onNodeWithTag("replace_unfinished_confirm_button").fetchSemanticsNode().boundsInRoot
+        assertTrue("Keep Current height >= 48dp", ((keepBounds.bottom - keepBounds.top) / density) >= 47.5f)
+        assertTrue("Replace height >= 48dp", ((replaceBounds.bottom - replaceBounds.top) / density) >= 47.5f)
+
+        // 1a. Tap "Keep Current" -> card closes, paste dialog stays open, old challenge (tries=2, best=4) untouched, new code not saved/consumed
+        composeTestRule.onNodeWithTag("replace_unfinished_keep_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+        val alexAfterKeep = ChallengeStorage.findInProgressChallenge(context, oldCodeAlex, "ALX", "ALEX", seedInt = 11101)
+        assertNotNull(alexAfterKeep)
+        assertEquals(2, alexAfterKeep!!.attemptsLeft)
+        assertEquals(4, alexAfterKeep.bestScore)
+        assertNull(ChallengeStorage.findInProgressChallenge(context, newCodeAlex, "ALX", "ALEX", seedInt = 22202))
+        assertFalse(ChallengeStorage.isCodeConsumed(context, newCodeAlex))
+
+        // 1b. Submit again -> press Back on the confirmation card -> same as Keep Current (dialog stays open, old challenge untouched)
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        (org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog)
+            .onBackPressedDispatcher.onBackPressed()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+        assertEquals(2, ChallengeStorage.findInProgressChallenge(context, oldCodeAlex, "ALX", "ALEX", seedInt = 11101)!!.attemptsLeft)
+
+        // 1c. Submit again -> tap "Replace" -> saves new challenge, shows toast, starts challenge
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+
+        assertEquals(
+            "Replaced your unfinished challenge from ALEX",
+            org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+        )
+        assertNull(ChallengeStorage.findInProgressChallenge(context, oldCodeAlex, "ALX", "ALEX", seedInt = 11101))
+        val alexReplaced = ChallengeStorage.findInProgressChallenge(context, newCodeAlex, "ALX", "ALEX", seedInt = 22202)
+        assertNotNull(alexReplaced)
+        assertEquals(10, alexReplaced!!.targetScore)
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun replaceUnfinishedChallenge_rivalPasteDialog_singularTry_omitsZeroBest_keepCurrent_back_and_replaceWork() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // Seed ALEX with an unfinished challenge with 1 try left and bestScore = 0 (singular "1 try left" and omitted best)
+        val newCodeAlex = ChallengeSeed.formatChallengeCode("3x3", 10, 3, GameDifficulty.HARD, 22202, "ALEX", "ALX", false)
+        ChallengeStorage.saveInProgressChallenge(
+            context,
+            ChallengeItem(
+                code = newCodeAlex,
+                rivalName = "ALEX",
+                gridSizeTag = "3x3",
+                targetScore = 10,
+                maxTries = 3,
+                attemptsLeft = 1,
+                bestScore = 0,
+                seed = 22202,
+                difficulty = GameDifficulty.HARD,
+                chainId = "ALX"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // --- PATH 3: Per-Rival PasteRivalCodeDialog (also verifies singular "1 try left" and omitted best when best == 0) ---
+        val thirdCodeAlex = ChallengeSeed.formatChallengeCode("2x2", 12, 5, GameDifficulty.EASY, 33303, "ALEX", "ALX", false)
+        composeTestRule.onNodeWithTag("rivalry_tab_content").performScrollToNode(hasTestTag("rival_card_ALEX"))
+        composeTestRule.onNodeWithTag("rival_paste_button_ALEX").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("paste_rival_code_input").performTextInput(thirdCodeAlex)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("paste_rival_submit_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_body")
+            .assertIsDisplayed()
+            .assertTextContains("You have an unfinished challenge from ALEX (1 try left). Starting this new one will discard it.")
+
+        // Keep Current in PasteRivalCodeDialog -> returns to paste_rival_code_dialog, old challenge untouched
+        composeTestRule.onNodeWithTag("replace_unfinished_keep_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("paste_rival_code_dialog").assertIsDisplayed()
+        assertNotNull(ChallengeStorage.findInProgressChallenge(context, newCodeAlex, "ALX", "ALEX", seedInt = 22202))
+        assertNull(ChallengeStorage.findInProgressChallenge(context, thirdCodeAlex, "ALX", "ALEX", seedInt = 33303))
+
+        // Back in PasteRivalCodeDialog -> returns to paste_rival_code_dialog, old challenge untouched
+        composeTestRule.onNodeWithTag("paste_rival_submit_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        (org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog)
+            .onBackPressedDispatcher.onBackPressed()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("paste_rival_code_dialog").assertIsDisplayed()
+
+        // Confirm Replace in PasteRivalCodeDialog -> saves thirdCodeAlex, shows toast, launches Ready gate
+        composeTestRule.onNodeWithTag("paste_rival_submit_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+
+        assertEquals(
+            "Replaced your unfinished challenge from ALEX",
+            org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+        )
+        assertNotNull(ChallengeStorage.findInProgressChallenge(context, thirdCodeAlex, "ALX", "ALEX", seedInt = 33303))
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun replaceUnfinishedChallenge_legacyPath_freeTries_priorFinishedMatchScoreIsolation_and_resumeSameCodeShowsNoCard() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .clear()
+            .putBoolean(KEY_REPLY_HINT_DONE, true)
+            .putBoolean(KEY_SCORE5_NUDGE_SEEN, true)
+            .commit()
+        context.getSharedPreferences("glowback_challenge_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        ChallengeStorage.setMyName(context, "HERO")
+
+        // 1. Correction 1 check: SAM has a previous FINISHED match with high score (lastUserScore = 15, lastStatus = "WON")
+        //    AND an uncompleted ChallengeItem in storage with free tries (maxTries = 0) and bestScore = 3.
+        //    The confirmation card MUST show "free tries, best 3" (the unfinished challenge's bestScore, NEVER 15).
+        ChallengeStorage.recordMatchOutcome(
+            context = context,
+            rivalName = "SAM",
+            userScore = 15,
+            targetScore = 10,
+            gridSize = "2x2",
+            difficulty = GameDifficulty.EASY,
+            chainId = "SM1",
+            maxTries = 3,
+            seed = 10001
+        )
+        val unfinishedSamCode = ChallengeSeed.formatChallengeCode("2x2", 9, 0, GameDifficulty.EASY, 50001, "SAM", "SM1", false)
+        ChallengeStorage.saveChallenge(
+            context,
+            ChallengeItem(
+                code = unfinishedSamCode,
+                rivalName = "SAM",
+                gridSizeTag = "2x2",
+                targetScore = 9,
+                maxTries = 0,
+                attemptsLeft = 0,
+                bestScore = 3,
+                seed = 50001,
+                difficulty = GameDifficulty.EASY,
+                chainId = "SM1"
+            )
+        )
+
+        composeTestRule.waitForIdle()
+        runCatching {
+            composeTestRule.onNodeWithTag("onboarding_got_it_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+        composeTestRule.onNodeWithTag("nav_leaderboard").performClick()
+        composeTestRule.waitForIdle()
+
+        // --- PATH 2: Legacy 3-segment code ("2X2-11-77777") with name "SAM" ---
+        val legacyCode = "2X2-11-77777"
+        val parsedLegacyFullCode = ChallengeSeed.parseChallengeCode(legacyCode)!!.fullCode
+        val parsedLegacySeed = ChallengeSeed.parseChallengeCode(legacyCode)!!.seedInt
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(legacyCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("legacy_code_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("legacy_name_input").performTextReplacement("SAM")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("legacy_dialog_submit").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+
+        // Confirmation card shows "free tries, best 3" (NOT 15 from the finished match)
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_body")
+            .assertIsDisplayed()
+            .assertTextContains("You have an unfinished challenge from SAM (free tries, best 3). Starting this new one will discard it.")
+
+        // Correction 2 check: "Keep Current" in the legacy-code path returns to the paste dialog with the typed code still in the field
+        composeTestRule.onNodeWithTag("replace_unfinished_keep_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("challenge_code_input").assertTextContains(legacyCode)
+        assertNotNull(ChallengeStorage.findInProgressChallenge(context, unfinishedSamCode, "SM1", "SAM", seedInt = 50001))
+        assertNull(ChallengeStorage.findInProgressChallenge(context, parsedLegacyFullCode, "", "SAM", seedInt = parsedLegacySeed))
+        assertFalse(ChallengeStorage.isCodeConsumed(context, parsedLegacyFullCode))
+
+        // Correction 2 check: Back on the replace card in the legacy-code path also returns to the paste dialog with the typed code still in the field
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("legacy_name_input").performTextReplacement("SAM")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("legacy_dialog_submit").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertIsDisplayed()
+        (org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog)
+            .onBackPressedDispatcher.onBackPressed()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("enter_challenge_dialog_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("challenge_code_input").assertTextContains(legacyCode)
+
+        // Confirm Replace in the legacy-code path -> saves legacy challenge and shows toast
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("legacy_name_input").performTextReplacement("SAM")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("legacy_dialog_submit").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(
+            "Replaced your unfinished challenge from SAM",
+            org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+        )
+        assertNotNull(ChallengeStorage.findInProgressChallenge(context, parsedLegacyFullCode, "", "SAM", seedInt = parsedLegacySeed))
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+
+        // Exit Ready gate back to Rivalry tab
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 2. Pasting the SAME code or SAME seed again (resume case) shows NO confirmation card
+        val sameSeedModernCode = ChallengeSeed.formatChallengeCode("2x2", 11, 3, GameDifficulty.EASY, parsedLegacySeed, "SAM", "SM1", false)
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(sameSeedModernCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+
+        // Exit Ready gate back to Rivalry tab
+        composeTestRule.onNodeWithTag("settings_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pause_exit_challenge_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // 3. No unfinished challenge (new rival NOVA) -> shows NO confirmation card, accepted immediately
+        val novaCode = ChallengeSeed.formatChallengeCode("2x2", 7, 3, GameDifficulty.EASY, 88808, "NOVA", "NV1", false)
+        composeTestRule.onNodeWithTag("rivalry_paste_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("challenge_code_input").performTextInput(novaCode)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_challenge_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(300L)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("replace_unfinished_confirm_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("challenge_ready_gate_button").assertIsDisplayed()
+    }
 }
-
-

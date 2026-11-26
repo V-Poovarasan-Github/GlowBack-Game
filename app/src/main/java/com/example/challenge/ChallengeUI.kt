@@ -710,10 +710,11 @@ fun EnterChallengeDialog(
     var showHelpBanner by remember { mutableStateOf(false) }
     var isSubmitFlashing by remember { mutableStateOf(false) }
 
-    // Dialog state for legacy 5-segment codes, Tier 2 Same-Name Soft Block, & Same-Name Second Reply Disambiguation
+    // Dialog state for legacy 5-segment codes, Tier 2 Same-Name Soft Block, Same-Name Second Reply Disambiguation, & Replace Unfinished Confirmation
     var pendingLegacyChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
     var pendingSameNameChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
     var pendingSameNameSecondReply by remember { mutableStateOf<ParsedChallenge?>(null) }
+    var pendingReplaceChallenge by remember { mutableStateOf<PendingReplaceChallenge?>(null) }
 
     val existingRivals = remember { ChallengeStorage.loadRivals(context) }
     val liveParsed = remember(rawCode) { ChallengeSeed.parseChallengeCode(rawCode) }
@@ -810,47 +811,24 @@ fun EnterChallengeDialog(
                 onDismiss()
             }
         } else {
-            val hadUnfinishedToReplace = ChallengeStorage.hasUnfinishedChallengeToReplace(
+            submitOrConfirmPlayableChallenge(
                 context = context,
-                rivalName = finalRival,
-                newCode = parsed.fullCode,
-                newSeed = parsed.seedInt
+                parsed = parsed,
+                targetRivalName = finalRival,
+                withFlash = true,
+                onStartFlash = { isSubmitFlashing = true },
+                onEndFlash = { isSubmitFlashing = false },
+                scope = scope,
+                onRequireReplaceConfirm = { pendingReplaceChallenge = it },
+                onSubmit = onSubmit
             )
-            val existingInProgress = ChallengeStorage.findInProgressChallenge(
-                context = context,
-                code = parsed.fullCode,
-                chainId = parsed.chainId,
-                rivalName = finalRival
-            )
-            val item = existingInProgress?.copy(rivalName = finalRival) ?: ChallengeItem(
-                code = parsed.fullCode,
-                rivalName = finalRival,
-                gridSizeTag = parsed.gridTag,
-                targetScore = parsed.targetScore,
-                maxTries = parsed.tries,
-                attemptsLeft = parsed.tries,
-                bestScore = 0,
-                seed = parsed.seedInt,
-                difficulty = parsed.difficulty,
-                chainId = parsed.chainId,
-                isRevenge = parsed.isRevenge
-            )
-            ChallengeStorage.saveInProgressChallenge(context, item)
-            if (hadUnfinishedToReplace) {
-                Toast.makeText(context, "Replaced your unfinished challenge from $finalRival", Toast.LENGTH_SHORT).show()
-            }
-            isSubmitFlashing = true
-            scope.launch {
-                flashDelayMs(150L)
-                isSubmitFlashing = false
-                onSubmit(item)
-            }
         }
     }
 
     Dialog(
         onDismissRequest = {
             when {
+                pendingReplaceChallenge != null -> pendingReplaceChallenge = null
                 pendingSameNameSecondReply != null -> pendingSameNameSecondReply = null
                 pendingSameNameChallenge != null -> pendingSameNameChallenge = null
                 pendingLegacyChallenge != null -> pendingLegacyChallenge = null
@@ -859,7 +837,28 @@ fun EnterChallengeDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        if (pendingSameNameSecondReply != null) {
+        if (pendingReplaceChallenge != null) {
+            val pendingReplace = pendingReplaceChallenge!!
+            ReplaceUnfinishedConfirmCardContent(
+                pending = pendingReplace,
+                onKeepCurrent = { pendingReplaceChallenge = null },
+                onConfirmReplace = {
+                    pendingReplaceChallenge = null
+                    submitOrConfirmPlayableChallenge(
+                        context = context,
+                        parsed = pendingReplace.parsed,
+                        targetRivalName = pendingReplace.targetRivalName,
+                        withFlash = pendingReplace.withFlash,
+                        onStartFlash = { isSubmitFlashing = true },
+                        onEndFlash = { isSubmitFlashing = false },
+                        scope = scope,
+                        confirmedReplace = true,
+                        onRequireReplaceConfirm = { pendingReplaceChallenge = it },
+                        onSubmit = onSubmit
+                    )
+                }
+            )
+        } else if (pendingSameNameSecondReply != null) {
             val parsedReply = pendingSameNameSecondReply!!
             SameNameSecondReplyCardContent(
                 senderName = parsedReply.senderName.ifEmpty { "RIVAL" },
@@ -899,35 +898,17 @@ fun EnterChallengeDialog(
                     val parsed = pendingLegacyChallenge!!
                     pendingLegacyChallenge = null
                     val finalName = ChallengeSeed.sanitizePlayerName(enteredName)
-                    val hadUnfinishedToReplace = ChallengeStorage.hasUnfinishedChallengeToReplace(
+                    submitOrConfirmPlayableChallenge(
                         context = context,
-                        rivalName = finalName,
-                        newCode = parsed.fullCode,
-                        newSeed = parsed.seedInt
+                        parsed = parsed,
+                        targetRivalName = finalName,
+                        withFlash = false,
+                        onStartFlash = {},
+                        onEndFlash = {},
+                        scope = scope,
+                        onRequireReplaceConfirm = { pendingReplaceChallenge = it },
+                        onSubmit = onSubmit
                     )
-                    val existingInProgress = ChallengeStorage.findInProgressChallenge(
-                        context = context,
-                        code = parsed.fullCode,
-                        chainId = parsed.chainId,
-                        rivalName = finalName
-                    )
-                    val item = existingInProgress?.copy(rivalName = finalName) ?: ChallengeItem(
-                        code = parsed.fullCode,
-                        rivalName = finalName,
-                        gridSizeTag = parsed.gridTag,
-                        targetScore = parsed.targetScore,
-                        maxTries = parsed.tries,
-                        attemptsLeft = parsed.tries,
-                        bestScore = 0,
-                        seed = parsed.seedInt,
-                        difficulty = parsed.difficulty,
-                        chainId = parsed.chainId
-                    )
-                    ChallengeStorage.saveInProgressChallenge(context, item)
-                    if (hadUnfinishedToReplace) {
-                        Toast.makeText(context, "Replaced your unfinished challenge from $finalName", Toast.LENGTH_SHORT).show()
-                    }
-                    onSubmit(item)
                 }
             )
         } else {
@@ -1247,6 +1228,174 @@ fun SameNameConfirmCardContent(
                     )
                 ) {
                     Text("Yes, Play", fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
+
+data class PendingReplaceChallenge(
+    val parsed: ParsedChallenge,
+    val targetRivalName: String,
+    val existingItem: ChallengeItem?,
+    val withFlash: Boolean = true
+)
+
+internal fun submitOrConfirmPlayableChallenge(
+    context: Context,
+    parsed: ParsedChallenge,
+    targetRivalName: String,
+    withFlash: Boolean,
+    onStartFlash: () -> Unit,
+    onEndFlash: () -> Unit,
+    scope: kotlinx.coroutines.CoroutineScope,
+    confirmedReplace: Boolean = false,
+    onRequireReplaceConfirm: (PendingReplaceChallenge) -> Unit,
+    onSubmit: (ChallengeItem) -> Unit
+) {
+    val hadUnfinishedToReplace = ChallengeStorage.hasUnfinishedChallengeToReplace(
+        context = context,
+        rivalName = targetRivalName,
+        newCode = parsed.fullCode,
+        newSeed = parsed.seedInt
+    )
+    if (hadUnfinishedToReplace && !confirmedReplace) {
+        val existingUnfinished = ChallengeStorage.getUnfinishedChallengeToReplace(
+            context = context,
+            rivalName = targetRivalName,
+            newCode = parsed.fullCode,
+            newSeed = parsed.seedInt
+        )
+        onRequireReplaceConfirm(
+            PendingReplaceChallenge(
+                parsed = parsed,
+                targetRivalName = targetRivalName,
+                existingItem = existingUnfinished,
+                withFlash = withFlash
+            )
+        )
+        return
+    }
+    val existingInProgress = ChallengeStorage.findInProgressChallenge(
+        context = context,
+        code = parsed.fullCode,
+        chainId = parsed.chainId,
+        rivalName = targetRivalName
+    )
+    val item = existingInProgress?.copy(rivalName = targetRivalName) ?: ChallengeItem(
+        code = parsed.fullCode,
+        rivalName = targetRivalName,
+        gridSizeTag = parsed.gridTag,
+        targetScore = parsed.targetScore,
+        maxTries = parsed.tries,
+        attemptsLeft = parsed.tries,
+        bestScore = 0,
+        seed = parsed.seedInt,
+        difficulty = parsed.difficulty,
+        chainId = parsed.chainId,
+        isRevenge = parsed.isRevenge
+    )
+    ChallengeStorage.saveInProgressChallenge(context, item)
+    if (hadUnfinishedToReplace) {
+        Toast.makeText(context, "Replaced your unfinished challenge from $targetRivalName", Toast.LENGTH_SHORT).show()
+    }
+    if (withFlash) {
+        onStartFlash()
+        scope.launch {
+            flashDelayMs(150L)
+            onEndFlash()
+            onSubmit(item)
+        }
+    } else {
+        onSubmit(item)
+    }
+}
+
+@Composable
+fun ReplaceUnfinishedConfirmCardContent(
+    pending: PendingReplaceChallenge,
+    onKeepCurrent: () -> Unit,
+    onConfirmReplace: () -> Unit
+) {
+    val existing = pending.existingItem
+    val triesPart = when {
+        existing == null -> null
+        existing.maxTries == 0 -> "free tries"
+        existing.attemptsLeft == 1 -> "1 try left"
+        existing.attemptsLeft > 1 -> "${existing.attemptsLeft} tries left"
+        else -> null
+    }
+    val bestPart = if (existing != null && existing.bestScore > 0) {
+        "best ${existing.bestScore}"
+    } else {
+        null
+    }
+    val detailsInsideParens = listOfNotNull(triesPart, bestPart).joinToString(", ")
+    val detailsClause = if (detailsInsideParens.isNotEmpty()) " ($detailsInsideParens)" else ""
+    val bodyText = "You have an unfinished challenge from ${pending.targetRivalName}$detailsClause. Starting this new one will discard it."
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .border(1.5.dp, Color(0xFFFFD600), RoundedCornerShape(20.dp))
+            .testTag("replace_unfinished_confirm_card"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Replace unfinished challenge?",
+                color = Color(0xFFFFD600),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier
+                    .semantics { heading() }
+                    .testTag("replace_unfinished_confirm_title")
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = bodyText,
+                color = Color(0xFFCBD5E1),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("replace_unfinished_confirm_body")
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = onKeepCurrent,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("replace_unfinished_keep_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00E5FF),
+                        contentColor = Color.Black
+                    )
+                ) {
+                    Text("Keep Current", fontWeight = FontWeight.ExtraBold)
+                }
+                OutlinedButton(
+                    onClick = onConfirmReplace,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("replace_unfinished_confirm_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFFD600).copy(alpha = 0.7f))
+                ) {
+                    Text("Replace", color = Color(0xFFFFD600), fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1758,6 +1907,7 @@ fun PasteRivalCodeDialog(
     var isPasteRivalFlashing by remember { mutableStateOf(false) }
     var pendingSameNameChallenge by remember { mutableStateOf<ParsedChallenge?>(null) }
     var pendingSameNameSecondReply by remember { mutableStateOf<ParsedChallenge?>(null) }
+    var pendingReplaceChallenge by remember { mutableStateOf<PendingReplaceChallenge?>(null) }
 
     fun executeValidRivalPaste(
         parsed: ParsedChallenge,
@@ -1835,56 +1985,56 @@ fun PasteRivalCodeDialog(
                 onDismiss()
             }
         } else {
-            val hadUnfinishedToReplace = ChallengeStorage.hasUnfinishedChallengeToReplace(
+            submitOrConfirmPlayableChallenge(
                 context = context,
-                rivalName = targetRivalName,
-                newCode = parsed.fullCode,
-                newSeed = parsed.seedInt
+                parsed = parsed,
+                targetRivalName = targetRivalName,
+                withFlash = true,
+                onStartFlash = { isPasteRivalFlashing = true },
+                onEndFlash = { isPasteRivalFlashing = false },
+                scope = scope,
+                onRequireReplaceConfirm = { pendingReplaceChallenge = it },
+                onSubmit = onSubmit
             )
-            val existingInProgress = ChallengeStorage.findInProgressChallenge(
-                context = context,
-                code = parsed.fullCode,
-                chainId = parsed.chainId,
-                rivalName = targetRivalName
-            )
-            val item = existingInProgress?.copy(rivalName = targetRivalName) ?: ChallengeItem(
-                code = parsed.fullCode,
-                rivalName = targetRivalName,
-                gridSizeTag = parsed.gridTag,
-                targetScore = parsed.targetScore,
-                maxTries = parsed.tries,
-                attemptsLeft = parsed.tries,
-                bestScore = 0,
-                seed = parsed.seedInt,
-                difficulty = parsed.difficulty,
-                chainId = parsed.chainId,
-                isRevenge = parsed.isRevenge
-            )
-            ChallengeStorage.saveInProgressChallenge(context, item)
-            if (hadUnfinishedToReplace) {
-                Toast.makeText(context, "Replaced your unfinished challenge from $targetRivalName", Toast.LENGTH_SHORT).show()
-            }
-            isPasteRivalFlashing = true
-            scope.launch {
-                flashDelayMs(150L)
-                isPasteRivalFlashing = false
-                onSubmit(item)
-            }
         }
     }
 
     Dialog(
         onDismissRequest = {
-            if (pendingSameNameSecondReply != null) {
+            if (pendingReplaceChallenge != null) {
+                pendingReplaceChallenge = null
+            } else if (pendingSameNameSecondReply != null) {
                 pendingSameNameSecondReply = null
             } else if (pendingSameNameChallenge != null) {
                 pendingSameNameChallenge = null
             } else {
                 onDismiss()
             }
-        }
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        if (pendingSameNameSecondReply != null) {
+        if (pendingReplaceChallenge != null) {
+            val pendingReplace = pendingReplaceChallenge!!
+            ReplaceUnfinishedConfirmCardContent(
+                pending = pendingReplace,
+                onKeepCurrent = { pendingReplaceChallenge = null },
+                onConfirmReplace = {
+                    pendingReplaceChallenge = null
+                    submitOrConfirmPlayableChallenge(
+                        context = context,
+                        parsed = pendingReplace.parsed,
+                        targetRivalName = pendingReplace.targetRivalName,
+                        withFlash = pendingReplace.withFlash,
+                        onStartFlash = { isPasteRivalFlashing = true },
+                        onEndFlash = { isPasteRivalFlashing = false },
+                        scope = scope,
+                        confirmedReplace = true,
+                        onRequireReplaceConfirm = { pendingReplaceChallenge = it },
+                        onSubmit = onSubmit
+                    )
+                }
+            )
+        } else if (pendingSameNameSecondReply != null) {
             val parsedReply = pendingSameNameSecondReply!!
             SameNameSecondReplyCardContent(
                 senderName = rivalName,
@@ -5036,7 +5186,7 @@ fun RivalCard(
         )
     val hasPendingOutbound = rival.pendingOutbounds.isNotEmpty()
 
-    val signalPulseAlpha = if (isReducedMotion) {
+    val signalPulseAlpha = if (isReducedMotion || (!hasUnsentReply && !hasPendingOutbound)) {
         1f
     } else {
         val infiniteTransition = rememberInfiniteTransition(label = "rival_signal_pulse")

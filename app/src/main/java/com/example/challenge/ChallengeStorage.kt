@@ -981,6 +981,86 @@ object ChallengeStorage {
     }
 
     /**
+     * Read-only lookup of the existing unfinished ChallengeItem that would be replaced by
+     * accepting a new playable challenge from [rivalName] with [newCode] / [newSeed].
+     * Uses rival.lastUserScore ONLY when rival.lastStatus == "IN_PROGRESS" and the rival's
+     * inProgressCode / inProgressSeed matches the unfinished challenge being replaced.
+     */
+    fun getUnfinishedChallengeToReplace(
+        context: Context,
+        rivalName: String,
+        newCode: String,
+        newSeed: Int
+    ): ChallengeItem? {
+        val cleanName = ChallengeSeed.sanitizePlayerName(rivalName)
+        val cleanCode = ChallengeSeed.sanitizeCodeText(newCode).uppercase()
+        val existingRival = findRivalByName(context, cleanName)
+        val savedChallenges = loadChallenges(context)
+
+        val savedUnfinished = savedChallenges.firstOrNull { ch ->
+            !ch.isCompleted &&
+                ch.rivalName.equals(cleanName, ignoreCase = true) &&
+                !(cleanCode.isNotEmpty() && ch.code.equals(cleanCode, ignoreCase = true)) &&
+                !(newSeed != 0 && ch.seed == newSeed)
+        }
+
+        val rivalIsUnfinishedToReplace = existingRival != null &&
+            existingRival.lastStatus == "IN_PROGRESS" &&
+            !(cleanCode.isNotEmpty() && existingRival.inProgressCode.equals(cleanCode, ignoreCase = true)) &&
+            !(newSeed != 0 && existingRival.inProgressSeed == newSeed)
+
+        if (savedUnfinished != null) {
+            val rivalMatchesSaved = rivalIsUnfinishedToReplace && existingRival != null && (
+                (existingRival.inProgressCode.isNotEmpty() && existingRival.inProgressCode.equals(savedUnfinished.code, ignoreCase = true)) ||
+                (existingRival.inProgressSeed != 0 && existingRival.inProgressSeed == savedUnfinished.seed)
+            )
+            val resolvedBest = if (rivalMatchesSaved && existingRival != null) {
+                maxOf(savedUnfinished.bestScore, existingRival.lastUserScore)
+            } else {
+                savedUnfinished.bestScore
+            }
+            val resolvedTriesLeft = if (rivalMatchesSaved && existingRival != null) {
+                existingRival.inProgressTriesLeft
+            } else {
+                savedUnfinished.attemptsLeft
+            }
+            val resolvedMaxTries = if (rivalMatchesSaved && existingRival != null) {
+                existingRival.inProgressMaxTries
+            } else {
+                savedUnfinished.maxTries
+            }
+            return savedUnfinished.copy(
+                rivalName = cleanName,
+                maxTries = resolvedMaxTries,
+                attemptsLeft = resolvedTriesLeft,
+                bestScore = resolvedBest
+            )
+        }
+
+        if (rivalIsUnfinishedToReplace && existingRival != null) {
+            val parsed = if (existingRival.inProgressCode.isNotEmpty()) {
+                ChallengeSeed.parseChallengeCode(existingRival.inProgressCode)
+            } else null
+            val seedToUse = if (existingRival.inProgressSeed != 0) existingRival.inProgressSeed else (parsed?.seedInt ?: 0)
+            return ChallengeItem(
+                code = existingRival.inProgressCode,
+                rivalName = cleanName,
+                gridSizeTag = existingRival.lastGrid,
+                targetScore = existingRival.lastTarget,
+                maxTries = existingRival.inProgressMaxTries,
+                attemptsLeft = existingRival.inProgressTriesLeft,
+                bestScore = existingRival.lastUserScore,
+                seed = seedToUse,
+                difficulty = existingRival.lastDifficulty,
+                chainId = existingRival.lastChainId,
+                isRevenge = parsed?.isRevenge ?: false
+            )
+        }
+
+        return null
+    }
+
+    /**
      * PASS 5.15 Item 1 & 2 + PASS 5.19 Stage A #1 & Invariant (d) + PASS 5.35 Fix 2:
      * Persists an active/in-progress challenge both in KEY_CHALLENGES and as an "IN_PROGRESS"
      * RivalRecord in the Rivalry tab. Never sets IN_PROGRESS for a consumed code, and replaces
